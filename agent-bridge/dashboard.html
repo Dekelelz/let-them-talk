@@ -1102,8 +1102,10 @@
         onkeydown="if(event.key==='Enter'){addProject();}">
       <div class="project-actions">
         <button class="btn btn-primary" onclick="showAddProject()">+ Add</button>
+        <button class="btn" onclick="discoverProjects()">Discover</button>
         <button class="btn btn-danger" onclick="removeProject()" id="remove-project-btn" style="display:none">Remove</button>
       </div>
+      <div id="discover-results" style="display:none"></div>
     </div>
     <div class="sidebar-scroll">
       <!-- Agents Section -->
@@ -2008,6 +2010,43 @@ function addProject() {
       alert(res.error || 'Failed to add project');
     }
   }).catch(function(e) { console.error('Add project failed:', e); });
+}
+
+function discoverProjects() {
+  var resultsEl = document.getElementById('discover-results');
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">Scanning...</div>';
+
+  fetch('/api/discover').then(function(r) { return r.json(); }).then(function(found) {
+    if (!found.length) {
+      resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">No new projects found nearby</div>';
+      setTimeout(function() { resultsEl.style.display = 'none'; }, 3000);
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < found.length; i++) {
+      html += '<div class="thread-item" onclick="addDiscovered(\'' + escapeHtml(found[i].path).replace(/'/g, "\\'") + '\',\'' + escapeHtml(found[i].name).replace(/'/g, "\\'") + '\')" style="margin-bottom:4px">' +
+        '<div class="thread-preview">' + escapeHtml(found[i].name) + '</div>' +
+        '<div class="thread-meta">' + escapeHtml(found[i].path) + '</div>' +
+      '</div>';
+    }
+    resultsEl.innerHTML = html;
+  }).catch(function() {
+    resultsEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:4px;">Discovery failed</div>';
+  });
+}
+
+function addDiscovered(projectPath, name) {
+  fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: projectPath, name: name })
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.success) {
+      document.getElementById('discover-results').style.display = 'none';
+      loadProjects();
+    }
+  }).catch(function() {});
 }
 
 function removeProject() {

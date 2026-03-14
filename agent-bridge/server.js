@@ -140,7 +140,16 @@ function buildMessageResponse(msg, consumedIds) {
   const agents = getAgents();
   const agentsOnline = Object.entries(agents).filter(([, info]) => isPidAlive(info.pid)).length;
 
-  return {
+  // Count total messages for context window management
+  let totalMessages = 0;
+  try {
+    if (fs.existsSync(HISTORY_FILE)) {
+      const content = fs.readFileSync(HISTORY_FILE, 'utf8').trim();
+      if (content) totalMessages = content.split('\n').length;
+    }
+  } catch {}
+
+  const result = {
     success: true,
     message: {
       id: msg.id,
@@ -152,7 +161,55 @@ function buildMessageResponse(msg, consumedIds) {
     },
     pending_count: pendingCount,
     agents_online: agentsOnline,
+    message_count: totalMessages,
   };
+
+  if (totalMessages > 50) {
+    result.hint = 'Conversation is getting long (' + totalMessages + ' messages). Consider calling get_summary() to refresh your context.';
+  }
+
+  return result;
+}
+
+// Auto-compact messages.jsonl when it gets too large
+// Keeps only unconsumed messages, moves everything else to history-only
+function autoCompact() {
+  if (!fs.existsSync(MESSAGES_FILE)) return;
+  try {
+    const content = fs.readFileSync(MESSAGES_FILE, 'utf8').trim();
+    if (!content) return;
+    const lines = content.split('\n');
+    if (lines.length < 500) return; // only compact when large
+
+    const messages = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+
+    // Collect ALL consumed IDs across all agents
+    const allConsumed = new Set();
+    if (fs.existsSync(DATA_DIR)) {
+      for (const f of fs.readdirSync(DATA_DIR)) {
+        if (f.startsWith('consumed-') && f.endsWith('.json')) {
+          try {
+            const ids = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
+            ids.forEach(id => allConsumed.add(id));
+          } catch {}
+        }
+      }
+    }
+
+    // Keep only messages not consumed by ALL recipients
+    const agents = getAgents();
+    const agentNames = Object.keys(agents);
+    const active = messages.filter(m => {
+      // Keep if any target agent hasn't consumed it
+      if (!allConsumed.has(m.id)) return true;
+      return false;
+    });
+
+    // Rewrite messages.jsonl with only active messages
+    const newContent = active.map(m => JSON.stringify(m)).join('\n') + (active.length ? '\n' : '');
+    fs.writeFileSync(MESSAGES_FILE, newContent);
+    lastReadOffset = Buffer.byteLength(newContent, 'utf8');
+  } catch {}
 }
 
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
@@ -399,6 +456,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
   }
 
   setListening(false);
+  autoCompact(); // compact on timeout boundaries
   return {
     timeout: true,
     message: `No reply received within ${timeoutSeconds}s. Call wait_for_reply() again to keep waiting.`,

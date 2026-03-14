@@ -246,6 +246,42 @@ function apiRemoveProject(body) {
   return { success: true };
 }
 
+// Auto-discover .agent-bridge directories nearby
+function apiDiscover() {
+  const found = [];
+  const checked = new Set();
+  const existing = new Set(getProjects().map(p => p.path));
+
+  function scanDir(dir, depth) {
+    if (depth > 2 || checked.has(dir)) return;
+    checked.add(dir);
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('.') && entry.name !== '.agent-bridge') continue;
+        if (entry.name === 'node_modules') continue;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.name === '.agent-bridge' && hasDataFiles(fullPath)) {
+          const projectPath = dir;
+          if (!existing.has(projectPath)) {
+            found.push({ name: path.basename(projectPath), path: projectPath, dataDir: fullPath });
+          }
+        } else if (depth < 2) {
+          scanDir(fullPath, depth + 1);
+        }
+      }
+    } catch {}
+  }
+
+  // Scan from cwd, parent, and home
+  const cwd = process.cwd();
+  scanDir(cwd, 0);
+  scanDir(path.dirname(cwd), 1);
+
+  return found;
+}
+
 // --- HTTP Server ---
 
 // Load HTML at startup (re-read on each request in dev for hot-reload)
@@ -318,6 +354,10 @@ const server = http.createServer(async (req, res) => {
       const result = apiAddProject(body);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
+    }
+    else if (url.pathname === '/api/discover' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiDiscover()));
     }
     else if (url.pathname === '/api/projects' && req.method === 'DELETE') {
       const body = await parseBody(req);
