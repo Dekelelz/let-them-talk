@@ -1,0 +1,34 @@
+# Development files
+.agent-bridge/
+data/
+node_modules/
+package-lock.json
+projects.json
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Docs (README and LICENSE are included via package.json "files")
+CHANGELOG.md
+CLAUDE.md
+
+# Website
+website/
+
+# Test data
+*.test.js
+*.spec.js
+__tests__/
+coverage/
+
+# Logo is in "files" array, explicitly included
