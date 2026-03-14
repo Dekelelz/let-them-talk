@@ -537,6 +537,114 @@
   .message { position: relative; }
   .message:hover { background: var(--surface); }
 
+  /* ===== REACTIONS ===== */
+  .msg-actions {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: none;
+    gap: 2px;
+    align-items: center;
+  }
+
+  .message:hover .msg-actions { display: flex; }
+
+  .msg-action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+    padding: 2px 3px;
+    line-height: 1;
+    color: var(--text-dim);
+  }
+
+  .msg-action-btn:hover { opacity: 1; }
+  .msg-action-btn.active { opacity: 1; color: var(--yellow); }
+
+  .react-picker {
+    display: none;
+    position: absolute;
+    top: -4px;
+    right: 56px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    gap: 2px;
+    z-index: 20;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  .react-picker.open { display: flex; }
+
+  .react-emoji {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: background 0.1s;
+    line-height: 1;
+  }
+
+  .react-emoji:hover { background: var(--surface-3); }
+
+  .msg-reactions {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+
+  .reaction-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .reaction-chip:hover { border-color: var(--accent); }
+  .reaction-chip .r-count { font-size: 10px; color: var(--text-dim); }
+
+  /* ===== PINNED MESSAGES ===== */
+  .pinned-section {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    max-height: 200px;
+    overflow-y: auto;
+    display: none;
+  }
+
+  .pinned-section.visible { display: block; }
+
+  .pinned-header {
+    padding: 6px 20px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+  }
+
+  .pinned-toggle { font-size: 11px; color: var(--accent); }
+
+  .pinned-section .message { padding: 6px 20px; }
+  .pinned-section .msg-content { font-size: 12px; max-height: 40px; overflow: hidden; }
+
   .bookmark-btn {
     position: absolute;
     top: 8px;
@@ -2755,12 +2863,18 @@ function discoverProjects() {
     }
     var html = '';
     for (var i = 0; i < found.length; i++) {
-      html += '<div class="thread-item" onclick="addDiscovered(\'' + escapeHtml(found[i].path).replace(/'/g, "\\'") + '\',\'' + escapeHtml(found[i].name).replace(/'/g, "\\'") + '\')" style="margin-bottom:4px">' +
+      html += '<div class="thread-item discover-item" data-path="' + escapeHtml(found[i].path) + '" data-name="' + escapeHtml(found[i].name) + '" style="margin-bottom:4px;cursor:pointer">' +
         '<div class="thread-preview">' + escapeHtml(found[i].name) + '</div>' +
         '<div class="thread-meta">' + escapeHtml(found[i].path) + '</div>' +
       '</div>';
     }
     resultsEl.innerHTML = html;
+    // Attach click handlers via event delegation (avoids inline onclick XSS)
+    resultsEl.querySelectorAll('.discover-item').forEach(function(el) {
+      el.addEventListener('click', function() {
+        addDiscovered(this.dataset.path, this.dataset.name);
+      });
+    });
   }).catch(function() {
     resultsEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:4px;">Discovery failed</div>';
   });
