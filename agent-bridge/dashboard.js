@@ -311,6 +311,14 @@ function apiAddProject(body) {
   const name = body.name || path.basename(absPath);
   if (projects.find(p => p.path === absPath)) return { error: 'Project already added' };
 
+  // Create .agent-bridge directory if it doesn't exist
+  const abDir = path.join(absPath, '.agent-bridge');
+  if (!fs.existsSync(abDir)) fs.mkdirSync(abDir, { recursive: true });
+
+  // Set up MCP config so agents can use it
+  const serverPath = path.join(__dirname, 'server.js').replace(/\\/g, '/');
+  ensureMCPConfig('claude', serverPath, absPath);
+
   projects.push({ name, path: absPath, added_at: new Date().toISOString() });
   saveProjects(projects);
   return { success: true, project: { name, path: absPath } };
