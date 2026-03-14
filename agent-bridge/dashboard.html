@@ -1985,6 +1985,21 @@
     left: 18px;
     background: var(--green);
   }
+
+  /* ===== v3.0: AVATAR PICKER ===== */
+  .avatar-option {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    transition: all 0.15s;
+    object-fit: cover;
+    padding: 2px;
+  }
+
+  .avatar-option:hover { border-color: var(--accent); transform: scale(1.1); }
+  .avatar-option.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 </style>
 </head>
 <body>
@@ -2154,6 +2169,41 @@
   <div id="pp-role"></div>
   <div class="profile-popup-bio" id="pp-bio"></div>
   <div class="profile-popup-stats" id="pp-stats"></div>
+  <button class="btn btn-primary" style="width:100%;margin-top:10px" id="pp-edit-btn" onclick="openProfileEditor()">Edit Profile</button>
+</div>
+
+<!-- Profile Editor Modal -->
+<div id="profile-editor-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:400;display:none;align-items:center;justify-content:center" onclick="closeProfileEditor()">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;width:380px;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.5)" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <span style="font-weight:700;font-size:15px">Edit Profile</span>
+      <button style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer" onclick="closeProfileEditor()">&times;</button>
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px">Avatar</label>
+      <div id="avatar-picker" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <label class="btn" style="cursor:pointer;font-size:11px;flex:1;text-align:center">
+          Upload Image
+          <input type="file" accept="image/*" style="display:none" onchange="handleAvatarUpload(this)">
+        </label>
+        <input id="pe-avatar-url" placeholder="Or paste image URL..." style="flex:2;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;outline:none">
+      </div>
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Display Name</label>
+      <input id="pe-display-name" maxlength="30" style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;outline:none">
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Role</label>
+      <input id="pe-role" maxlength="30" placeholder="e.g. Architect, Reviewer, Coder" style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;outline:none">
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Bio</label>
+      <textarea id="pe-bio" maxlength="200" rows="2" placeholder="Short description..." style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:inherit;outline:none;resize:none"></textarea>
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:8px" onclick="saveProfile()">Save Profile</button>
+  </div>
 </div>
 
 <script>
@@ -3398,6 +3448,7 @@ function showProfilePopup(agentName, event) {
   var agent = cachedAgents[agentName];
   if (!agent) return;
 
+  editingAgent = agentName;
   var color = getColor(agentName);
   var ppAvatar = document.getElementById('pp-avatar');
   if (agent.avatar) { ppAvatar.src = agent.avatar; ppAvatar.style.display = ''; } else { ppAvatar.style.display = 'none'; }
@@ -3429,6 +3480,103 @@ function showProfilePopup(agentName, event) {
 document.addEventListener('click', function() {
   document.getElementById('profile-popup').classList.remove('open');
 });
+
+// ==================== v3.0: PROFILE EDITOR ====================
+
+var BUILT_IN_AVATARS = [
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%2358a6ff'/%3E%3Ccircle cx='22' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='4' fill='%23fff'/%3E%3Crect x='20' y='38' width='24' height='4' rx='2' fill='%23fff'/%3E%3Crect x='14' y='12' width='6' height='10' rx='3' fill='%2358a6ff' stroke='%23fff' stroke-width='1.5'/%3E%3Crect x='44' y='12' width='6' height='10' rx='3' fill='%2358a6ff' stroke='%23fff' stroke-width='1.5'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%233fb950'/%3E%3Ccircle cx='22' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='22' cy='26' r='2' fill='%23333'/%3E%3Ccircle cx='42' cy='26' r='2' fill='%23333'/%3E%3Cpath d='M20 38 Q32 46 44 38' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23d29922'/%3E%3Crect x='16' y='22' width='12' height='8' rx='2' fill='%23fff'/%3E%3Crect x='36' y='22' width='12' height='8' rx='2' fill='%23fff'/%3E%3Ccircle cx='22' cy='26' r='2' fill='%23333'/%3E%3Ccircle cx='42' cy='26' r='2' fill='%23333'/%3E%3Cpath d='M24 40 H40' stroke='%23fff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23f85149'/%3E%3Ccircle cx='22' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='22' cy='26' r='2' fill='%23333'/%3E%3Ccircle cx='42' cy='26' r='2' fill='%23333'/%3E%3Cpath d='M22 40 Q32 34 42 40' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23bc8cff'/%3E%3Ccircle cx='22' cy='28' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='28' r='4' fill='%23fff'/%3E%3Cpath d='M16 18 L22 24' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M48 18 L42 24' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3Cellipse cx='32' cy='42' rx='8' ry='4' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23f778ba'/%3E%3Ccircle cx='24' cy='26' r='6' fill='%23fff'/%3E%3Ccircle cx='40' cy='26' r='6' fill='%23fff'/%3E%3Ccircle cx='24' cy='26' r='3' fill='%23333'/%3E%3Ccircle cx='40' cy='26' r='3' fill='%23333'/%3E%3Cpath d='M26 40 Q32 46 38 40' stroke='%23fff' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%2379c0ff'/%3E%3Crect x='17' y='23' width='10' height='6' rx='3' fill='%23fff'/%3E%3Crect x='37' y='23' width='10' height='6' rx='3' fill='%23fff'/%3E%3Cpath d='M22 38 L32 44 L42 38' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%237ee787'/%3E%3Ccircle cx='22' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='23' cy='25' r='2' fill='%23333'/%3E%3Ccircle cx='43' cy='25' r='2' fill='%23333'/%3E%3Cpath d='M20 38 Q32 48 44 38' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23e3b341'/%3E%3Cpath d='M18 22 L26 30 L18 30Z' fill='%23fff'/%3E%3Cpath d='M46 22 L38 30 L46 30Z' fill='%23fff'/%3E%3Crect x='24' y='38' width='16' height='6' rx='3' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23ffa198'/%3E%3Ccircle cx='22' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='22' cy='27' r='2.5' fill='%23333'/%3E%3Ccircle cx='42' cy='27' r='2.5' fill='%23333'/%3E%3Cellipse cx='32' cy='42' rx='6' ry='3' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%230969da'/%3E%3Crect x='16' y='20' width='14' height='10' rx='2' fill='%23fff'/%3E%3Crect x='34' y='20' width='14' height='10' rx='2' fill='%23fff'/%3E%3Ccircle cx='23' cy='25' r='2' fill='%230969da'/%3E%3Ccircle cx='41' cy='25' r='2' fill='%230969da'/%3E%3Crect x='26' y='38' width='12' height='4' rx='2' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%238250df'/%3E%3Ccircle cx='24' cy='24' r='5' fill='%23fff'/%3E%3Ccircle cx='40' cy='24' r='5' fill='%23fff'/%3E%3Ccircle cx='24' cy='24' r='2' fill='%238250df'/%3E%3Ccircle cx='40' cy='24' r='2' fill='%238250df'/%3E%3Cpath d='M20 38 Q32 50 44 38' stroke='%23fff' fill='none' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='10' r='4' fill='%23fff'/%3E%3C/svg%3E",
+];
+
+var editingAgent = '';
+var selectedAvatar = '';
+
+function openProfileEditor() {
+  var agent = cachedAgents[editingAgent];
+  if (!editingAgent || !agent) return;
+
+  document.getElementById('profile-popup').classList.remove('open');
+
+  // Populate fields
+  document.getElementById('pe-display-name').value = agent.display_name || editingAgent;
+  document.getElementById('pe-role').value = agent.role || '';
+  document.getElementById('pe-bio').value = agent.bio || '';
+  document.getElementById('pe-avatar-url').value = '';
+  selectedAvatar = agent.avatar || '';
+
+  // Build avatar picker grid
+  var picker = document.getElementById('avatar-picker');
+  var html = '';
+  for (var i = 0; i < BUILT_IN_AVATARS.length; i++) {
+    var sel = (BUILT_IN_AVATARS[i] === selectedAvatar) ? ' selected' : '';
+    html += '<img class="avatar-option' + sel + '" src="' + BUILT_IN_AVATARS[i] + '" onclick="selectAvatar(' + i + ')" data-idx="' + i + '">';
+  }
+  picker.innerHTML = html;
+
+  // Show modal
+  var overlay = document.getElementById('profile-editor-overlay');
+  overlay.style.display = 'flex';
+}
+
+function closeProfileEditor() {
+  document.getElementById('profile-editor-overlay').style.display = 'none';
+}
+
+function selectAvatar(idx) {
+  selectedAvatar = BUILT_IN_AVATARS[idx];
+  document.getElementById('pe-avatar-url').value = '';
+  var options = document.querySelectorAll('#avatar-picker .avatar-option');
+  options.forEach(function(el) {
+    el.classList.toggle('selected', parseInt(el.dataset.idx) === idx);
+  });
+}
+
+function handleAvatarUpload(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  if (file.size > 50000) { console.error('Avatar file too large (max 50KB)'); return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    selectedAvatar = e.target.result;
+    // Deselect built-in options
+    document.querySelectorAll('#avatar-picker .avatar-option').forEach(function(el) { el.classList.remove('selected'); });
+    document.getElementById('pe-avatar-url').value = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+function saveProfile() {
+  var avatarUrl = document.getElementById('pe-avatar-url').value.trim();
+  var avatar = avatarUrl || selectedAvatar;
+  var body = {
+    agent: editingAgent,
+    display_name: document.getElementById('pe-display-name').value.trim() || editingAgent,
+    role: document.getElementById('pe-role').value.trim(),
+    bio: document.getElementById('pe-bio').value.trim(),
+  };
+  if (avatar) body.avatar = avatar;
+
+  fetch('/api/profiles' + projectParam(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.success) {
+      closeProfileEditor();
+      poll(); // refresh to show new avatar/name
+    }
+  }).catch(function(e) { console.error('Save profile failed:', e); });
+}
 
 // ==================== v3.0: WORKSPACES ====================
 
