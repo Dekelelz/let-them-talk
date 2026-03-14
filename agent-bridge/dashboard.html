@@ -878,6 +878,51 @@
     color: var(--orange);
   }
 
+  .copy-block {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 4px 0 8px;
+    font-size: 11px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    color: var(--text);
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    line-height: 1.4;
+  }
+
+  .copy-block:hover { border-color: var(--accent); }
+
+  .copy-block .copy-hint {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 9px;
+    color: var(--text-muted);
+    font-family: -apple-system, sans-serif;
+  }
+
+  .copy-block.copied { border-color: var(--green); }
+  .copy-block.copied .copy-hint { color: var(--green); }
+
+  /* ===== FOOTER ===== */
+  .app-footer {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 6px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .app-footer a { color: var(--text-dim); text-decoration: none; }
+  .app-footer a:hover { color: var(--accent); }
+
   /* ===== MESSAGE GROUPING ===== */
   .message.grouped {
     padding-top: 2px;
@@ -1363,6 +1408,9 @@
     </div>
   </div>
 </div>
+<div class="app-footer">
+  <span>Let Them Talk v2.5.0</span>
+</div>
 
 <script>
 var POLL_INTERVAL = 2000;
@@ -1792,8 +1840,10 @@ function renderMessages(messages) {
       '<div class="empty-sub">Get two AI agents talking in minutes</div>' +
       '<div class="onboard-steps">' +
         '<div class="onboard-step"><span class="onboard-num">1</span><span>Open two terminals and run <code>claude</code> in each</span></div>' +
-        '<div class="onboard-step"><span class="onboard-num">2</span><span>Tell Terminal 1: <code>Register as A, say hello, then listen</code></span></div>' +
-        '<div class="onboard-step"><span class="onboard-num">3</span><span>Tell Terminal 2: <code>Register as B, then listen</code></span></div>' +
+        '<div class="onboard-step"><span class="onboard-num">2</span><span>Paste this in Terminal 1:</span></div>' +
+        '<div class="copy-block" onclick="copyText(this)" data-text="You are Agent A. Register as &quot;A&quot;. Say hello to Agent B, then call listen()."><span class="copy-hint">click to copy</span>You are Agent A. Register as "A". Say hello to Agent B, then call listen().</div>' +
+        '<div class="onboard-step"><span class="onboard-num">3</span><span>Paste this in Terminal 2:</span></div>' +
+        '<div class="copy-block" onclick="copyText(this)" data-text="You are Agent B. Register as &quot;B&quot;. Call listen() to wait for messages. When you receive one, respond, then listen() again."><span class="copy-hint">click to copy</span>You are Agent B. Register as "B". Call listen() to wait for messages. When you receive one, respond, then listen() again.</div>' +
         '<div class="onboard-step"><span class="onboard-num">4</span><span>Watch them talk here in real time!</span></div>' +
       '</div>' +
     '</div>';
@@ -2006,6 +2056,20 @@ function onSearch() {
   searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
   lastMessageCount = 0;
   renderMessages(cachedHistory);
+}
+
+// ==================== COPY TO CLIPBOARD ====================
+
+function copyText(el) {
+  var text = el.getAttribute('data-text').replace(/&quot;/g, '"');
+  navigator.clipboard.writeText(text).then(function() {
+    el.classList.add('copied');
+    el.querySelector('.copy-hint').textContent = 'copied!';
+    setTimeout(function() {
+      el.classList.remove('copied');
+      el.querySelector('.copy-hint').textContent = 'click to copy';
+    }, 2000);
+  }).catch(function() {});
 }
 
 // ==================== AGENT STATS ====================
@@ -2320,6 +2384,11 @@ function poll() {
     document.getElementById('stat-agents').textContent = status.agentCount;
     document.getElementById('stat-sleeping').textContent = status.sleepingCount || 0;
     document.getElementById('stat-threads').textContent = status.threadCount;
+
+    // Update tab title with message count
+    document.title = status.messageCount > 0
+      ? 'Let Them Talk (' + status.messageCount + ')'
+      : 'Let Them Talk';
 
     renderAgents(cachedAgents);
     renderAgentStats();

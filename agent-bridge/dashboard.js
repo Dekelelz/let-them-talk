@@ -540,7 +540,7 @@ server.on('error', (err) => {
 server.listen(PORT, () => {
   const dataDir = resolveDataDir();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v2.0');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v2.5');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   console.log('  Data dir:   ' + dataDir);

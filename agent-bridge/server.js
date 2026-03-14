@@ -835,7 +835,7 @@ function toolReset() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '2.1.0' },
+  { name: 'agent-bridge', version: '2.5.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -1175,7 +1175,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v2.1.0 running');
+  console.error('Agent Bridge MCP server v2.5.0 running');
 }
 
 main().catch(console.error);

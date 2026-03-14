@@ -1,144 +1,138 @@
 # Let Them Talk
 
-**MCP server that lets multiple AI CLI agents talk to each other.**
+[![npm version](https://img.shields.io/npm/v/let-them-talk.svg)](https://www.npmjs.com/package/let-them-talk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Open two (or more) Claude Code, Gemini CLI, or Codex CLI terminals — and let them collaborate, debate, review code, or divide tasks. Watch the conversation unfold in a real-time web dashboard.
+**MCP server + web dashboard that lets AI CLI agents talk to each other.**
+
+Open two (or more) Claude Code, Gemini CLI, or Codex CLI terminals — and let them collaborate, debate, review code, or divide tasks. Watch the conversation unfold in a real-time web dashboard with a kanban board, agent monitoring, and message injection.
 
 ## Quick Start
 
 ```bash
-# Install in any project
+# 1. Install in any project
 npx let-them-talk init
 
-# Launch the web dashboard
+# 2. Launch the web dashboard
 npx let-them-talk dashboard
 
-# In Terminal 1: tell Claude to register as Agent A and say hello
-# In Terminal 2: tell Claude to register as Agent B and listen
+# 3. In Terminal 1: tell the agent to register as "A", say hello, then call listen()
+# 4. In Terminal 2: tell the agent to register as "B", then call listen()
 ```
 
-That's it. The agents will start talking.
+Or use a template for guided setup:
+
+```bash
+npx let-them-talk init --template team    # Coordinator + Researcher + Coder
+npx let-them-talk init --template review  # Author + Reviewer
+npx let-them-talk init --template debate  # Pro + Con
+npx let-them-talk templates               # List all templates
+```
 
 ## How It Works
 
 ```
-Terminal 1 (Claude Code)          Terminal 2 (Gemini CLI)
-        │                                 │
-        ▼                                 ▼
-   MCP Server                        MCP Server
-   (stdio process)                   (stdio process)
-        │                                 │
-        └──────── Shared Filesystem ──────┘
-                  .agent-bridge/
-                  ├── messages.jsonl
-                  ├── history.jsonl
-                  ├── agents.json
-                  └── acks.json
-
-                        │
-                        ▼
-               Web Dashboard (localhost:3000)
-               Real-time monitoring & injection
+Terminal 1 (Claude Code)          Terminal 2 (Gemini CLI)          Terminal 3 (Codex CLI)
+        |                                 |                                |
+        v                                 v                                v
+   MCP Server                        MCP Server                      MCP Server
+   (stdio process)                   (stdio process)                 (stdio process)
+        |                                 |                                |
+        +------------- Shared Filesystem (.agent-bridge/) ----------------+
+                       |  messages.jsonl  |  history.jsonl  |
+                       |  agents.json     |  tasks.json     |
+                                    |
+                                    v
+                        Web Dashboard (localhost:3000)
+                        Real-time SSE + Agent monitoring
+                        Kanban board + Message injection
 ```
 
-Each CLI terminal spawns its own MCP server process via stdio. All processes read and write to a shared `.agent-bridge/` directory on disk. The dashboard reads the same files for live monitoring.
+Each CLI terminal spawns its own MCP server process via stdio. All processes read/write to a shared `.agent-bridge/` directory. The dashboard monitors the same files via Server-Sent Events for real-time updates.
 
 ## Features
 
-- **9 MCP tools** — register, list_agents, send_message, wait_for_reply, listen, check_messages, ack_message, get_history, reset
-- **Multi-agent** — any number of named agents (not limited to A/B)
-- **Auto-routing** — with 2 agents, messages route automatically; with 3+, specify the recipient
-- **Conversation threading** — reply_to chains with automatic thread_id inheritance
-- **Message acknowledgments** — confirm processing, visible in history
-- **Heartbeat system** — 10s pings track active/sleeping/dead status
-- **Listen mode** — agents block indefinitely waiting for messages, no timeouts
-- **Multi-CLI support** — Claude Code, Gemini CLI, Codex CLI auto-detection
-- **Web dashboard** — real-time monitoring, message injection, markdown rendering
+### 17 MCP Tools
 
-## Dashboard
+| Tool | Description |
+|------|-------------|
+| `register` | Set agent identity (any name) |
+| `list_agents` | Show all agents with status |
+| `send_message` | Send to specific agent (auto-routes with 2) |
+| `broadcast` | Send to all agents at once |
+| `wait_for_reply` | Block until message arrives (5min timeout) |
+| `listen` | Block indefinitely — never times out |
+| `check_messages` | Non-blocking peek at inbox |
+| `ack_message` | Confirm message was processed |
+| `get_history` | View conversation with thread filter |
+| `get_summary` | Condensed conversation recap |
+| `handoff` | Transfer work to another agent with context |
+| `share_file` | Send file contents to another agent |
+| `create_task` | Create and assign tasks |
+| `update_task` | Update task status (pending/in_progress/done/blocked) |
+| `list_tasks` | View tasks with filters |
+| `reset` | Clear data (auto-archives first) |
 
-The web dashboard at `localhost:3000` provides:
+### Web Dashboard
 
-- **Live message feed** — full markdown rendering (code blocks, headers, tables, lists)
-- **Agent monitoring** — active (green), sleeping (orange), dead (red) status with idle time
-- **Listening indicators** — see which agents are waiting for messages vs busy working
-- **Alert badges** — sleeping agents highlighted with nudge buttons
-- **Message injection** — send messages to agents directly from the browser
-- **Broadcast** — message all agents at once
-- **Search** — filter messages by content, sender, or recipient
-- **Thread browser** — click to filter by conversation thread
-- **Conversation export** — download as markdown file
-- **Multi-project** — monitor multiple project folders from one dashboard
+- **Real-time feed** — SSE-powered, ~200ms latency, full markdown rendering
+- **Agent monitoring** — active/sleeping/dead/listening status with idle times
+- **Kanban board** — task management with drag-free status updates
+- **Message injection** — send messages to agents from the browser
+- **Bookmarks** — star important messages, filter by bookmarks
+- **Search** — filter by content, sender, or recipient
+- **Sound notifications** — optional audio alert for new messages
+- **Export** — shareable HTML or Markdown download
+- **Multi-project** — monitor multiple project folders + auto-discover
 - **Mobile responsive** — works on phones and tablets
 
-## Usage
+### Reliability
 
-### Two-Agent Conversation
+- **Heartbeat** — 10s pings track agent liveness
+- **Auto-compact** — message queue cleaned when > 500 lines
+- **Auto-archive** — conversations saved before reset
+- **Context hints** — warns agents when conversation gets long
+- **Dead recipient warnings** — alerts when sending to offline agents
+- **Clean exit** — agents deregister on process exit
 
-**Terminal 1:**
-```
-You are Agent A. Register as "A". Say hello to Agent B, then call listen().
-```
+## Agent Templates
 
-**Terminal 2:**
-```
-You are Agent B. Register as "B". Call listen() to wait for messages.
-When you receive a message, respond, then call listen() again.
-```
+Pre-built team configurations with ready-to-paste prompts:
 
-### Multi-Agent Setup (3+)
-
-With 3+ agents, specify the `to` parameter:
-
-**Terminal 1 — Coordinator:**
-```
-Register as "Coordinator". Assign tasks to Researcher and Coder.
-Use send_message with to="Researcher" or to="Coder".
-```
-
-**Terminal 2 — Researcher:**
-```
-Register as "Researcher". Listen for tasks from the Coordinator.
-```
-
-**Terminal 3 — Coder:**
-```
-Register as "Coder". Listen for coding tasks from the Coordinator.
-```
+| Template | Agents | Best For |
+|----------|--------|----------|
+| `pair` | A, B | Simple conversations, brainstorming |
+| `team` | Coordinator, Researcher, Coder | Complex features, research + implementation |
+| `review` | Author, Reviewer | Code review with structured feedback |
+| `debate` | Pro, Con | Evaluating trade-offs and decisions |
 
 ## CLI Commands
 
 ```bash
-# Auto-detect CLI type and configure MCP
-npx let-them-talk init
-
-# Configure for all detected CLIs
-npx let-them-talk init --all
-
-# Launch the web dashboard
-npx let-them-talk dashboard
-
-# Clear all conversation data
-npx let-them-talk reset
-
-# Show help
-npx let-them-talk help
+npx let-them-talk init                    # Auto-detect CLI and configure
+npx let-them-talk init --all              # Configure for all CLIs
+npx let-them-talk init --template <name>  # Use a team template
+npx let-them-talk templates               # List available templates
+npx let-them-talk dashboard               # Launch web dashboard
+npx let-them-talk reset                   # Clear conversation data
+npx let-them-talk help                    # Show help
 ```
 
 ## Supported CLIs
 
-| CLI | Config File | Auto-detected |
-|-----|-----------|---------------|
+| CLI | Config | Auto-detected |
+|-----|--------|---------------|
 | Claude Code | `.mcp.json` | Yes |
-| Gemini CLI | `GEMINI.md` | Yes |
-| Codex CLI | `AGENTS.md` | Yes |
+| Gemini CLI | `.gemini/settings.json` | Yes |
+| Codex CLI | `.mcp.json` | Yes |
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_BRIDGE_DATA_DIR` | `{cwd}/.agent-bridge/` | Data directory location |
+| `AGENT_BRIDGE_DATA_DIR` | `{cwd}/.agent-bridge/` | Data directory path |
 | `AGENT_BRIDGE_PORT` | `3000` | Dashboard port |
+| `NODE_ENV` | — | Set to `development` for hot-reload |
 
 ## License
 
