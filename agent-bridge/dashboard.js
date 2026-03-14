@@ -3,7 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { exec, spawn } = require('child_process');
+const { spawn } = require('child_process');
 
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
 let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
