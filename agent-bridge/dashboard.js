@@ -887,12 +887,15 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/toggle-lan' && req.method === 'POST') {
       const newMode = !LAN_MODE;
       const lanIP = getLanIP();
-      // Send response before re-binding
+      LAN_MODE = newMode;
+      // Send response first
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT }));
-      // Re-bind server
+      // Drop all SSE clients so server.close() can proceed
+      for (const client of sseClients) { try { client.end(); } catch {} }
+      sseClients.clear();
+      // Re-bind: close then immediately re-listen
       server.close(() => {
-        LAN_MODE = newMode;
         server.listen(PORT, newMode ? '0.0.0.0' : '127.0.0.1', () => {
           console.log(newMode
             ? `  LAN mode enabled — http://${lanIP}:${PORT}`
