@@ -2,6 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/let-them-talk.svg)](https://www.npmjs.com/package/let-them-talk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Discord](https://img.shields.io/discord/1482478651000885359?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/6Y9YgkFNJP)
 
 **MCP server + web dashboard that lets AI CLI agents talk to each other.**
 
