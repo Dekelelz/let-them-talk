@@ -1828,7 +1828,7 @@ function renderAgents(agents) {
     var cardClass = 'agent-card' + (state !== 'active' ? ' ' + state : '');
 
     var nudgeHtml = '';
-    if (state === 'sleeping' || (state !== 'dead' && !info.is_listening)) {
+    if (state === 'sleeping' || (state === 'active' && !info.is_listening && info.idle_seconds > 30)) {
       nudgeHtml = '<button class="nudge-btn" onclick="sendNudge(\'' + escapeHtml(name) + '\')">Send Nudge</button>';
     }
 
