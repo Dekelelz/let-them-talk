@@ -13,6 +13,7 @@ const MESSAGES_FILE = path.join(DATA_DIR, 'messages.jsonl');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.jsonl');
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const ACKS_FILE = path.join(DATA_DIR, 'acks.json');
+const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
 
 // In-memory state for this process
 let registeredName = null;
@@ -678,6 +679,99 @@ function toolShareFile(filePath, to = null, summary = null) {
   };
 }
 
+// --- Task management ---
+
+function getTasks() {
+  if (!fs.existsSync(TASKS_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8')); } catch { return []; }
+}
+
+function saveTasks(tasks) {
+  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
+}
+
+function toolCreateTask(title, description = '', assignee = null) {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  const agents = getAgents();
+  const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
+
+  if (!assignee && otherAgents.length === 1) {
+    assignee = otherAgents[0];
+  }
+
+  const task = {
+    id: 'task_' + generateId(),
+    title,
+    description,
+    status: 'pending',
+    assignee: assignee || null,
+    created_by: registeredName,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    notes: [],
+  };
+
+  ensureDataDir();
+  const tasks = getTasks();
+  tasks.push(task);
+  saveTasks(tasks);
+  touchActivity();
+
+  return { success: true, task_id: task.id, assignee: task.assignee };
+}
+
+function toolUpdateTask(taskId, status, notes = null) {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  const validStatuses = ['pending', 'in_progress', 'done', 'blocked'];
+  if (!validStatuses.includes(status)) {
+    return { error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` };
+  }
+
+  const tasks = getTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) {
+    return { error: `Task not found: ${taskId}` };
+  }
+
+  task.status = status;
+  task.updated_at = new Date().toISOString();
+  if (notes) {
+    task.notes.push({ by: registeredName, text: notes, at: new Date().toISOString() });
+  }
+
+  saveTasks(tasks);
+  touchActivity();
+
+  return { success: true, task_id: task.id, status: task.status, title: task.title };
+}
+
+function toolListTasks(status = null, assignee = null) {
+  let tasks = getTasks();
+  if (status) tasks = tasks.filter(t => t.status === status);
+  if (assignee) tasks = tasks.filter(t => t.assignee === assignee);
+
+  return {
+    count: tasks.length,
+    tasks: tasks.map(t => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      status: t.status,
+      assignee: t.assignee,
+      created_by: t.created_by,
+      created_at: t.created_at,
+      updated_at: t.updated_at,
+      notes_count: t.notes.length,
+    })),
+  };
+}
+
 function toolGetSummary(lastN = 20) {
   const history = readJsonl(HISTORY_FILE);
   if (history.length === 0) {
@@ -719,7 +813,7 @@ function toolReset() {
   }
 
   // Remove known fixed files
-  for (const f of [MESSAGES_FILE, HISTORY_FILE, AGENTS_FILE, ACKS_FILE]) {
+  for (const f of [MESSAGES_FILE, HISTORY_FILE, AGENTS_FILE, ACKS_FILE, TASKS_FILE]) {
     if (fs.existsSync(f)) fs.unlinkSync(f);
   }
   // Glob for all consumed-*.json files (dynamic agent names)
@@ -921,6 +1015,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'create_task',
+        description: 'Create a task and optionally assign it to another agent. Use for structured work delegation in multi-agent teams.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Short task title' },
+            description: { type: 'string', description: 'Detailed task description' },
+            assignee: { type: 'string', description: 'Agent to assign to (optional, auto-assigns with 2 agents)' },
+          },
+          required: ['title'],
+        },
+      },
+      {
+        name: 'update_task',
+        description: 'Update a task status. Statuses: pending, in_progress, done, blocked.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            task_id: { type: 'string', description: 'Task ID to update' },
+            status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'blocked'], description: 'New status' },
+            notes: { type: 'string', description: 'Optional progress note' },
+          },
+          required: ['task_id', 'status'],
+        },
+      },
+      {
+        name: 'list_tasks',
+        description: 'List all tasks, optionally filtered by status or assignee.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'blocked'], description: 'Filter by status' },
+            assignee: { type: 'string', description: 'Filter by assignee agent name' },
+          },
+        },
+      },
+      {
         name: 'get_summary',
         description: 'Get a condensed summary of the conversation so far. Useful when context is getting long and you need a quick recap of what was discussed.',
         inputSchema: {
@@ -978,6 +1109,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'get_history':
         result = toolGetHistory(args?.limit, args?.thread_id);
+        break;
+      case 'create_task':
+        result = toolCreateTask(args.title, args?.description, args?.assignee);
+        break;
+      case 'update_task':
+        result = toolUpdateTask(args.task_id, args.status, args?.notes);
+        break;
+      case 'list_tasks':
+        result = toolListTasks(args?.status, args?.assignee);
         break;
       case 'handoff':
         result = toolHandoff(args.to, args.context);

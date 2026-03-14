@@ -953,6 +953,153 @@
     60%, 100% { content: '...'; }
   }
 
+  /* ===== VIEW TABS ===== */
+  .view-tabs {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .view-tab {
+    flex: 1;
+    text-align: center;
+    padding: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+
+  .view-tab:hover { color: var(--text); }
+  .view-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ===== TASKS KANBAN ===== */
+  .tasks-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: none;
+  }
+
+  .tasks-area.visible { display: block; }
+
+  .kanban {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    min-height: 200px;
+  }
+
+  .kanban-col {
+    min-width: 0;
+  }
+
+  .kanban-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 8px;
+    border-radius: 6px 6px 0 0;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .kanban-title.pending { background: var(--surface-2); color: var(--text-dim); }
+  .kanban-title.in_progress { background: var(--accent-dim); color: var(--accent); }
+  .kanban-title.done { background: var(--green-dim); color: var(--green); }
+  .kanban-title.blocked { background: var(--red-dim); color: var(--red); }
+
+  .kanban-count {
+    font-size: 10px;
+    opacity: 0.7;
+  }
+
+  .task-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 6px;
+    transition: border-color 0.15s;
+  }
+
+  .task-card:hover { border-color: var(--border-light); }
+
+  .task-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .task-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .task-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .task-assignee {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  .task-assignee-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .task-time {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .task-status-select {
+    background: var(--surface-3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 10px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .tasks-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 40px 20px;
+  }
+
+  @media (max-width: 768px) {
+    .kanban { grid-template-columns: 1fr; }
+  }
+
   /* ===== CONNECTION QUALITY ===== */
   .conn-detail {
     font-size: 10px;
@@ -1186,11 +1333,16 @@
 
   <!-- MAIN -->
   <div class="main" style="position:relative">
-    <div class="search-bar">
+    <div class="view-tabs">
+      <div class="view-tab active" id="tab-messages" onclick="switchView('messages')">Messages</div>
+      <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
+    </div>
+    <div class="search-bar" id="search-bar">
       <input class="search-input" id="search-input" placeholder="Search messages..." oninput="onSearch()">
       <span class="search-count" id="search-count"></span>
     </div>
     <div class="messages-area" id="messages"></div>
+    <div class="tasks-area" id="tasks-area"></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
     <div class="typing-bar" id="typing-bar"></div>
 
@@ -2014,6 +2166,123 @@ function exportConversation() {
   URL.revokeObjectURL(url);
 }
 
+// ==================== VIEW SWITCHING ====================
+
+var activeView = 'messages';
+
+function switchView(view) {
+  activeView = view;
+  document.getElementById('tab-messages').classList.toggle('active', view === 'messages');
+  document.getElementById('tab-tasks').classList.toggle('active', view === 'tasks');
+  document.getElementById('messages').style.display = view === 'messages' ? 'flex' : 'none';
+  document.getElementById('tasks-area').classList.toggle('visible', view === 'tasks');
+  document.getElementById('search-bar').style.display = view === 'messages' ? 'flex' : 'none';
+  if (view === 'tasks') fetchTasks();
+}
+
+// ==================== TASKS ====================
+
+var cachedTasks = [];
+
+function fetchTasks() {
+  var pq = projectParam();
+  fetch('/api/tasks' + pq).then(function(r) { return r.json(); }).then(function(tasks) {
+    cachedTasks = Array.isArray(tasks) ? tasks : [];
+    renderTasks();
+  }).catch(function() {
+    cachedTasks = [];
+    renderTasks();
+  });
+}
+
+function renderTasks() {
+  var el = document.getElementById('tasks-area');
+  if (!cachedTasks.length) {
+    el.innerHTML = '<div class="tasks-empty">No tasks yet. Agents can create tasks with the create_task tool.</div>';
+    return;
+  }
+
+  var groups = { pending: [], in_progress: [], done: [], blocked: [] };
+  for (var i = 0; i < cachedTasks.length; i++) {
+    var t = cachedTasks[i];
+    var status = t.status || 'pending';
+    if (!groups[status]) groups[status] = [];
+    groups[status].push(t);
+  }
+
+  var cols = [
+    { key: 'pending', label: 'Pending' },
+    { key: 'in_progress', label: 'In Progress' },
+    { key: 'done', label: 'Done' },
+    { key: 'blocked', label: 'Blocked' }
+  ];
+
+  var html = '<div class="kanban">';
+  for (var c = 0; c < cols.length; c++) {
+    var col = cols[c];
+    var tasks = groups[col.key] || [];
+    html += '<div class="kanban-col">';
+    html += '<div class="kanban-title ' + col.key + '">' + col.label + '<span class="kanban-count">' + tasks.length + '</span></div>';
+    for (var j = 0; j < tasks.length; j++) {
+      html += buildTaskCard(tasks[j]);
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function buildTaskCard(t) {
+  var assigneeHtml = '';
+  if (t.assignee) {
+    var color = getColor(t.assignee);
+    assigneeHtml = '<div class="task-assignee"><div class="task-assignee-dot" style="background:' + color + '">' + initial(t.assignee) + '</div>' + escapeHtml(t.assignee) + '</div>';
+  }
+  var time = t.updated_at ? timeAgo(t.updated_at) : timeAgo(t.created_at);
+
+  var statusOpts = '<select class="task-status-select" onchange="updateTaskStatus(\'' + t.id + '\',this.value)">' +
+    '<option value="pending"' + (t.status === 'pending' ? ' selected' : '') + '>Pending</option>' +
+    '<option value="in_progress"' + (t.status === 'in_progress' ? ' selected' : '') + '>In Progress</option>' +
+    '<option value="done"' + (t.status === 'done' ? ' selected' : '') + '>Done</option>' +
+    '<option value="blocked"' + (t.status === 'blocked' ? ' selected' : '') + '>Blocked</option>' +
+  '</select>';
+
+  return '<div class="task-card">' +
+    '<div class="task-title">' + escapeHtml(t.title || 'Untitled') + '</div>' +
+    (t.description ? '<div class="task-desc">' + escapeHtml(t.description) + '</div>' : '') +
+    '<div class="task-footer">' +
+      assigneeHtml +
+      statusOpts +
+      '<span class="task-time">' + time + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+function updateTaskStatus(taskId, newStatus) {
+  fetch('/api/tasks' + projectParam(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, status: newStatus })
+  }).then(function(r) { return r.json(); }).then(function() {
+    fetchTasks();
+  }).catch(function(e) { console.error('Task update failed:', e); });
+}
+
+// ==================== EXPORT MENU ====================
+
+function toggleExportMenu() {
+  var menu = document.getElementById('export-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+// Close menu on outside click
+document.addEventListener('click', function(e) {
+  var menu = document.getElementById('export-menu');
+  if (menu && menu.style.display !== 'none' && !e.target.closest('#export-menu') && !e.target.closest('.btn-primary')) {
+    menu.style.display = 'none';
+  }
+});
+
 // ==================== SHAREABLE HTML EXPORT ====================
 
 function exportShareableHTML() {
@@ -2058,6 +2327,7 @@ function poll() {
     renderMessages(cachedHistory);
     renderBookmarksSidebar();
     updateTypingIndicator(cachedAgents);
+    if (activeView === 'tasks') fetchTasks();
   }).catch(function(e) {
     console.error('Poll failed:', e);
     document.getElementById('conn-detail').textContent = ' err';

@@ -304,6 +304,37 @@ document.getElementById('messages').innerHTML=html;
 </script></body></html>`;
 }
 
+// Tasks API
+function apiTasks(query) {
+  const projectPath = query.get('project') || null;
+  const tasksFile = filePath('tasks.json', projectPath);
+  if (!fs.existsSync(tasksFile)) return [];
+  try { return JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch { return []; }
+}
+
+function apiUpdateTask(body, query) {
+  const projectPath = query.get('project') || null;
+  const tasksFile = filePath('tasks.json', projectPath);
+  if (!body.task_id || !body.status) return { error: 'Missing task_id or status' };
+
+  let tasks = [];
+  if (fs.existsSync(tasksFile)) {
+    try { tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch {}
+  }
+
+  const task = tasks.find(t => t.id === body.task_id);
+  if (!task) return { error: 'Task not found' };
+
+  task.status = body.status;
+  task.updated_at = new Date().toISOString();
+  if (body.notes) {
+    task.notes.push({ by: 'Dashboard', text: body.notes, at: new Date().toISOString() });
+  }
+
+  fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
+  return { success: true, task_id: task.id, status: task.status };
+}
+
 // Auto-discover .agent-bridge directories nearby
 function apiDiscover() {
   const found = [];
@@ -410,6 +441,16 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/projects' && req.method === 'POST') {
       const body = await parseBody(req);
       const result = apiAddProject(body);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    else if (url.pathname === '/api/tasks' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiTasks(url.searchParams)));
+    }
+    else if (url.pathname === '/api/tasks' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const result = apiUpdateTask(body, url.searchParams);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
