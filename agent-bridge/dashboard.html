@@ -1769,12 +1769,21 @@ var COLORS = [
   '#58a6ff','#3fb950','#d29922','#f85149','#bc8cff',
   '#f778ba','#79c0ff','#7ee787','#e3b341','#ffa198'
 ];
+var COLORS_LIGHT = [
+  '#0969da','#1a7f37','#9a6700','#cf222e','#8250df',
+  '#bf3989','#0550ae','#116329','#7d4e00','#a40e26'
+];
 var agentColors = {};
+var agentColorsLight = {};
 var colorIdx = 0;
 
 function getColor(name) {
-  if (!agentColors[name]) { agentColors[name] = COLORS[colorIdx % COLORS.length]; colorIdx++; }
-  return agentColors[name];
+  if (!agentColors[name]) {
+    agentColors[name] = COLORS[colorIdx % COLORS.length];
+    agentColorsLight[name] = COLORS_LIGHT[colorIdx % COLORS_LIGHT.length];
+    colorIdx++;
+  }
+  return currentTheme === 'light' ? agentColorsLight[name] : agentColors[name];
 }
 
 function initial(name) { return name.charAt(0).toUpperCase(); }
