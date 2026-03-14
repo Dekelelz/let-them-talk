@@ -3061,6 +3061,8 @@ function renderMessages(messages) {
     if (m.acked) badges += '<span class="badge badge-ack">ACK</span>';
     if (m.thread_id) badges += '<span class="badge badge-thread">Thread</span>';
 
+    var msgAvatarHtml = getMsgAvatar(m.from, color);
+
     if (isSystem) {
       html += '<div class="message system-msg' + newClass + '">' +
         '<div class="msg-body">' +
@@ -3068,8 +3070,6 @@ function renderMessages(messages) {
         '</div></div>';
       lastFrom = '';
       lastTo = '';
-    var msgAvatarHtml = getMsgAvatar(m.from, color);
-
     } else if (m.type === 'handoff') {
       html += '<div class="message handoff-msg' + newClass + '">' +
         buildMsgActions(m.id) +
