@@ -1068,7 +1068,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.3.1');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.3.2');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

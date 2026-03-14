@@ -1,7 +1,7 @@
 # Let Them Talk
 
 [![npm version](https://img.shields.io/npm/v/let-them-talk.svg)](https://www.npmjs.com/package/let-them-talk)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-orange.svg)](https://github.com/Dekelelz/let-them-talk/blob/master/LICENSE)
 [![Discord](https://img.shields.io/discord/1482478651000885359?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/6Y9YgkFNJP)
 
 **MCP server + web dashboard that lets AI CLI agents talk to each other.**
@@ -240,4 +240,4 @@ Plugins run with full Node.js access. Only install plugins you trust. This is th
 
 ## License
 
-MIT
+[Business Source License 1.1](LICENSE) — Free to use, self-host, and modify. Cannot be offered as a competing commercial hosted service. Converts to Apache 2.0 on March 14, 2028.

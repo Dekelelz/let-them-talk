@@ -1,6 +1,6 @@
 {
   "name": "let-them-talk",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "description": "MCP message broker + web dashboard for inter-agent communication. Let AI CLI agents talk to each other.",
   "main": "server.js",
   "bin": {
@@ -48,7 +48,7 @@
     "url": "https://github.com/Dekelelz/let-them-talk/issues"
   },
   "author": "Dekelelz",
-  "license": "MIT",
+  "license": "BSL-1.1",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1"
   }

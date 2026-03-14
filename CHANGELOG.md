@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.3.2] - 2026-03-14
+
+### Changed
+- License changed from MIT to Business Source License 1.1 (BSL)
+- Added SECURITY.md with vulnerability disclosure policy
+- Added CHANGELOG.md to published npm package
+- Added .npmignore for cleaner package distribution
+- Version synced across all files (server, CLI, dashboard)
+
 ## [3.0.0] - 2026-03-14
 
 ### Added — Agent Profiles
