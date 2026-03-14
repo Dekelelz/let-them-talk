@@ -112,6 +112,13 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Adaptive poll interval — starts fast, slows down when idle
+function adaptiveSleep(pollCount) {
+  if (pollCount < 10) return sleep(500);    // first 5s: fast
+  if (pollCount < 30) return sleep(1000);   // next 20s: medium
+  return sleep(2000);                        // after that: slow
+}
+
 // Read new lines from messages.jsonl starting at a byte offset
 function readNewMessages(fromOffset) {
   if (!fs.existsSync(MESSAGES_FILE)) return { messages: [], newOffset: 0 };
@@ -216,6 +223,18 @@ function autoCompact() {
     const newContent = active.map(m => JSON.stringify(m)).join('\n') + (active.length ? '\n' : '');
     fs.writeFileSync(MESSAGES_FILE, newContent);
     lastReadOffset = Buffer.byteLength(newContent, 'utf8');
+
+    // Trim consumed ID files — keep only IDs still in active messages
+    const activeIds = new Set(active.map(m => m.id));
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (f.startsWith('consumed-') && f.endsWith('.json')) {
+        try {
+          const ids = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
+          const trimmed = ids.filter(id => activeIds.has(id));
+          fs.writeFileSync(path.join(DATA_DIR, f), JSON.stringify(trimmed));
+        } catch {}
+      }
+    }
   } catch {}
 }
 
@@ -451,6 +470,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
 
   const deadline = Date.now() + timeoutSeconds * 1000;
   const consumed = getConsumedIds(registeredName);
+  let pollCount = 0;
 
   while (Date.now() < deadline) {
     const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset);
@@ -466,7 +486,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
       setListening(false);
       return buildMessageResponse(msg, consumed);
     }
-    await sleep(500);
+    await adaptiveSleep(pollCount++);
   }
 
   setListening(false);
@@ -545,6 +565,7 @@ async function toolListen(from = null) {
   // Poll indefinitely (in 5-min chunks to stay within any MCP limits)
   while (true) {
     const chunkDeadline = Date.now() + 300000; // 5 minutes
+    let pollCount = 0;
 
     while (Date.now() < chunkDeadline) {
       const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset);
@@ -560,7 +581,7 @@ async function toolListen(from = null) {
         setListening(false);
         return buildMessageResponse(msg, consumed);
       }
-      await sleep(500);
+      await adaptiveSleep(pollCount++);
     }
     // No message in this 5-min chunk — loop again (stay listening)
   }
