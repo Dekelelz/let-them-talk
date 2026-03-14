@@ -206,11 +206,8 @@ function autoCompact() {
       }
     }
 
-    // Keep only messages not consumed by ALL recipients
-    const agents = getAgents();
-    const agentNames = Object.keys(agents);
+    // Keep only unconsumed messages (for direct messages, only the recipient consumes)
     const active = messages.filter(m => {
-      // Keep if any target agent hasn't consumed it
       if (!allConsumed.has(m.id)) return true;
       return false;
     });
@@ -715,6 +712,13 @@ function saveTasks(tasks) {
 function toolCreateTask(title, description = '', assignee = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
+  }
+
+  if (title.length > 200) {
+    return { error: 'Task title too long (max 200 characters)' };
+  }
+  if (description.length > 5000) {
+    return { error: 'Task description too long (max 5000 characters)' };
   }
 
   const agents = getAgents();

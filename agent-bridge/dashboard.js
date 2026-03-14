@@ -166,7 +166,7 @@ function apiStatus(query) {
 function apiReset(query) {
   const projectPath = query.get('project') || null;
   const dataDir = resolveDataDir(projectPath);
-  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json'];
+  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json'];
   for (const f of fixedFiles) {
     const p = path.join(dataDir, f);
     if (fs.existsSync(p)) fs.unlinkSync(p);

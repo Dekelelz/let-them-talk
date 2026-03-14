@@ -1038,14 +1038,25 @@
   .typing-bar.visible { display: block; }
 
   .typing-dots {
-    display: inline-block;
-    animation: typingDots 1.2s infinite;
+    display: inline-flex;
+    gap: 3px;
+    margin-left: 4px;
   }
 
-  @keyframes typingDots {
-    0%, 20% { content: '.'; }
-    40% { content: '..'; }
-    60%, 100% { content: '...'; }
+  .typing-dots span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    animation: typingBounce 1.2s infinite;
+  }
+
+  .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes typingBounce {
+    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+    30% { opacity: 1; transform: translateY(-3px); }
   }
 
   /* ===== VIEW TABS ===== */
@@ -2498,7 +2509,25 @@ function fetchTasks() {
 function renderTasks() {
   var el = document.getElementById('tasks-area');
   if (!cachedTasks.length) {
-    el.innerHTML = '<div class="tasks-empty">No tasks yet. Agents can create tasks with the create_task tool.</div>';
+    el.innerHTML = '<div class="kanban">' +
+      '<div class="kanban-col">' +
+        '<div class="kanban-title pending">Pending<span class="kanban-count">0</span></div>' +
+        '<div class="task-card" style="opacity:0.3;border-style:dashed">' +
+          '<div class="task-title" style="color:var(--text-muted)">Research API options</div>' +
+          '<div class="task-desc">Example: assigned to Researcher</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="kanban-col">' +
+        '<div class="kanban-title in_progress">In Progress<span class="kanban-count">0</span></div>' +
+        '<div class="task-card" style="opacity:0.3;border-style:dashed">' +
+          '<div class="task-title" style="color:var(--text-muted)">Build dashboard UI</div>' +
+          '<div class="task-desc">Example: assigned to Coder</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="kanban-col"><div class="kanban-title done">Done<span class="kanban-count">0</span></div></div>' +
+      '<div class="kanban-col"><div class="kanban-title blocked">Blocked<span class="kanban-count">0</span></div></div>' +
+    '</div>' +
+    '<div class="tasks-empty" style="margin-top:16px">No tasks yet. Agents create tasks with <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--orange)">create_task(title, description, assignee)</code></div>';
     return;
   }
 
@@ -2817,8 +2846,8 @@ function updateTypingIndicator(agents) {
   }
   var bar = document.getElementById('typing-bar');
   if (typing.length > 0) {
-    var text = typing.join(', ') + (typing.length === 1 ? ' is' : ' are') + ' processing...';
-    bar.textContent = text;
+    var text = typing.join(', ') + (typing.length === 1 ? ' is' : ' are') + ' processing';
+    bar.innerHTML = text + '<span class="typing-dots"><span></span><span></span><span></span></span>';
     bar.classList.add('visible');
   } else {
     bar.classList.remove('visible');
