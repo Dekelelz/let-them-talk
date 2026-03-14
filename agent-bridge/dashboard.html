@@ -4096,6 +4096,7 @@ function poll() {
     fetch('/api/agents' + pq).then(function(r) { return r.json(); }),
     fetch('/api/status' + pq).then(function(r) { return r.json(); }),
   ]).then(function(results) {
+    console.log('[LTT] poll ok — history:' + results[0].length + ' agents:' + Object.keys(results[1]).length + ' project:' + (activeProject || 'default'));
     updateConnectionInfo(Date.now() - pollStart);
     var prevHistLen = cachedHistory.length;
     cachedHistory = results[0];
@@ -4141,7 +4142,7 @@ function poll() {
     if (activeView === 'workflows') fetchWorkflows();
   }).catch(function(e) {
     console.error('Poll failed:', e);
-    document.getElementById('conn-detail').textContent = ' err';
+    document.getElementById('conn-detail').textContent = ' ERR: ' + e.message;
   });
 }
 
@@ -4160,6 +4161,7 @@ function doReset() {
 
 function loadProjects() {
   return fetch('/api/projects').then(function(r) { return r.json(); }).then(function(projects) {
+    console.log('[LTT] loadProjects:', projects.length, 'projects, activeProject:', activeProject);
     var sel = document.getElementById('project-select');
     // Keep the first option (Default)
     while (sel.options.length > 1) sel.remove(1);
