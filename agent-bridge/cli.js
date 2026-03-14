@@ -21,6 +21,7 @@ function printUsage() {
     npx let-them-talk init --template T  Initialize with a team template (pair, team, review, debate)
     npx let-them-talk templates         List available agent templates
     npx let-them-talk dashboard         Launch the web dashboard (http://localhost:3000)
+    npx let-them-talk dashboard --lan   Launch dashboard accessible on LAN (phone/tablet)
     npx let-them-talk reset             Clear all conversation data
     npx let-them-talk plugin list       List installed plugins
     npx let-them-talk plugin add <file> Install a plugin from a .js file
@@ -401,6 +402,9 @@ function pluginCmd() {
 }
 
 function dashboard() {
+  if (process.argv.includes('--lan')) {
+    process.env.AGENT_BRIDGE_LAN = 'true';
+  }
   require('./dashboard.js');
 }
 

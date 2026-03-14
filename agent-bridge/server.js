@@ -256,7 +256,7 @@ function getUnconsumedMessages(agentName, fromFilter = null) {
   return messages.filter(m => {
     if (m.to !== agentName) return false;
     if (consumed.has(m.id)) return false;
-    if (fromFilter && m.from !== fromFilter) return false;
+    if (fromFilter && m.from !== fromFilter && !m.system) return false;
     return true;
   });
 }
@@ -603,7 +603,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
 
     for (const msg of newMsgs) {
       if (msg.to !== registeredName || consumed.has(msg.id)) continue;
-      if (from && msg.from !== from) continue;
+      if (from && msg.from !== from && !msg.system) continue;
 
       consumed.add(msg.id);
       saveConsumedIds(registeredName, consumed);
@@ -700,7 +700,7 @@ async function toolListen(from = null) {
 
       for (const msg of newMsgs) {
         if (msg.to !== registeredName || consumed.has(msg.id)) continue;
-        if (from && msg.from !== from) continue;
+        if (from && msg.from !== from && !msg.system) continue;
 
         consumed.add(msg.id);
         saveConsumedIds(registeredName, consumed);
@@ -754,7 +754,7 @@ async function toolListenCodex(from = null) {
 
     for (const msg of newMsgs) {
       if (msg.to !== registeredName || consumed.has(msg.id)) continue;
-      if (from && msg.from !== from) continue;
+      if (from && msg.from !== from && !msg.system) continue;
 
       consumed.add(msg.id);
       saveConsumedIds(registeredName, consumed);

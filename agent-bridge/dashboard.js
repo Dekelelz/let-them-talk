@@ -2,8 +2,21 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { exec } = require('child_process');
 
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
+const LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
+
+function getLanIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return null;
+}
 const DEFAULT_DATA_DIR = process.env.AGENT_BRIDGE_DATA || path.join(process.cwd(), '.agent-bridge');
 const HTML_FILE = path.join(__dirname, 'dashboard.html');
 const LOGO_FILE = path.join(__dirname, 'logo.png');
@@ -530,6 +543,82 @@ function apiDiscover() {
   return found;
 }
 
+// --- Agent Launcher ---
+
+function ensureMCPConfig(cli, serverPath, projectDir) {
+  const abDir = path.join(projectDir, '.agent-bridge').replace(/\\/g, '/');
+  if (cli === 'claude') {
+    const mcpConfigPath = path.join(projectDir, '.mcp.json');
+    let mcpConfig = { mcpServers: {} };
+    if (fs.existsSync(mcpConfigPath)) {
+      try { mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8')); if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {}; } catch {}
+    }
+    if (!mcpConfig.mcpServers['agent-bridge']) {
+      mcpConfig.mcpServers['agent-bridge'] = { command: 'node', args: [serverPath], env: { AGENT_BRIDGE_DATA_DIR: abDir } };
+      fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + '\n');
+    }
+  } else if (cli === 'gemini') {
+    const geminiDir = path.join(projectDir, '.gemini');
+    const settingsPath = path.join(geminiDir, 'settings.json');
+    if (!fs.existsSync(geminiDir)) fs.mkdirSync(geminiDir, { recursive: true });
+    let settings = { mcpServers: {} };
+    if (fs.existsSync(settingsPath)) {
+      try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); if (!settings.mcpServers) settings.mcpServers = {}; } catch {}
+    }
+    if (!settings.mcpServers['agent-bridge']) {
+      settings.mcpServers['agent-bridge'] = { command: 'node', args: [serverPath], env: { AGENT_BRIDGE_DATA_DIR: abDir } };
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+    }
+  } else if (cli === 'codex') {
+    const codexDir = path.join(projectDir, '.codex');
+    const configPath = path.join(codexDir, 'config.toml');
+    if (!fs.existsSync(codexDir)) fs.mkdirSync(codexDir, { recursive: true });
+    let config = '';
+    if (fs.existsSync(configPath)) config = fs.readFileSync(configPath, 'utf8');
+    if (!config.includes('[mcp_servers.agent-bridge]')) {
+      config += `\n[mcp_servers.agent-bridge]\ncommand = "node"\nargs = [${JSON.stringify(serverPath)}]\n\n[mcp_servers.agent-bridge.env]\nAGENT_BRIDGE_DATA_DIR = ${JSON.stringify(abDir)}\n`;
+      fs.writeFileSync(configPath, config);
+    }
+  }
+}
+
+function apiLaunchAgent(body) {
+  const { cli, project_dir, agent_name, prompt } = body;
+  if (!cli || !['claude', 'gemini', 'codex'].includes(cli)) {
+    return { error: 'Invalid cli type. Must be: claude, gemini, or codex' };
+  }
+  const projectDir = project_dir || process.cwd();
+  if (!fs.existsSync(projectDir)) {
+    return { error: 'Project directory does not exist: ' + projectDir };
+  }
+
+  const serverPath = path.join(__dirname, 'server.js').replace(/\\/g, '/');
+  ensureMCPConfig(cli, serverPath, projectDir);
+
+  const cliCommands = { claude: 'claude', gemini: 'gemini', codex: 'codex' };
+  const cliCmd = cliCommands[cli];
+  const safeName = (agent_name || '').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+  const launchPrompt = prompt || (safeName ? `You are agent "${safeName}". Use the register tool to register as "${safeName}", then use listen to wait for messages.` : `Register with the agent-bridge MCP tools and use listen to wait for messages.`);
+
+  // Try to launch terminal on Windows
+  if (process.platform === 'win32') {
+    const escapedDir = projectDir.replace(/"/g, '\\"');
+    exec(`start cmd /k "cd /d "${escapedDir}" && ${cliCmd}"`, { cwd: projectDir });
+    return { success: true, launched: true, cli, project_dir: projectDir, prompt: launchPrompt };
+  }
+
+  // Non-Windows: return command for manual execution
+  return {
+    success: true,
+    launched: false,
+    cli,
+    project_dir: projectDir,
+    command: `cd "${projectDir}" && ${cliCmd}`,
+    prompt: launchPrompt,
+    message: 'Auto-launch not supported on this platform. Run the command manually, then paste the prompt.'
+  };
+}
+
 // --- HTTP Server ---
 
 // Load HTML at startup (re-read on each request in dev for hot-reload)
@@ -559,7 +648,9 @@ const server = http.createServer(async (req, res) => {
 
   const allowedOrigin = `http://localhost:${PORT}`;
   const reqOrigin = req.headers.origin;
-  if (reqOrigin === allowedOrigin || reqOrigin === `http://127.0.0.1:${PORT}`) {
+  if (LAN_MODE && reqOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', reqOrigin);
+  } else if (reqOrigin === allowedOrigin || reqOrigin === `http://127.0.0.1:${PORT}`) {
     res.setHeader('Access-Control-Allow-Origin', reqOrigin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -787,6 +878,31 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
+    // Server info (LAN mode detection for frontend)
+    else if (url.pathname === '/api/server-info' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: LAN_MODE ? getLanIP() : null, port: PORT }));
+    }
+    // Templates API
+    else if (url.pathname === '/api/templates' && req.method === 'GET') {
+      const templatesDir = path.join(__dirname, 'templates');
+      let templates = [];
+      if (fs.existsSync(templatesDir)) {
+        templates = fs.readdirSync(templatesDir)
+          .filter(f => f.endsWith('.json'))
+          .map(f => { try { return JSON.parse(fs.readFileSync(path.join(templatesDir, f), 'utf8')); } catch { return null; } })
+          .filter(Boolean);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(templates));
+    }
+    // Agent launcher
+    else if (url.pathname === '/api/launch' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const result = apiLaunchAgent(body);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
     // Server-Sent Events endpoint for real-time updates
     else if (url.pathname === '/api/events' && req.method === 'GET') {
       res.writeHead(200, {
@@ -852,12 +968,17 @@ server.on('error', (err) => {
   throw err;
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
+  const lanIP = getLanIP();
   console.log('');
   console.log('  Let Them Talk - Agent Bridge Dashboard v3.0');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
+  if (LAN_MODE && lanIP) {
+    console.log('  LAN access: http://' + lanIP + ':' + PORT);
+    console.log('  WARNING:    LAN mode enabled — accessible to anyone on your network');
+  }
   console.log('  Data dir:   ' + dataDir);
   console.log('  Projects:   ' + getProjects().length + ' registered');
   console.log('  Updates:    SSE (real-time) + polling fallback (2s)');
