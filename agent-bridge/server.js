@@ -587,6 +587,62 @@ async function toolListen(from = null) {
   }
 }
 
+// Codex-compatible listen — returns after 90s (under Codex's 120s tool timeout)
+// with retry:true so the agent knows to call again immediately
+async function toolListenCodex(from = null) {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  setListening(true);
+
+  // Check existing unconsumed messages first
+  const existing = getUnconsumedMessages(registeredName, from);
+  if (existing.length > 0) {
+    const msg = existing[0];
+    const consumed = getConsumedIds(registeredName);
+    consumed.add(msg.id);
+    saveConsumedIds(registeredName, consumed);
+    if (fs.existsSync(MESSAGES_FILE)) {
+      lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+    }
+    touchActivity();
+    setListening(false);
+    return buildMessageResponse(msg, consumed);
+  }
+
+  if (fs.existsSync(MESSAGES_FILE)) {
+    lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+  }
+
+  const consumed = getConsumedIds(registeredName);
+  const deadline = Date.now() + 90000; // 90 seconds — safely under Codex's 120s limit
+  let pollCount = 0;
+
+  while (Date.now() < deadline) {
+    const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset);
+    lastReadOffset = newOffset;
+
+    for (const msg of newMsgs) {
+      if (msg.to !== registeredName || consumed.has(msg.id)) continue;
+      if (from && msg.from !== from) continue;
+
+      consumed.add(msg.id);
+      saveConsumedIds(registeredName, consumed);
+      touchActivity();
+      setListening(false);
+      return buildMessageResponse(msg, consumed);
+    }
+    await adaptiveSleep(pollCount++);
+  }
+
+  // Still listening — tell agent to call again
+  return {
+    retry: true,
+    message: 'No messages yet. Call listen_codex() again to keep waiting. You are still registered and listening.',
+  };
+}
+
 function toolGetHistory(limit = 50, thread_id = null) {
   let history = readJsonl(HISTORY_FILE);
   if (thread_id) {
@@ -987,6 +1043,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'listen_codex',
+        description: 'Listen for messages (Codex CLI compatible). Same as listen() but returns after 90 seconds if no message arrives, with retry:true. Codex agents should call this in a loop instead of listen(). When you get retry:true, immediately call listen_codex() again.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            from: {
+              type: 'string',
+              description: 'Only listen for messages from this specific agent (optional)',
+            },
+          },
+        },
+      },
+      {
         name: 'check_messages',
         description: 'Non-blocking peek at unconsumed messages addressed to you. Does not mark them as read.',
         inputSchema: {
@@ -1156,6 +1225,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'listen':
         result = await toolListen(args?.from);
+        break;
+      case 'listen_codex':
+        result = await toolListenCodex(args?.from);
         break;
       case 'check_messages':
         result = toolCheckMessages(args?.from);
