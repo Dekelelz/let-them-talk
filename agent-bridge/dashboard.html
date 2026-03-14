@@ -1454,6 +1454,55 @@
     transition: width 0.3s;
   }
 
+  /* ===== ACTIVITY HEATMAP ===== */
+  .activity-agent {
+    margin-bottom: 8px;
+  }
+
+  .activity-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-bottom: 3px;
+    padding: 0 2px;
+  }
+
+  .activity-name { font-weight: 600; }
+  .activity-pct { color: var(--text-muted); }
+
+  .activity-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--surface-2);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .activity-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+    position: relative;
+  }
+
+  .activity-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 20%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1));
+    border-radius: 0 4px 4px 0;
+  }
+
+  .activity-meta {
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    padding: 0 2px;
+  }
+
   /* ===== HANDOFF MESSAGE ===== */
   .message.handoff-msg {
     background: var(--purple-dim);
@@ -1625,6 +1674,12 @@
       <div class="sidebar-section">
         <div class="sidebar-title"><span>Stats</span></div>
         <div id="agent-stats"></div>
+      </div>
+
+      <!-- Activity Heatmap -->
+      <div class="sidebar-section">
+        <div class="sidebar-title"><span>Activity</span></div>
+        <div id="activity-heatmap"></div>
       </div>
 
       <!-- Bookmarks Section -->
@@ -2596,6 +2651,46 @@ function renderAgentStats() {
   el.innerHTML = html;
 }
 
+// ==================== ACTIVITY HEATMAP ====================
+
+function fetchActivity() {
+  var pq = projectParam();
+  fetch('/api/timeline' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderActivityHeatmap(data);
+  }).catch(function() {});
+}
+
+function renderActivityHeatmap(data) {
+  var el = document.getElementById('activity-heatmap');
+  if (!data.agents || !Object.keys(data.agents).length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No activity data</div>';
+    return;
+  }
+
+  var html = '';
+  var agents = Object.keys(data.agents);
+  for (var i = 0; i < agents.length; i++) {
+    var name = agents[i];
+    var a = data.agents[name];
+    var color = getColor(name);
+    var pct = a.activity_pct || 0;
+    var msgs = a.message_count || 0;
+    var gapCount = a.gaps ? a.gaps.length : 0;
+
+    html += '<div class="activity-agent">' +
+      '<div class="activity-label">' +
+        '<span class="activity-name" style="color:' + color + '">' + escapeHtml(name) + '</span>' +
+        '<span class="activity-pct">' + pct + '%</span>' +
+      '</div>' +
+      '<div class="activity-bar">' +
+        '<div class="activity-fill" style="width:' + pct + '%;background:' + color + '"></div>' +
+      '</div>' +
+      '<div class="activity-meta">' + msgs + ' msgs' + (gapCount > 0 ? ' &middot; ' + gapCount + ' idle gaps' : '') + '</div>' +
+    '</div>';
+  }
+  el.innerHTML = html;
+}
+
 // ==================== BOOKMARKS ====================
 
 var bookmarks = {};
@@ -2881,6 +2976,7 @@ function poll() {
     if (!replayActive) renderMessages(cachedHistory);
     renderPinnedMessages();
     renderBookmarksSidebar();
+    fetchActivity();
     updateTypingIndicator(cachedAgents);
     if (activeView === 'tasks') fetchTasks();
   }).catch(function(e) {

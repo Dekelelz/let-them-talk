@@ -272,49 +272,98 @@ function apiExportHtml(query) {
   const agentNames = [...new Set(history.map(m => m.from))];
   const exportDate = new Date().toLocaleString();
 
+  const startTime = history.length > 0 ? new Date(history[0].timestamp).toLocaleString() : '';
+  const endTime = history.length > 0 ? new Date(history[history.length - 1].timestamp).toLocaleString() : '';
+  const duration = history.length > 1 ? Math.round((new Date(history[history.length-1].timestamp) - new Date(history[0].timestamp)) / 60000) : 0;
+  const durationStr = duration > 60 ? Math.floor(duration/60) + 'h ' + (duration%60) + 'm' : duration + ' minutes';
+
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Let Them Talk — Conversation Export</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230d1117'/><path d='M20 30 Q20 20 30 20 H70 Q80 20 80 30 V55 Q80 65 70 65 H55 L40 80 V65 H30 Q20 65 20 55Z' fill='%2358a6ff'/><circle cx='38' cy='42' r='5' fill='%230d1117'/><circle cx='55' cy='42' r='5' fill='%230d1117'/></svg>">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;padding:24px;max-width:900px;margin:0 auto}
-.header{border-bottom:1px solid #30363d;padding-bottom:16px;margin-bottom:20px}
-.logo{font-size:20px;font-weight:700;background:linear-gradient(135deg,#58a6ff,#bc8cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.meta{font-size:12px;color:#8b949e;margin-top:6px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e6edf3;min-height:100vh}
+.export-header{background:linear-gradient(180deg,#0f0f18 0%,#0a0a0f 100%);padding:40px 24px 32px;text-align:center;border-bottom:1px solid #1e1e2e}
+.logo{font-size:28px;font-weight:800;background:linear-gradient(135deg,#58a6ff,#bc8cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-1px}
+.export-meta{margin-top:12px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+.meta-item{font-size:12px;color:#8888a0}
+.meta-val{color:#58a6ff;font-weight:600}
+.agent-chips{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
+.agent-chip{display:flex;align-items:center;gap:6px;background:#161622;border:1px solid #1e1e2e;border-radius:20px;padding:4px 12px 4px 4px;font-size:12px}
+.agent-chip .dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff}
+.messages{max-width:860px;margin:0 auto;padding:20px 24px}
 .msg{display:flex;gap:10px;padding:10px 14px;border-radius:8px;margin-bottom:2px}
-.msg:hover{background:#161b22}
+.msg:hover{background:#161622}
 .avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;flex-shrink:0}
 .msg-body{flex:1;min-width:0}
 .msg-header{display:flex;gap:6px;align-items:baseline;margin-bottom:3px;flex-wrap:wrap}
 .msg-from{font-weight:600;font-size:13px}
-.msg-arrow{color:#656d76;font-size:11px}
-.msg-to{font-size:12px;color:#8b949e}
-.msg-time{font-size:10px;color:#656d76}
+.msg-arrow{color:#555568;font-size:11px}
+.msg-to{font-size:12px;color:#8888a0}
+.msg-time{font-size:10px;color:#555568}
 .msg-content{font-size:13px;line-height:1.6;word-break:break-word}
 .msg-content strong{font-weight:700}
-.msg-content code{background:#21262d;padding:1px 5px;border-radius:4px;font-size:12px;font-family:Consolas,monospace;color:#d29922}
-.msg-content pre{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;margin:6px 0;overflow-x:auto;font-size:12px;font-family:Consolas,monospace}
+.msg-content em{font-style:italic;color:#8888a0}
+.msg-content code{background:#1e1e2e;padding:1px 5px;border-radius:4px;font-size:12px;font-family:Consolas,monospace;color:#d29922}
+.msg-content pre{background:#0f0f18;border:1px solid #1e1e2e;border-radius:6px;padding:12px;margin:6px 0;overflow-x:auto;font-size:12px;font-family:Consolas,monospace}
 .msg-content pre code{background:none;color:#e6edf3;padding:0}
+.msg-content h1,.msg-content h2,.msg-content h3{margin:8px 0 4px;font-weight:700}
+.msg-content h1{font-size:18px;border-bottom:1px solid #1e1e2e;padding-bottom:4px}
+.msg-content h2{font-size:16px}
+.msg-content h3{font-size:14px}
+.msg-content ul,.msg-content ol{padding-left:20px;margin:4px 0}
+.msg-content table{border-collapse:collapse;margin:6px 0;font-size:12px}
+.msg-content th,.msg-content td{border:1px solid #1e1e2e;padding:4px 8px;text-align:left}
+.msg-content th{background:#161622}
 .badge{font-size:9px;padding:1px 5px;border-radius:8px;font-weight:600}
 .badge-ack{background:rgba(63,185,80,0.15);color:#3fb950}
-.footer{border-top:1px solid #30363d;padding-top:12px;margin-top:20px;font-size:11px;color:#656d76;text-align:center}
+.date-sep{display:flex;align-items:center;gap:12px;padding:12px 14px 6px;color:#555568;font-size:11px;font-weight:600}
+.date-sep::before,.date-sep::after{content:'';flex:1;height:1px;background:#1e1e2e}
+.footer{border-top:1px solid #1e1e2e;padding:24px;text-align:center;font-size:11px;color:#555568}
+.footer a{color:#8888a0;text-decoration:none}
+.footer a:hover{color:#58a6ff}
 </style></head><body>
-<div class="header">
+<div class="export-header">
 <div class="logo">Let Them Talk</div>
-<div class="meta">Exported: ${htmlEscape(exportDate)} · ${history.length} messages · Agents: ${agentNames.map(htmlEscape).join(', ')}</div>
+<div class="export-meta">
+<span class="meta-item"><span class="meta-val">${history.length}</span> messages</span>
+<span class="meta-item"><span class="meta-val">${agentNames.length}</span> agents</span>
+<span class="meta-item"><span class="meta-val">${durationStr}</span> duration</span>
+<span class="meta-item">Exported ${htmlEscape(exportDate)}</span>
 </div>
-<div id="messages"></div>
-<div class="footer">Generated by Let Them Talk · github.com/Dekelelz/let-them-talk</div>
+<div class="agent-chips" id="agent-chips"></div>
+</div>
+<div class="messages" id="messages"></div>
+<div class="footer">Generated by <a href="https://github.com/Dekelelz/let-them-talk" target="_blank">Let Them Talk</a> &middot; MIT License</div>
 <script>
 var COLORS=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f778ba','#79c0ff','#7ee787','#e3b341','#ffa198'];
 var colorMap={},ci=0;
 var data=${JSON.stringify(history)};
 function esc(t){var d=document.createElement('div');d.textContent=t;return d.innerHTML}
-function fmt(t){var h=esc(t);h=h.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g,function(_,l,c){return '<pre><code>'+c+'</code></pre>'});h=h.replace(/\`([^\`]+)\`/g,'<code>$1</code>');h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');return h}
+function fmt(t){
+var h=esc(t);
+h=h.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g,function(_,l,c){return '<pre><code>'+c+'</code></pre>'});
+h=h.replace(/\`([^\`]+)\`/g,'<code>$1</code>');
+h=h.replace(/\\*\\*\\*(.+?)\\*\\*\\*/g,'<strong><em>$1</em></strong>');
+h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
+h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');
+h=h.replace(/^### (.+)/gm,'<h3>$1</h3>');
+h=h.replace(/^## (.+)/gm,'<h2>$1</h2>');
+h=h.replace(/^# (.+)/gm,'<h1>$1</h1>');
+h=h.replace(/^[\\-\\*] (.+)/gm,'<li>$1</li>');
+return h}
 function color(n){if(!colorMap[n]){colorMap[n]=COLORS[ci%COLORS.length];ci++}return colorMap[n]}
-var html='';
-for(var i=0;i<data.length;i++){var m=data[i];var c=color(m.from);var badges='';if(m.acked)badges+='<span class="badge badge-ack">ACK</span>';
-html+='<div class="msg"><div class="avatar" style="background:'+c+'">'+m.from.charAt(0).toUpperCase()+'</div><div class="msg-body"><div class="msg-header"><span class="msg-from" style="color:'+c+'">'+esc(m.from)+'</span><span class="msg-arrow">→</span><span class="msg-to">'+esc(m.to)+'</span><span class="msg-time">'+new Date(m.timestamp).toLocaleTimeString()+'</span>'+badges+'</div><div class="msg-content">'+fmt(m.content)+'</div></div></div>'}
+var chips='';
+var seen={};
+for(var a=0;a<data.length;a++){var f=data[a].from;if(!seen[f]){seen[f]=true;var c=color(f);chips+='<div class="agent-chip"><div class="dot" style="background:'+c+'">'+f.charAt(0).toUpperCase()+'</div>'+esc(f)+'</div>'}}
+document.getElementById('agent-chips').innerHTML=chips;
+var html='';var lastDate='';
+for(var i=0;i<data.length;i++){var m=data[i];var c=color(m.from);
+var msgDate=new Date(m.timestamp).toLocaleDateString();
+if(msgDate!==lastDate){var today=new Date().toLocaleDateString();var label=msgDate===today?'Today':msgDate;html+='<div class="date-sep">'+label+'</div>';lastDate=msgDate}
+var badges='';if(m.acked)badges+='<span class="badge badge-ack">ACK</span>';
+html+='<div class="msg"><div class="avatar" style="background:'+c+'">'+m.from.charAt(0).toUpperCase()+'</div><div class="msg-body"><div class="msg-header"><span class="msg-from" style="color:'+c+'">'+esc(m.from)+'</span><span class="msg-arrow">&rarr;</span><span class="msg-to">'+esc(m.to)+'</span><span class="msg-time">'+new Date(m.timestamp).toLocaleTimeString()+'</span>'+badges+'</div><div class="msg-content">'+fmt(m.content)+'</div></div></div>'}
 document.getElementById('messages').innerHTML=html;
 </script></body></html>`;
 }
