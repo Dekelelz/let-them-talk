@@ -518,6 +518,108 @@ function toolGetHistory(limit = 50, thread_id = null) {
   };
 }
 
+function toolHandoff(to, context) {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  const agents = getAgents();
+  if (!agents[to]) {
+    return { error: `Agent "${to}" is not registered` };
+  }
+  if (to === registeredName) {
+    return { error: 'Cannot hand off to yourself' };
+  }
+
+  messageSeq++;
+  const msg = {
+    id: generateId(),
+    seq: messageSeq,
+    from: registeredName,
+    to,
+    content: context,
+    timestamp: new Date().toISOString(),
+    type: 'handoff',
+  };
+
+  ensureDataDir();
+  fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+  touchActivity();
+
+  return {
+    success: true,
+    messageId: msg.id,
+    message: `Handed off to ${to}. They will receive your context and continue the work.`,
+  };
+}
+
+function toolShareFile(filePath, to = null, summary = null) {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  // Resolve the file path
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    return { error: `File not found: ${resolved}` };
+  }
+
+  const stat = fs.statSync(resolved);
+  if (stat.size > 100000) {
+    return { error: `File too large (${Math.round(stat.size / 1024)}KB). Maximum 100KB for sharing.` };
+  }
+
+  const agents = getAgents();
+  const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
+
+  if (!to) {
+    if (otherAgents.length === 1) {
+      to = otherAgents[0];
+    } else if (otherAgents.length === 0) {
+      return { error: 'No other agents registered' };
+    } else {
+      return { error: `Multiple agents online (${otherAgents.join(', ')}). Specify 'to' parameter.` };
+    }
+  }
+
+  if (!agents[to]) {
+    return { error: `Agent "${to}" is not registered` };
+  }
+
+  const fileContent = fs.readFileSync(resolved, 'utf8');
+  const fileName = path.basename(resolved);
+
+  messageSeq++;
+  const content = summary
+    ? `**Shared file: \`${fileName}\`**\n${summary}\n\n\`\`\`\n${fileContent}\n\`\`\``
+    : `**Shared file: \`${fileName}\`**\n\n\`\`\`\n${fileContent}\n\`\`\``;
+
+  const msg = {
+    id: generateId(),
+    seq: messageSeq,
+    from: registeredName,
+    to,
+    content,
+    timestamp: new Date().toISOString(),
+    type: 'file_share',
+    file: { name: fileName, path: resolved, size: stat.size },
+  };
+
+  ensureDataDir();
+  fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+  touchActivity();
+
+  return {
+    success: true,
+    messageId: msg.id,
+    file: fileName,
+    size: stat.size,
+    to,
+  };
+}
+
 function toolGetSummary(lastN = 20) {
   const history = readJsonl(HISTORY_FILE);
   if (history.length === 0) {
@@ -721,6 +823,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'handoff',
+        description: 'Hand off work to another agent with context. Creates a structured handoff message so the recipient knows they are taking over a task. Use when you are done with your part and another agent should continue.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            to: {
+              type: 'string',
+              description: 'Agent to hand off to',
+            },
+            context: {
+              type: 'string',
+              description: 'Summary of what was done and what needs to happen next',
+            },
+          },
+          required: ['to', 'context'],
+        },
+      },
+      {
+        name: 'share_file',
+        description: 'Share a file with another agent. Reads the file and sends its content as a message. Max 100KB.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            file_path: {
+              type: 'string',
+              description: 'Path to the file to share',
+            },
+            to: {
+              type: 'string',
+              description: 'Recipient agent (optional if only 2 agents)',
+            },
+            summary: {
+              type: 'string',
+              description: 'Optional summary of what the file is and why you are sharing it',
+            },
+          },
+          required: ['file_path'],
+        },
+      },
+      {
         name: 'get_summary',
         description: 'Get a condensed summary of the conversation so far. Useful when context is getting long and you need a quick recap of what was discussed.',
         inputSchema: {
@@ -778,6 +920,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'get_history':
         result = toolGetHistory(args?.limit, args?.thread_id);
+        break;
+      case 'handoff':
+        result = toolHandoff(args.to, args.context);
+        break;
+      case 'share_file':
+        result = toolShareFile(args.file_path, args?.to, args?.summary);
         break;
       case 'get_summary':
         result = toolGetSummary(args?.last_n);

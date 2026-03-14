@@ -325,6 +325,17 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
+    // Server-Sent Events endpoint for real-time updates
+    else if (url.pathname === '/api/events' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      res.write(`data: connected\n\n`);
+      sseClients.add(res);
+      req.on('close', () => sseClients.delete(res));
+    }
     else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -334,6 +345,39 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: err.message }));
   }
 });
+
+// --- Server-Sent Events for real-time updates ---
+// Watches data files and pushes updates to connected clients instantly
+const sseClients = new Set();
+
+function sseNotifyAll() {
+  for (const res of sseClients) {
+    try {
+      res.write(`data: update\n\n`);
+    } catch {
+      sseClients.delete(res);
+    }
+  }
+}
+
+// Watch data directory for changes and push SSE notifications
+let fsWatcher = null;
+let sseDebounceTimer = null;
+
+function startFileWatcher() {
+  const dataDir = resolveDataDir();
+  if (!fs.existsSync(dataDir)) return;
+  try {
+    fsWatcher = fs.watch(dataDir, { persistent: false }, () => {
+      // Debounce — multiple file changes may fire rapidly
+      if (sseDebounceTimer) clearTimeout(sseDebounceTimer);
+      sseDebounceTimer = setTimeout(() => sseNotifyAll(), 200);
+    });
+    fsWatcher.on('error', () => {}); // ignore watch errors
+  } catch {}
+}
+
+startFileWatcher();
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -354,6 +398,6 @@ server.listen(PORT, () => {
   console.log('  Dashboard:  http://localhost:' + PORT);
   console.log('  Data dir:   ' + dataDir);
   console.log('  Projects:   ' + getProjects().length + ' registered');
-  console.log('  Polling:    every 2s');
+  console.log('  Updates:    SSE (real-time) + polling fallback (2s)');
   console.log('');
 });

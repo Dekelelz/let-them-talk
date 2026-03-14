@@ -484,7 +484,27 @@
     transition: background 0.15s;
   }
 
+  .message { position: relative; }
   .message:hover { background: var(--surface); }
+
+  .bookmark-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    color: var(--text-muted);
+    padding: 2px;
+    line-height: 1;
+  }
+
+  .message:hover .bookmark-btn { opacity: 0.6; }
+  .bookmark-btn:hover { opacity: 1 !important; }
+  .bookmark-btn.active { opacity: 1 !important; color: var(--yellow); }
 
   .msg-avatar {
     width: 32px;
@@ -939,6 +959,46 @@
     color: var(--text-muted);
   }
 
+  /* ===== HANDOFF MESSAGE ===== */
+  .message.handoff-msg {
+    background: var(--purple-dim);
+    border: 1px solid rgba(188, 140, 255, 0.2);
+    border-left: 3px solid var(--purple);
+  }
+
+  .handoff-banner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--purple);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  /* ===== FILE SHARE MESSAGE ===== */
+  .file-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  .file-icon { font-size: 14px; }
+
+  .file-size {
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+
   /* ===== SYSTEM MESSAGE ===== */
   .message.system-msg {
     justify-content: center;
@@ -1053,6 +1113,16 @@
           <span class="alert-count" id="alert-count" style="display:none">0</span>
         </div>
         <div id="agents-list"></div>
+      </div>
+
+      <!-- Bookmarks Section -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">
+          <span>Bookmarks</span>
+          <span class="alert-count" id="bookmark-count" style="display:none">0</span>
+        </div>
+        <div id="bookmarks-list"></div>
+        <div class="filter-clear" id="bookmark-clear" onclick="clearBookmarkFilter()" style="display:none">&#x2715; Clear filter</div>
       </div>
 
       <!-- Threads Section -->
@@ -1535,6 +1605,11 @@ function renderMessages(messages) {
     });
   }
 
+  // Bookmark filter
+  if (bookmarkFilter) {
+    filtered = filtered.filter(function(m) { return !!bookmarks[m.id]; });
+  }
+
   // Search filter
   if (searchQuery) {
     filtered = filtered.filter(function(m) {
@@ -1605,8 +1680,54 @@ function renderMessages(messages) {
         '</div></div>';
       lastFrom = '';
       lastTo = '';
+    } else if (m.type === 'handoff') {
+      var isBookmarked = !!bookmarks[m.id];
+      var starClass = isBookmarked ? ' active' : '';
+      var starChar = isBookmarked ? '&#x2605;' : '&#x2606;';
+      html += '<div class="message handoff-msg' + newClass + '">' +
+        '<button class="bookmark-btn' + starClass + '" onclick="toggleBookmark(\'' + m.id + '\')" title="Bookmark">' + starChar + '</button>' +
+        '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+        '<div class="msg-body">' +
+          '<div class="handoff-banner">&#x1f91d; Handoff: ' + escapeHtml(m.from) + ' &rarr; ' + escapeHtml(m.to) + '</div>' +
+          '<div class="msg-header">' +
+            '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+            '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+            '<div class="msg-badges">' + badges + '</div>' +
+          '</div>' +
+          '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+        '</div></div>';
+      lastFrom = m.from;
+      lastTo = m.to;
+    } else if (m.type === 'file_share') {
+      var isBookmarked = !!bookmarks[m.id];
+      var starClass = isBookmarked ? ' active' : '';
+      var starChar = isBookmarked ? '&#x2605;' : '&#x2606;';
+      var fileMeta = m.file || {};
+      var fileName = fileMeta.name || 'file';
+      var fileSize = fileMeta.size ? (fileMeta.size > 1024 ? Math.round(fileMeta.size / 1024) + ' KB' : fileMeta.size + ' B') : '';
+      html += '<div class="message' + newClass + '">' +
+        '<button class="bookmark-btn' + starClass + '" onclick="toggleBookmark(\'' + m.id + '\')" title="Bookmark">' + starChar + '</button>' +
+        '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+        '<div class="msg-body">' +
+          '<div class="msg-header">' +
+            '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+            '<span class="msg-arrow">&rarr;</span>' +
+            '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
+            '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+            '<div class="msg-badges">' + badges + '</div>' +
+          '</div>' +
+          '<div class="file-meta"><span class="file-icon">&#x1f4c4;</span>' + escapeHtml(fileName) + '<span class="file-size">' + fileSize + '</span></div>' +
+          '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+        '</div></div>';
+      lastFrom = m.from;
+      lastTo = m.to;
     } else {
+      var isBookmarked = !!bookmarks[m.id];
+      var starClass = isBookmarked ? ' active' : '';
+      var starChar = isBookmarked ? '&#x2605;' : '&#x2606;';
+
       html += '<div class="message' + newClass + groupClass + '">' +
+        '<button class="bookmark-btn' + starClass + '" onclick="toggleBookmark(\'' + m.id + '\')" title="Bookmark">' + starChar + '</button>' +
         '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
@@ -1685,6 +1806,81 @@ function onSearch() {
   renderMessages(cachedHistory);
 }
 
+// ==================== BOOKMARKS ====================
+
+var bookmarks = {};
+var bookmarkFilter = false;
+
+function loadBookmarks() {
+  try {
+    var stored = localStorage.getItem('ltt-bookmarks');
+    if (stored) bookmarks = JSON.parse(stored);
+  } catch (e) {}
+}
+
+function saveBookmarks() {
+  try { localStorage.setItem('ltt-bookmarks', JSON.stringify(bookmarks)); } catch (e) {}
+}
+
+function toggleBookmark(msgId) {
+  if (bookmarks[msgId]) {
+    delete bookmarks[msgId];
+  } else {
+    bookmarks[msgId] = true;
+  }
+  saveBookmarks();
+  renderMessages(cachedHistory);
+  renderBookmarksSidebar();
+}
+
+function renderBookmarksSidebar() {
+  var el = document.getElementById('bookmarks-list');
+  var countEl = document.getElementById('bookmark-count');
+  var clearEl = document.getElementById('bookmark-clear');
+  var ids = Object.keys(bookmarks);
+
+  if (!ids.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No bookmarks yet</div>';
+    countEl.style.display = 'none';
+    clearEl.style.display = 'none';
+    return;
+  }
+
+  countEl.textContent = ids.length;
+  countEl.style.display = '';
+  clearEl.style.display = bookmarkFilter ? 'block' : 'none';
+
+  var html = '';
+  for (var i = 0; i < cachedHistory.length; i++) {
+    var m = cachedHistory[i];
+    if (!bookmarks[m.id]) continue;
+    var color = getColor(m.from);
+    var preview = m.content.substring(0, 40);
+    html += '<div class="thread-item' + (bookmarkFilter ? ' active' : '') + '" onclick="filterBookmarks()">' +
+      '<div class="thread-preview" style="color:' + color + '">' + escapeHtml(m.from) + ': ' + escapeHtml(preview) + '</div>' +
+      '<div class="thread-meta">' + formatTime(m.timestamp) + '</div>' +
+    '</div>';
+  }
+  if (!html) html = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">Bookmarked messages no longer in history</div>';
+  el.innerHTML = html;
+}
+
+function filterBookmarks() {
+  bookmarkFilter = !bookmarkFilter;
+  lastMessageCount = 0;
+  renderMessages(cachedHistory);
+  renderBookmarksSidebar();
+}
+
+function clearBookmarkFilter() {
+  bookmarkFilter = false;
+  lastMessageCount = 0;
+  renderMessages(cachedHistory);
+  renderBookmarksSidebar();
+}
+
+loadBookmarks();
+
 // ==================== EXPORT ====================
 
 function exportConversation() {
@@ -1738,6 +1934,7 @@ function poll() {
     renderAgents(cachedAgents);
     renderThreads(cachedHistory);
     renderMessages(cachedHistory);
+    renderBookmarksSidebar();
     updateTypingIndicator(cachedAgents);
   }).catch(function(e) {
     console.error('Poll failed:', e);
@@ -1905,10 +2102,43 @@ function updateConnectionInfo(latency) {
   }
 }
 
+// ==================== SSE + POLLING ====================
+
+var sseConnected = false;
+
+function initSSE() {
+  try {
+    var eventSource = new EventSource('/api/events');
+    eventSource.onmessage = function(e) {
+      if (e.data === 'update' || e.data === 'connected') {
+        poll();
+      }
+    };
+    eventSource.onopen = function() {
+      sseConnected = true;
+      document.getElementById('conn-label').textContent = 'Live (SSE)';
+    };
+    eventSource.onerror = function() {
+      if (sseConnected) {
+        sseConnected = false;
+        document.getElementById('conn-label').textContent = 'Live (poll)';
+        console.warn('SSE disconnected, falling back to polling');
+        eventSource.close();
+        setInterval(poll, POLL_INTERVAL);
+      }
+    };
+  } catch (e) {
+    // SSE not supported — use polling
+    setInterval(poll, POLL_INTERVAL);
+  }
+}
+
 // ==================== INIT ====================
 loadProjects();
 poll();
-setInterval(poll, POLL_INTERVAL);
+initSSE();
+// Safety-net poll at 10s (SSE handles real-time, this catches any missed updates)
+setInterval(poll, 10000);
 </script>
 
 </body>
