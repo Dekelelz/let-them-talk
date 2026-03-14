@@ -1615,13 +1615,14 @@
 <div class="header">
   <div class="header-left">
     <button class="mobile-toggle" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
-    <img src="/logo.png" alt="Let Them Talk" style="height:28px;margin-right:4px;vertical-align:middle" onerror="this.style.display='none'">
+    <img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230d1117'/><path d='M20 30 Q20 20 30 20 H70 Q80 20 80 30 V55 Q80 65 70 65 H55 L40 80 V65 H30 Q20 65 20 55Z' fill='%2358a6ff'/><circle cx='38' cy='42' r='5' fill='%230d1117'/><circle cx='55' cy='42' r='5' fill='%230d1117'/></svg>" alt="" style="height:28px;margin-right:4px;vertical-align:middle">
     <div class="logo">Let Them Talk</div>
     <div class="header-stats">
       <div class="h-stat"><span class="h-stat-val" id="stat-messages">0</span> msgs</div>
       <div class="h-stat"><span class="h-stat-val" id="stat-agents">0</span> agents</div>
       <div class="h-stat"><span class="h-stat-val" id="stat-sleeping" style="color:var(--orange)">0</span> sleeping</div>
       <div class="h-stat"><span class="h-stat-val" id="stat-threads">0</span> threads</div>
+      <div class="h-stat"><span class="h-stat-val" id="stat-clis">0</span> CLIs</div>
     </div>
   </div>
   <div class="header-actions">
@@ -2983,6 +2984,15 @@ function poll() {
     document.getElementById('stat-agents').textContent = status.agentCount;
     document.getElementById('stat-sleeping').textContent = status.sleepingCount || 0;
     document.getElementById('stat-threads').textContent = status.threadCount;
+
+    // Count unique providers from online agents
+    var providers = {};
+    var agentKeys = Object.keys(cachedAgents);
+    for (var p = 0; p < agentKeys.length; p++) {
+      var ag = cachedAgents[agentKeys[p]];
+      if (ag.alive && ag.provider && ag.provider !== 'unknown') providers[ag.provider] = true;
+    }
+    document.getElementById('stat-clis').textContent = Object.keys(providers).length;
 
     // Update tab title with message count
     document.title = status.messageCount > 0
