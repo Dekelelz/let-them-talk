@@ -891,15 +891,23 @@ const server = http.createServer(async (req, res) => {
       // Send response first
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT }));
-      // Drop all SSE clients so server.close() can proceed
-      for (const client of sseClients) { try { client.end(); } catch {} }
-      sseClients.clear();
-      // Re-bind: close then immediately re-listen
-      server.close(() => {
+      // Re-bind by stopping the listener and immediately re-listening
+      // Use setImmediate to let the response flush first
+      setImmediate(() => {
+        // Drop SSE clients
+        for (const client of sseClients) { try { client.end(); } catch {} }
+        sseClients.clear();
+        // Stop listening (don't use server.close which waits for all connections)
+        server.listening = false;
+        if (server._handle) {
+          server._handle.close();
+          server._handle = null;
+        }
         server.listen(PORT, newMode ? '0.0.0.0' : '127.0.0.1', () => {
           console.log(newMode
             ? `  LAN mode enabled — http://${lanIP}:${PORT}`
             : '  LAN mode disabled — localhost only');
+          startFileWatcher(); // restart file watcher
         });
       });
     }
