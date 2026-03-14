@@ -94,7 +94,11 @@ function isPidAlive(pid) {
 
 function apiHistory(query) {
   const projectPath = query.get('project') || null;
-  const history = readJsonl(filePath('history.jsonl', projectPath));
+  const branch = query.get('branch') || null;
+  const histFile = branch && branch !== 'main'
+    ? filePath(`branch-${branch}-history.jsonl`, projectPath)
+    : filePath('history.jsonl', projectPath);
+  const history = readJsonl(histFile);
   const acks = readJson(filePath('acks.json', projectPath));
   const limit = parseInt(query.get('limit') || '500', 10);
   const threadId = query.get('thread_id');
@@ -111,6 +115,7 @@ function apiHistory(query) {
 function apiAgents(query) {
   const projectPath = query.get('project') || null;
   const agents = readJson(filePath('agents.json', projectPath));
+  const profiles = readJson(filePath('profiles.json', projectPath));
   const history = readJsonl(filePath('history.jsonl', projectPath));
   const result = {};
 
@@ -124,6 +129,7 @@ function apiAgents(query) {
     const alive = isPidAlive(info.pid);
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
+    const profile = profiles[name] || {};
     result[name] = {
       pid: info.pid,
       alive,
@@ -135,6 +141,11 @@ function apiAgents(query) {
       listening_since: info.listening_since || null,
       is_listening: !!(info.listening_since && alive),
       provider: info.provider || 'unknown',
+      branch: info.branch || 'main',
+      display_name: profile.display_name || name,
+      avatar: profile.avatar || '',
+      role: profile.role || '',
+      bio: profile.bio || '',
     };
   }
   return result;
@@ -168,7 +179,7 @@ function apiStatus(query) {
 function apiReset(query) {
   const projectPath = query.get('project') || null;
   const dataDir = resolveDataDir(projectPath);
-  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json'];
+  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'plugins.json'];
   for (const f of fixedFiles) {
     const p = path.join(dataDir, f);
     if (fs.existsSync(p)) fs.unlinkSync(p);
@@ -178,7 +189,16 @@ function apiReset(query) {
       if (f.startsWith('consumed-') && f.endsWith('.json')) {
         fs.unlinkSync(path.join(dataDir, f));
       }
+      if (f.startsWith('branch-') && (f.endsWith('-messages.jsonl') || f.endsWith('-history.jsonl'))) {
+        fs.unlinkSync(path.join(dataDir, f));
+      }
     }
+  }
+  // Remove workspaces dir
+  const wsDir = path.join(dataDir, 'workspaces');
+  if (fs.existsSync(wsDir)) {
+    for (const f of fs.readdirSync(wsDir)) fs.unlinkSync(path.join(wsDir, f));
+    try { fs.rmdirSync(wsDir); } catch {}
   }
   return { success: true };
 }
@@ -616,6 +636,125 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiDiscover()));
     }
+    // --- v3.0 API endpoints ---
+    else if (url.pathname === '/api/profiles' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(readJson(filePath('profiles.json', projectPath))));
+    }
+    else if (url.pathname === '/api/profiles' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      const profilesFile = filePath('profiles.json', projectPath);
+      const profiles = readJson(profilesFile);
+      if (!body.agent) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Missing agent field' })); return; }
+      if (!profiles[body.agent]) profiles[body.agent] = {};
+      if (body.display_name) profiles[body.agent].display_name = body.display_name.substring(0, 30);
+      if (body.avatar) {
+        if (body.avatar.length > 65536) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Avatar too large (max 64KB)' })); return; }
+        profiles[body.agent].avatar = body.avatar;
+      }
+      if (body.bio !== undefined) profiles[body.agent].bio = (body.bio || '').substring(0, 200);
+      if (body.role !== undefined) profiles[body.agent].role = (body.role || '').substring(0, 30);
+      profiles[body.agent].updated_at = new Date().toISOString();
+      fs.writeFileSync(profilesFile, JSON.stringify(profiles, null, 2));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    }
+    else if (url.pathname === '/api/workspaces' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const agentParam = url.searchParams.get('agent');
+      const dataDir = resolveDataDir(projectPath);
+      const wsDir = path.join(dataDir, 'workspaces');
+      const result = {};
+      if (agentParam) {
+        const wsFile = path.join(wsDir, agentParam + '.json');
+        result[agentParam] = fs.existsSync(wsFile) ? readJson(wsFile) : {};
+      } else if (fs.existsSync(wsDir)) {
+        for (const f of fs.readdirSync(wsDir).filter(x => x.endsWith('.json'))) {
+          const name = f.replace('.json', '');
+          result[name] = readJson(path.join(wsDir, f));
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    else if (url.pathname === '/api/workflows' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(fs.existsSync(wfFile) ? JSON.parse(fs.readFileSync(wfFile, 'utf8')) : []));
+    }
+    else if (url.pathname === '/api/workflows' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      if (body.action === 'advance' && body.workflow_id) {
+        const wf = workflows.find(w => w.id === body.workflow_id);
+        if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
+        const curr = wf.steps.find(s => s.status === 'in_progress');
+        if (curr) { curr.status = 'done'; curr.completed_at = new Date().toISOString(); if (body.notes) curr.notes = body.notes; }
+        const next = wf.steps.find(s => s.status === 'pending');
+        if (next) { next.status = 'in_progress'; next.started_at = new Date().toISOString(); } else { wf.status = 'completed'; }
+        wf.updated_at = new Date().toISOString();
+        fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      } else if (body.action === 'skip' && body.workflow_id && body.step_id) {
+        const wf = workflows.find(w => w.id === body.workflow_id);
+        if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
+        const step = wf.steps.find(s => s.id === body.step_id);
+        if (step) { step.status = 'done'; step.notes = 'Skipped from dashboard'; step.completed_at = new Date().toISOString(); }
+        const next = wf.steps.find(s => s.status === 'pending');
+        if (next && !wf.steps.find(s => s.status === 'in_progress')) { next.status = 'in_progress'; next.started_at = new Date().toISOString(); }
+        if (!wf.steps.find(s => s.status === 'pending' || s.status === 'in_progress')) wf.status = 'completed';
+        wf.updated_at = new Date().toISOString();
+        fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid action' })); return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    }
+    else if (url.pathname === '/api/branches' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const branchesFile = filePath('branches.json', projectPath);
+      const dataDir = resolveDataDir(projectPath);
+      let branches = fs.existsSync(branchesFile) ? readJson(branchesFile) : {};
+      // Add message counts
+      for (const [name, info] of Object.entries(branches)) {
+        const histFile = name === 'main' ? path.join(dataDir, 'history.jsonl') : path.join(dataDir, `branch-${name}-history.jsonl`);
+        let msgCount = 0;
+        if (fs.existsSync(histFile)) {
+          const content = fs.readFileSync(histFile, 'utf8').trim();
+          if (content) msgCount = content.split('\n').length;
+        }
+        branches[name].message_count = msgCount;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(branches));
+    }
+    else if (url.pathname === '/api/plugins' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const pluginsFile = filePath('plugins.json', projectPath);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(fs.existsSync(pluginsFile) ? JSON.parse(fs.readFileSync(pluginsFile, 'utf8')) : []));
+    }
+    else if (url.pathname === '/api/plugins' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      const pluginsFile = filePath('plugins.json', projectPath);
+      let plugins = [];
+      if (fs.existsSync(pluginsFile)) try { plugins = JSON.parse(fs.readFileSync(pluginsFile, 'utf8')); } catch {}
+      if (body.action === 'toggle' && body.name) {
+        const p = plugins.find(x => x.name === body.name);
+        if (!p) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Plugin not found' })); return; }
+        p.enabled = !p.enabled;
+        fs.writeFileSync(pluginsFile, JSON.stringify(plugins, null, 2));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    }
     else if (url.pathname === '/api/projects' && req.method === 'DELETE') {
       const body = await parseBody(req);
       const result = apiRemoveProject(body);
@@ -690,7 +829,7 @@ server.on('error', (err) => {
 server.listen(PORT, '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v2.5');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.0');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   console.log('  Data dir:   ' + dataDir);

@@ -1,5 +1,43 @@
 # Changelog
 
+## [3.0.0] - 2026-03-14
+
+### Added — Agent Profiles
+- New tool: `update_profile` (display_name, avatar, bio, role)
+- 12 built-in SVG robot avatar icons with hash-based defaults
+- Profiles auto-created on register, persist across restarts
+- Profile data shown in dashboard (avatars, role badges, profile popup)
+
+### Added — Agent Workspaces
+- 3 new tools: `workspace_write`, `workspace_read`, `workspace_list`
+- Per-agent key-value storage (50 keys max, 100KB per value)
+- Agents can read anyone's workspace, write only their own
+- Dashboard "Workspaces" tab with collapsible accordion UI
+
+### Added — Workflow Automation
+- 3 new tools: `create_workflow`, `advance_workflow`, `workflow_status`
+- Multi-step pipelines with auto-handoff to step assignees
+- Dashboard "Workflows" tab with horizontal pipeline visualization
+- Dashboard can advance/skip workflow steps
+
+### Added — Conversation Branching
+- 3 new tools: `fork_conversation`, `switch_branch`, `list_branches`
+- Fork at any message point with isolated branch history
+- All message tools branch-aware (backward compatible — main branch uses existing files)
+- Branch tabs in dashboard
+
+### Added — Plugin System
+- Dynamic tool loading from `plugins/*.js` files
+- Sandboxed execution with 30s timeout
+- CLI: `npx let-them-talk plugin add/list/remove/enable/disable`
+- Dashboard plugin cards with enable/disable toggles
+
+### Changed
+- MCP tools: 17 → 27 + dynamic plugins
+- Dashboard tabs: 2 → 4 (Messages, Tasks, Workspaces, Workflows)
+- Branch-aware history API (`?branch=` query param)
+- Version bump across all files (server, dashboard, CLI, package.json)
+
 ## [2.5.0] - 2026-03-14
 
 ### Added

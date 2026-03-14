@@ -1607,6 +1607,384 @@
     .logo { font-size: 15px; }
     .msg-input-bar { padding: 10px 12px; }
   }
+
+  /* ===== v3.0: PROFILE AVATAR ===== */
+  .agent-avatar-img {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .msg-avatar-img {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .role-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 6px;
+    font-weight: 600;
+    background: var(--purple-dim);
+    color: var(--purple);
+    margin-left: 4px;
+  }
+
+  /* ===== v3.0: PROFILE POPUP ===== */
+  .profile-popup {
+    display: none;
+    position: fixed;
+    z-index: 300;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    width: 260px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .profile-popup.open { display: block; }
+
+  .profile-popup-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .profile-popup-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+
+  .profile-popup-name {
+    font-weight: 700;
+    font-size: 15px;
+  }
+
+  .profile-popup-id {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .profile-popup-bio {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 6px 0;
+    line-height: 1.4;
+  }
+
+  .profile-popup-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .profile-popup-stat {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .profile-popup-stat span {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  /* ===== v3.0: WORKSPACES TAB ===== */
+  .workspaces-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: none;
+  }
+
+  .workspaces-area.visible { display: block; }
+
+  .ws-agent {
+    margin-bottom: 12px;
+  }
+
+  .ws-agent-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .ws-agent-header:hover { border-color: var(--border-light); }
+
+  .ws-agent-header .agent-name { font-size: 13px; font-weight: 600; flex: 1; }
+
+  .ws-key-count {
+    font-size: 10px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+
+  .ws-entries {
+    display: none;
+    padding: 6px 0 6px 20px;
+  }
+
+  .ws-entries.open { display: block; }
+
+  .ws-entry {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .ws-entry:hover { border-color: var(--accent); }
+
+  .ws-entry-key {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--orange);
+    font-family: monospace;
+  }
+
+  .ws-entry-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .ws-entry-content {
+    display: none;
+    margin-top: 6px;
+    padding: 8px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .ws-entry-content.open { display: block; }
+
+  /* ===== v3.0: WORKFLOWS PIPELINE ===== */
+  .workflows-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: none;
+  }
+
+  .workflows-area.visible { display: block; }
+
+  .pipeline {
+    margin-bottom: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .pipeline-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .pipeline-name {
+    font-weight: 700;
+    font-size: 14px;
+  }
+
+  .pipeline-progress {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .pipeline-steps {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    padding: 4px 0;
+  }
+
+  .pipeline-step {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .step-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    min-width: 120px;
+    max-width: 180px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .step-card:hover { border-color: var(--border-light); }
+
+  .step-card.pending { opacity: 0.5; }
+  .step-card.in_progress { border-color: var(--accent); background: var(--accent-dim); }
+  .step-card.done { border-color: var(--green); }
+  .step-card.done .step-num { background: var(--green); }
+
+  .step-num {
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--text-muted);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 6px;
+  }
+
+  .step-card.in_progress .step-num { background: var(--accent); }
+
+  .step-desc {
+    font-size: 11px;
+    color: var(--text);
+    margin-top: 4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .step-assignee {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 3px;
+  }
+
+  .step-arrow {
+    color: var(--border-light);
+    font-size: 16px;
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* ===== v3.0: BRANCH TABS ===== */
+  .branch-tabs {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    gap: 0;
+    display: none;
+  }
+
+  .branch-tabs.visible { display: flex; }
+
+  .branch-tab {
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .branch-tab:hover { color: var(--text); }
+  .branch-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .branch-msg-count {
+    font-size: 9px;
+    background: var(--surface-3);
+    padding: 0 4px;
+    border-radius: 6px;
+    color: var(--text-muted);
+  }
+
+  /* ===== v3.0: PLUGINS SECTION ===== */
+  .plugin-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .plugin-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .plugin-name {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .plugin-desc {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .plugin-toggle {
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 36px;
+    height: 20px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .plugin-toggle.on {
+    background: var(--green-dim);
+    border-color: var(--green);
+  }
+
+  .plugin-toggle::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    top: 2px;
+    left: 2px;
+    transition: all 0.2s;
+  }
+
+  .plugin-toggle.on::after {
+    left: 18px;
+    background: var(--green);
+  }
 </style>
 </head>
 <body>
@@ -1684,6 +2062,12 @@
         <div id="activity-heatmap"></div>
       </div>
 
+      <!-- Plugins Section -->
+      <div class="sidebar-section">
+        <div class="sidebar-title"><span>Plugins</span></div>
+        <div id="plugins-list"></div>
+      </div>
+
       <!-- Bookmarks Section -->
       <div class="sidebar-section">
         <div class="sidebar-title">
@@ -1720,7 +2104,10 @@
     <div class="view-tabs" id="view-tabs">
       <div class="view-tab active" id="tab-messages" onclick="switchView('messages')">Messages</div>
       <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
+      <div class="view-tab" id="tab-workspaces" onclick="switchView('workspaces')">Workspaces</div>
+      <div class="view-tab" id="tab-workflows" onclick="switchView('workflows')">Workflows</div>
     </div>
+    <div class="branch-tabs" id="branch-tabs"></div>
     <div class="search-bar" id="search-bar">
       <input class="search-input" id="search-input" placeholder="Search messages...  ( / )" oninput="onSearch()">
       <span class="search-count" id="search-count"></span>
@@ -1731,6 +2118,8 @@
     </div>
     <div class="messages-area" id="messages"></div>
     <div class="tasks-area" id="tasks-area"></div>
+    <div class="workspaces-area" id="workspaces-area"></div>
+    <div class="workflows-area" id="workflows-area"></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
     <div class="typing-bar" id="typing-bar"></div>
 
@@ -1752,7 +2141,19 @@
   </div>
 </div>
 <div class="app-footer">
-  <span>Let Them Talk v2.5.0</span>
+  <span>Let Them Talk v3.0.0</span>
+</div>
+<div class="profile-popup" id="profile-popup" onclick="event.stopPropagation()">
+  <div class="profile-popup-header">
+    <img class="profile-popup-avatar" id="pp-avatar" src="data:," style="display:none">
+    <div>
+      <div class="profile-popup-name" id="pp-name"></div>
+      <div class="profile-popup-id" id="pp-id"></div>
+    </div>
+  </div>
+  <div id="pp-role"></div>
+  <div class="profile-popup-bio" id="pp-bio"></div>
+  <div class="profile-popup-stats" id="pp-stats"></div>
 </div>
 
 <script>
@@ -2043,13 +2444,22 @@ function renderAgents(agents) {
       }
     }
 
+    var avatarHtml = info.avatar
+      ? '<img class="agent-avatar-img" src="' + info.avatar + '" alt="' + escapeHtml(name) + '" onerror="this.style.display=\'none\'">'
+      : '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>';
+    var displayName = info.display_name || name;
+    var roleHtml = info.role ? '<span class="role-badge">' + escapeHtml(info.role) + '</span>' : '';
+    var branchHtml = info.branch && info.branch !== 'main' ? ' <span style="font-size:9px;color:var(--text-muted)">[' + escapeHtml(info.branch) + ']</span>' : '';
+
     html += '<div class="' + cardClass + '">' +
-      '<div class="agent-top">' +
-        '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>' +
+      '<div class="agent-top" onclick="showProfilePopup(\'' + escapeHtml(name) + '\', event)" style="cursor:pointer">' +
+        avatarHtml +
         '<div class="agent-info">' +
           '<div class="agent-name" style="color:' + color + '">' +
-            escapeHtml(name) +
+            escapeHtml(displayName) +
+            roleHtml +
             ' <span class="agent-badge ' + state + '">' + stateLabel + '</span>' +
+            branchHtml +
           '</div>' +
           '<div class="agent-meta"><span>' + getProviderBadge(info.provider) + 'PID ' + info.pid + '</span></div>' +
         '</div>' +
@@ -2293,10 +2703,12 @@ function renderMessages(messages) {
         '</div></div>';
       lastFrom = '';
       lastTo = '';
+    var msgAvatarHtml = getMsgAvatar(m.from, color);
+
     } else if (m.type === 'handoff') {
       html += '<div class="message handoff-msg' + newClass + '">' +
         buildMsgActions(m.id) +
-        '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+        msgAvatarHtml +
         '<div class="msg-body">' +
           '<div class="handoff-banner">&#x1f91d; Handoff: ' + escapeHtml(m.from) + ' &rarr; ' + escapeHtml(m.to) + '</div>' +
           '<div class="msg-header">' +
@@ -2315,7 +2727,7 @@ function renderMessages(messages) {
       var fileSize = fileMeta.size ? (fileMeta.size > 1024 ? Math.round(fileMeta.size / 1024) + ' KB' : fileMeta.size + ' B') : '';
       html += '<div class="message' + newClass + '">' +
         buildMsgActions(m.id) +
-        '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+        msgAvatarHtml +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
             '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
@@ -2333,7 +2745,7 @@ function renderMessages(messages) {
     } else {
       html += '<div class="message' + newClass + groupClass + '">' +
         buildMsgActions(m.id) +
-        '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+        msgAvatarHtml +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
             '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
@@ -2578,6 +2990,10 @@ document.addEventListener('keydown', function(e) {
   if (e.key === '1') { switchView('messages'); return; }
   // 2 — Tasks tab
   if (e.key === '2') { switchView('tasks'); return; }
+  // 3 — Workspaces tab
+  if (e.key === '3') { switchView('workspaces'); return; }
+  // 4 — Workflows tab
+  if (e.key === '4') { switchView('workflows'); return; }
 });
 
 // ==================== RELATIVE TIMESTAMPS ====================
@@ -2814,10 +3230,16 @@ function switchView(view) {
   activeView = view;
   document.getElementById('tab-messages').classList.toggle('active', view === 'messages');
   document.getElementById('tab-tasks').classList.toggle('active', view === 'tasks');
+  document.getElementById('tab-workspaces').classList.toggle('active', view === 'workspaces');
+  document.getElementById('tab-workflows').classList.toggle('active', view === 'workflows');
   document.getElementById('messages').style.display = view === 'messages' ? 'flex' : 'none';
   document.getElementById('tasks-area').classList.toggle('visible', view === 'tasks');
+  document.getElementById('workspaces-area').classList.toggle('visible', view === 'workspaces');
+  document.getElementById('workflows-area').classList.toggle('visible', view === 'workflows');
   document.getElementById('search-bar').style.display = view === 'messages' ? 'flex' : 'none';
   if (view === 'tasks') fetchTasks();
+  if (view === 'workspaces') fetchWorkspaces();
+  if (view === 'workflows') fetchWorkflows();
 }
 
 // ==================== TASKS ====================
@@ -2958,14 +3380,250 @@ textarea.addEventListener('input', function() {
   this.style.height = Math.min(scrollH, 100) + 'px';
 });
 
+// ==================== v3.0: MESSAGE AVATAR HELPER ====================
+
+function getMsgAvatar(name, color) {
+  var agent = cachedAgents[name];
+  if (agent && agent.avatar) {
+    return '<img class="msg-avatar-img" src="' + agent.avatar + '" alt="' + escapeHtml(name) + '" onerror="this.outerHTML=\'<div class=&quot;msg-avatar&quot; style=&quot;background:' + color + '&quot;>' + initial(name) + '</div>\'">';
+  }
+  return '<div class="msg-avatar" style="background:' + color + '">' + initial(name) + '</div>';
+}
+
+// ==================== v3.0: PROFILE POPUP ====================
+
+function showProfilePopup(agentName, event) {
+  event.stopPropagation();
+  var popup = document.getElementById('profile-popup');
+  var agent = cachedAgents[agentName];
+  if (!agent) return;
+
+  var color = getColor(agentName);
+  var ppAvatar = document.getElementById('pp-avatar');
+  if (agent.avatar) { ppAvatar.src = agent.avatar; ppAvatar.style.display = ''; } else { ppAvatar.style.display = 'none'; }
+  document.getElementById('pp-name').textContent = agent.display_name || agentName;
+  document.getElementById('pp-name').style.color = color;
+  document.getElementById('pp-id').textContent = '@' + agentName;
+  document.getElementById('pp-role').innerHTML = agent.role ? '<span class="role-badge">' + escapeHtml(agent.role) + '</span>' : '';
+  document.getElementById('pp-bio').textContent = agent.bio || '';
+
+  // Stats
+  var sent = 0, received = 0;
+  for (var i = 0; i < cachedHistory.length; i++) {
+    if (cachedHistory[i].from === agentName) sent++;
+    if (cachedHistory[i].to === agentName) received++;
+  }
+  document.getElementById('pp-stats').innerHTML =
+    '<div class="profile-popup-stat">Sent: <span>' + sent + '</span></div>' +
+    '<div class="profile-popup-stat">Received: <span>' + received + '</span></div>' +
+    '<div class="profile-popup-stat">Provider: <span>' + escapeHtml(agent.provider || 'unknown') + '</span></div>' +
+    '<div class="profile-popup-stat">Branch: <span>' + escapeHtml(agent.branch || 'main') + '</span></div>';
+
+  // Position near click
+  var rect = event.target.closest('.agent-top').getBoundingClientRect();
+  popup.style.top = Math.min(rect.bottom + 4, window.innerHeight - 280) + 'px';
+  popup.style.left = Math.min(rect.left, window.innerWidth - 280) + 'px';
+  popup.classList.add('open');
+}
+
+document.addEventListener('click', function() {
+  document.getElementById('profile-popup').classList.remove('open');
+});
+
+// ==================== v3.0: WORKSPACES ====================
+
+function fetchWorkspaces() {
+  var pq = projectParam();
+  fetch('/api/workspaces' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderWorkspaces(data);
+  }).catch(function() {});
+}
+
+function renderWorkspaces(data) {
+  var el = document.getElementById('workspaces-area');
+  var agents = Object.keys(data);
+  if (!agents.length) {
+    el.innerHTML = '<div class="tasks-empty">No workspaces yet. Agents create workspace entries with <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--orange)">workspace_write(key, content)</code></div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < agents.length; i++) {
+    var name = agents[i];
+    var ws = data[name];
+    var keys = Object.keys(ws);
+    var color = getColor(name);
+
+    html += '<div class="ws-agent">' +
+      '<div class="ws-agent-header" onclick="this.nextElementSibling.classList.toggle(\'open\')">' +
+        '<div class="agent-name" style="color:' + color + '">' + escapeHtml(name) + '</div>' +
+        '<span class="ws-key-count">' + keys.length + ' keys</span>' +
+      '</div>' +
+      '<div class="ws-entries">';
+
+    for (var j = 0; j < keys.length; j++) {
+      var k = keys[j];
+      var entry = ws[k];
+      var size = entry.content ? entry.content.length : 0;
+      var sizeLabel = size > 1024 ? Math.round(size / 1024) + 'KB' : size + 'B';
+      html += '<div class="ws-entry" onclick="this.querySelector(\'.ws-entry-content\').classList.toggle(\'open\')">' +
+        '<div class="ws-entry-key">' + escapeHtml(k) + '</div>' +
+        '<div class="ws-entry-meta">' + sizeLabel + ' &middot; ' + (entry.updated_at ? timeAgo(entry.updated_at) : '') + '</div>' +
+        '<div class="ws-entry-content"><div class="msg-content">' + renderMarkdown(entry.content || '') + '</div></div>' +
+      '</div>';
+    }
+    html += '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+// ==================== v3.0: WORKFLOWS ====================
+
+function fetchWorkflows() {
+  var pq = projectParam();
+  fetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderWorkflows(Array.isArray(data) ? data : []);
+  }).catch(function() {});
+}
+
+function renderWorkflows(workflows) {
+  var el = document.getElementById('workflows-area');
+  if (!workflows.length) {
+    el.innerHTML = '<div class="tasks-empty">No workflows yet. Agents create workflows with <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--orange)">create_workflow(name, steps)</code></div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < workflows.length; i++) {
+    var wf = workflows[i];
+    var doneCount = wf.steps.filter(function(s) { return s.status === 'done'; }).length;
+    var pct = Math.round((doneCount / wf.steps.length) * 100);
+    var statusColor = wf.status === 'completed' ? 'var(--green)' : 'var(--accent)';
+
+    html += '<div class="pipeline">' +
+      '<div class="pipeline-header">' +
+        '<div class="pipeline-name">' + escapeHtml(wf.name) + ' <span style="font-size:11px;color:' + statusColor + ';font-weight:600">' + escapeHtml(wf.status) + '</span></div>' +
+        '<div class="pipeline-progress">' + doneCount + '/' + wf.steps.length + ' (' + pct + '%)</div>' +
+      '</div>' +
+      '<div class="pipeline-steps">';
+
+    for (var j = 0; j < wf.steps.length; j++) {
+      var s = wf.steps[j];
+      var stepColor = s.status === 'done' ? 'var(--green)' : s.status === 'in_progress' ? 'var(--accent)' : 'var(--text-muted)';
+      if (j > 0) html += '<span class="step-arrow">&rarr;</span>';
+      html += '<div class="step-card ' + s.status + '" title="' + escapeHtml(s.notes || '') + '">' +
+        '<span class="step-num">' + s.id + '</span>' +
+        '<span style="font-size:10px;color:' + stepColor + ';font-weight:600;text-transform:uppercase">' + s.status.replace('_', ' ') + '</span>' +
+        '<div class="step-desc">' + escapeHtml(s.description) + '</div>' +
+        (s.assignee ? '<div class="step-assignee">&#x1f464; ' + escapeHtml(s.assignee) + '</div>' : '') +
+      '</div>';
+    }
+    html += '</div>';
+
+    // Dashboard controls — advance or skip
+    if (wf.status === 'active') {
+      html += '<div style="margin-top:8px;display:flex;gap:6px">' +
+        '<button class="btn btn-primary" onclick="dashAdvanceWorkflow(\'' + wf.id + '\')">Advance Step</button>' +
+      '</div>';
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function dashAdvanceWorkflow(wfId) {
+  fetch('/api/workflows' + projectParam(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'advance', workflow_id: wfId })
+  }).then(function() { fetchWorkflows(); }).catch(function() {});
+}
+
+// ==================== v3.0: BRANCHES ====================
+
+var activeBranch = '';
+
+function fetchBranches() {
+  var pq = projectParam();
+  fetch('/api/branches' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderBranchTabs(data);
+  }).catch(function() {});
+}
+
+function renderBranchTabs(branches) {
+  var el = document.getElementById('branch-tabs');
+  var names = Object.keys(branches);
+  if (names.length <= 1) {
+    el.classList.remove('visible');
+    return;
+  }
+  el.classList.add('visible');
+  var html = '';
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var info = branches[name];
+    var isActive = (!activeBranch && name === 'main') || activeBranch === name;
+    html += '<div class="branch-tab' + (isActive ? ' active' : '') + '" onclick="switchBranch(\'' + escapeHtml(name) + '\')">' +
+      escapeHtml(name) +
+      '<span class="branch-msg-count">' + (info.message_count || 0) + '</span>' +
+    '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function switchBranch(name) {
+  activeBranch = name;
+  lastMessageCount = 0;
+  poll();
+}
+
+// ==================== v3.0: PLUGINS ====================
+
+function fetchPlugins() {
+  var pq = projectParam();
+  fetch('/api/plugins' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderPlugins(Array.isArray(data) ? data : []);
+  }).catch(function() {});
+}
+
+function renderPlugins(plugins) {
+  var el = document.getElementById('plugins-list');
+  if (!plugins.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No plugins installed</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < plugins.length; i++) {
+    var p = plugins[i];
+    var onClass = p.enabled !== false ? ' on' : '';
+    html += '<div class="plugin-card">' +
+      '<div class="plugin-info">' +
+        '<div class="plugin-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="plugin-desc">' + escapeHtml(p.description || '') + '</div>' +
+      '</div>' +
+      '<div class="plugin-toggle' + onClass + '" onclick="togglePlugin(\'' + escapeHtml(p.name) + '\')"></div>' +
+    '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function togglePlugin(name) {
+  fetch('/api/plugins' + projectParam(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'toggle', name: name })
+  }).then(function() { fetchPlugins(); }).catch(function() {});
+}
+
 // ==================== POLLING ====================
 
 function poll() {
   var pp = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+  var bp = activeBranch && activeBranch !== 'main' ? '&branch=' + encodeURIComponent(activeBranch) : '';
   var pollStart = Date.now();
   Promise.all([
-    fetch('/api/history?limit=500' + pp).then(function(r) { return r.json(); }),
+    fetch('/api/history?limit=500' + pp + bp).then(function(r) { return r.json(); }),
     fetch('/api/agents' + pq).then(function(r) { return r.json(); }),
     fetch('/api/status' + pq).then(function(r) { return r.json(); }),
   ]).then(function(results) {
@@ -3006,8 +3664,12 @@ function poll() {
     renderPinnedMessages();
     renderBookmarksSidebar();
     fetchActivity();
+    fetchBranches();
+    fetchPlugins();
     updateTypingIndicator(cachedAgents);
     if (activeView === 'tasks') fetchTasks();
+    if (activeView === 'workspaces') fetchWorkspaces();
+    if (activeView === 'workflows') fetchWorkflows();
   }).catch(function(e) {
     console.error('Poll failed:', e);
     document.getElementById('conn-detail').textContent = ' err';
@@ -3187,7 +3849,7 @@ function updateTypingIndicator(agents) {
     var info = agents[keys[i]];
     // Agent is alive, not listening, and was recently active (processing a message)
     if (info.alive && !info.is_listening && info.status === 'active') {
-      typing.push(keys[i]);
+      typing.push(info.display_name || keys[i]);
     }
   }
   var bar = document.getElementById('typing-bar');

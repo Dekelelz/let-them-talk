@@ -20,6 +20,9 @@ npx let-them-talk dashboard
 # List available agent templates
 npx let-them-talk templates
 
+# Plugin management
+npx let-them-talk plugin list/add/remove/enable/disable
+
 # Reset conversation data
 npx let-them-talk reset
 
@@ -32,15 +35,27 @@ No tests, linter, or build step. Raw Node.js (CommonJS).
 ## Architecture
 
 **Core files:**
-- `server.js` — MCP server (17 tools, StdioServerTransport, heartbeat system)
-- `dashboard.js` — HTTP server for web dashboard (multi-project, message injection, SSE real-time, tasks API)
-- `dashboard.html` — Single-page frontend (markdown rendering, agent monitoring, responsive)
+- `server.js` — MCP server (27 tools + plugins, StdioServerTransport, heartbeat system)
+- `dashboard.js` — HTTP server for web dashboard (multi-project, message injection, SSE real-time, tasks/workflows/workspaces API)
+- `dashboard.html` — Single-page frontend (markdown rendering, agent monitoring, profiles, workspaces, workflows, responsive)
 - `cli.js` — CLI entry point with multi-CLI auto-detection
 
 **Multiple MCP server processes, one shared filesystem:**
 - Each CLI terminal spawns its own `server.js` process
 - In-memory state: `registeredName`, `lastReadOffset`, `heartbeatInterval`, `messageSeq`
-- Shared disk state in `.agent-bridge/`: messages (JSONL), history (JSONL), agents (JSON), acks (JSON), tasks (JSON), per-agent consumed trackers (JSON)
+- Shared disk state in `.agent-bridge/`:
+  - `messages.jsonl` / `history.jsonl` — messages and conversation history (append-only)
+  - `agents.json` — agent registration, heartbeats, PID tracking
+  - `acks.json` — message acknowledgments
+  - `tasks.json` — task management
+  - `consumed-{agent}.json` — per-agent read tracking
+  - `profiles.json` — agent profiles (display_name, avatar, bio, role)
+  - `workspaces/{agent}.json` — per-agent key-value workspace storage
+  - `workflows.json` — multi-step workflow pipelines
+  - `branches.json` — branch metadata
+  - `branch-{name}-messages.jsonl` / `branch-{name}-history.jsonl` — per-branch message files
+  - `plugins.json` — plugin registry
+  - `plugins/*.js` — plugin code files
 - Dashboard reads the same directory for real-time monitoring via SSE
 
 **Data directory resolution (server.js + dashboard.js):**
@@ -48,7 +63,14 @@ No tests, linter, or build step. Raw Node.js (CommonJS).
 2. `{cwd}/.agent-bridge/` (project-local, default)
 3. Legacy fallback: `{__dirname}/data/`
 
-**17 MCP tools:** register, list_agents, send_message, broadcast, wait_for_reply, listen, check_messages, ack_message, get_history, get_summary, handoff, share_file, create_task, update_task, list_tasks, reset
+**27 MCP tools + plugins:**
+- **Core messaging:** register, list_agents, send_message, broadcast, wait_for_reply, listen, check_messages, ack_message, get_history, get_summary, handoff, share_file, reset
+- **Task management:** create_task, update_task, list_tasks
+- **Profiles:** update_profile
+- **Workspaces:** workspace_write, workspace_read, workspace_list
+- **Workflows:** create_workflow, advance_workflow, workflow_status
+- **Branching:** fork_conversation, switch_branch, list_branches
+- **Plugins:** dynamically registered as `plugin_{name}` tools
 
 ## Key Design Decisions
 
@@ -67,3 +89,8 @@ No tests, linter, or build step. Raw Node.js (CommonJS).
 - **Auto-archive** — conversations archived before reset
 - **Context hints** — warns agents when conversation exceeds 50 messages
 - **Task management** — structured task creation, assignment, and tracking between agents
+- **Profiles** — separate `profiles.json` to avoid heartbeat write conflicts with `agents.json`
+- **Workspaces** — per-agent files (`workspaces/{agent}.json`) to avoid write conflicts, read-anyone/write-own permission model
+- **Workflows** — step statuses: pending/in_progress/done, auto-handoff on advance
+- **Branching** — `main` branch uses existing files for backward compatibility, branch-aware file resolution via `getMessagesFile(branch)`/`getHistoryFile(branch)`
+- **Plugins** — sandboxed execution context with 30s timeout, tools appear as `plugin_{name}` in MCP

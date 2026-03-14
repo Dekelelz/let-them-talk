@@ -14,12 +14,19 @@ const HISTORY_FILE = path.join(DATA_DIR, 'history.jsonl');
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const ACKS_FILE = path.join(DATA_DIR, 'acks.json');
 const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
+const WORKFLOWS_FILE = path.join(DATA_DIR, 'workflows.json');
+const WORKSPACES_DIR = path.join(DATA_DIR, 'workspaces');
+const BRANCHES_FILE = path.join(DATA_DIR, 'branches.json');
+const PLUGINS_FILE = path.join(DATA_DIR, 'plugins.json');
+const PLUGINS_DIR = path.join(DATA_DIR, 'plugins');
 
 // In-memory state for this process
 let registeredName = null;
 let lastReadOffset = 0; // byte offset into messages.jsonl for efficient polling
 let heartbeatInterval = null; // heartbeat timer reference
 let messageSeq = 0; // monotonic sequence counter for message ordering
+let currentBranch = 'main'; // which branch this agent is on
 
 // --- Helpers ---
 
@@ -120,13 +127,14 @@ function adaptiveSleep(pollCount) {
 }
 
 // Read new lines from messages.jsonl starting at a byte offset
-function readNewMessages(fromOffset) {
-  if (!fs.existsSync(MESSAGES_FILE)) return { messages: [], newOffset: 0 };
-  const stat = fs.statSync(MESSAGES_FILE);
+function readNewMessages(fromOffset, branch) {
+  const msgFile = getMessagesFile(branch || currentBranch);
+  if (!fs.existsSync(msgFile)) return { messages: [], newOffset: 0 };
+  const stat = fs.statSync(msgFile);
   if (stat.size < fromOffset) return { messages: [], newOffset: 0 }; // file was truncated/replaced — reset offset
   if (stat.size === fromOffset) return { messages: [], newOffset: fromOffset };
 
-  const fd = fs.openSync(MESSAGES_FILE, 'r');
+  const fd = fs.openSync(msgFile, 'r');
   const buf = Buffer.alloc(stat.size - fromOffset);
   fs.readSync(fd, buf, 0, buf.length, fromOffset);
   fs.closeSync(fd);
@@ -147,7 +155,8 @@ function buildMessageResponse(msg, consumedIds) {
   // instead of full file scan to avoid performance issues in busy conversations
   let pendingCount = 0;
   try {
-    if (fs.existsSync(MESSAGES_FILE)) {
+    const msgFile = getMessagesFile(currentBranch);
+    if (fs.existsSync(msgFile)) {
       const { messages: tail } = readNewMessages(lastReadOffset);
       pendingCount = tail.filter(m => m.to === registeredName && m.id !== msg.id && !consumedIds.has(m.id)).length;
     }
@@ -160,8 +169,9 @@ function buildMessageResponse(msg, consumedIds) {
   // Count total messages for context window management
   let totalMessages = 0;
   try {
-    if (fs.existsSync(HISTORY_FILE)) {
-      const content = fs.readFileSync(HISTORY_FILE, 'utf8').trim();
+    const histFile = getHistoryFile(currentBranch);
+    if (fs.existsSync(histFile)) {
+      const content = fs.readFileSync(histFile, 'utf8').trim();
       if (content) totalMessages = content.split('\n').length;
     }
   } catch {}
@@ -191,9 +201,10 @@ function buildMessageResponse(msg, consumedIds) {
 // Auto-compact messages.jsonl when it gets too large
 // Keeps only unconsumed messages, moves everything else to history-only
 function autoCompact() {
-  if (!fs.existsSync(MESSAGES_FILE)) return;
+  const msgFile = getMessagesFile(currentBranch);
+  if (!fs.existsSync(msgFile)) return;
   try {
-    const content = fs.readFileSync(MESSAGES_FILE, 'utf8').trim();
+    const content = fs.readFileSync(msgFile, 'utf8').trim();
     if (!content) return;
     const lines = content.split('\n');
     if (lines.length < 500) return; // only compact when large
@@ -221,7 +232,7 @@ function autoCompact() {
 
     // Rewrite messages.jsonl with only active messages
     const newContent = active.map(m => JSON.stringify(m)).join('\n') + (active.length ? '\n' : '');
-    fs.writeFileSync(MESSAGES_FILE, newContent);
+    fs.writeFileSync(msgFile, newContent);
     lastReadOffset = Buffer.byteLength(newContent, 'utf8');
 
     // Trim consumed ID files — keep only IDs still in active messages
@@ -240,7 +251,7 @@ function autoCompact() {
 
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
 function getUnconsumedMessages(agentName, fromFilter = null) {
-  const messages = readJsonl(MESSAGES_FILE);
+  const messages = readJsonl(getMessagesFile(currentBranch));
   const consumed = getConsumedIds(agentName);
   return messages.filter(m => {
     if (m.to !== agentName) return false;
@@ -248,6 +259,103 @@ function getUnconsumedMessages(agentName, fromFilter = null) {
     if (fromFilter && m.from !== fromFilter) return false;
     return true;
   });
+}
+
+// --- Profile helpers ---
+
+function getProfiles() {
+  if (!fs.existsSync(PROFILES_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8')); } catch { return {}; }
+}
+
+function saveProfiles(profiles) {
+  fs.writeFileSync(PROFILES_FILE, JSON.stringify(profiles, null, 2));
+}
+
+// Built-in avatar SVGs — hash-based assignment
+const BUILT_IN_AVATARS = [
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%2358a6ff'/%3E%3Ccircle cx='22' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='4' fill='%23fff'/%3E%3Crect x='20' y='38' width='24' height='4' rx='2' fill='%23fff'/%3E%3Crect x='14' y='12' width='6' height='10' rx='3' fill='%2358a6ff' stroke='%23fff' stroke-width='1.5'/%3E%3Crect x='44' y='12' width='6' height='10' rx='3' fill='%2358a6ff' stroke='%23fff' stroke-width='1.5'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%233fb950'/%3E%3Ccircle cx='22' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='22' cy='26' r='2' fill='%23333'/%3E%3Ccircle cx='42' cy='26' r='2' fill='%23333'/%3E%3Cpath d='M20 38 Q32 46 44 38' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23d29922'/%3E%3Crect x='16' y='22' width='12' height='8' rx='2' fill='%23fff'/%3E%3Crect x='36' y='22' width='12' height='8' rx='2' fill='%23fff'/%3E%3Ccircle cx='22' cy='26' r='2' fill='%23333'/%3E%3Ccircle cx='42' cy='26' r='2' fill='%23333'/%3E%3Cpath d='M24 40 H40' stroke='%23fff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23f85149'/%3E%3Ccircle cx='22' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='22' cy='26' r='2' fill='%23333'/%3E%3Ccircle cx='42' cy='26' r='2' fill='%23333'/%3E%3Cpath d='M22 40 Q32 34 42 40' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23bc8cff'/%3E%3Ccircle cx='22' cy='28' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='28' r='4' fill='%23fff'/%3E%3Cpath d='M16 18 L22 24' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M48 18 L42 24' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3Cellipse cx='32' cy='42' rx='8' ry='4' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23f778ba'/%3E%3Ccircle cx='24' cy='26' r='6' fill='%23fff'/%3E%3Ccircle cx='40' cy='26' r='6' fill='%23fff'/%3E%3Ccircle cx='24' cy='26' r='3' fill='%23333'/%3E%3Ccircle cx='40' cy='26' r='3' fill='%23333'/%3E%3Cpath d='M26 40 Q32 46 38 40' stroke='%23fff' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%2379c0ff'/%3E%3Crect x='17' y='23' width='10' height='6' rx='3' fill='%23fff'/%3E%3Crect x='37' y='23' width='10' height='6' rx='3' fill='%23fff'/%3E%3Cpath d='M22 38 L32 44 L42 38' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%237ee787'/%3E%3Ccircle cx='22' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='4' fill='%23fff'/%3E%3Ccircle cx='23' cy='25' r='2' fill='%23333'/%3E%3Ccircle cx='43' cy='25' r='2' fill='%23333'/%3E%3Cpath d='M20 38 Q32 48 44 38' stroke='%23fff' fill='none' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23e3b341'/%3E%3Cpath d='M18 22 L26 30 L18 30Z' fill='%23fff'/%3E%3Cpath d='M46 22 L38 30 L46 30Z' fill='%23fff'/%3E%3Crect x='24' y='38' width='16' height='6' rx='3' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23ffa198'/%3E%3Ccircle cx='22' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='42' cy='26' r='5' fill='%23fff'/%3E%3Ccircle cx='22' cy='27' r='2.5' fill='%23333'/%3E%3Ccircle cx='42' cy='27' r='2.5' fill='%23333'/%3E%3Cellipse cx='32' cy='42' rx='6' ry='3' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%230969da'/%3E%3Crect x='16' y='20' width='14' height='10' rx='2' fill='%23fff'/%3E%3Crect x='34' y='20' width='14' height='10' rx='2' fill='%23fff'/%3E%3Ccircle cx='23' cy='25' r='2' fill='%230969da'/%3E%3Ccircle cx='41' cy='25' r='2' fill='%230969da'/%3E%3Crect x='26' y='38' width='12' height='4' rx='2' fill='%23fff'/%3E%3C/svg%3E",
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%238250df'/%3E%3Ccircle cx='24' cy='24' r='5' fill='%23fff'/%3E%3Ccircle cx='40' cy='24' r='5' fill='%23fff'/%3E%3Ccircle cx='24' cy='24' r='2' fill='%238250df'/%3E%3Ccircle cx='40' cy='24' r='2' fill='%238250df'/%3E%3Cpath d='M20 38 Q32 50 44 38' stroke='%23fff' fill='none' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='10' r='4' fill='%23fff'/%3E%3C/svg%3E",
+];
+
+function hashName(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function getDefaultAvatar(name) {
+  return BUILT_IN_AVATARS[hashName(name) % BUILT_IN_AVATARS.length];
+}
+
+// --- Workspace helpers ---
+
+function ensureWorkspacesDir() {
+  if (!fs.existsSync(WORKSPACES_DIR)) fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
+}
+
+function getWorkspace(agentName) {
+  const file = path.join(WORKSPACES_DIR, `${sanitizeName(agentName)}.json`);
+  if (!fs.existsSync(file)) return {};
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
+function saveWorkspace(agentName, data) {
+  ensureWorkspacesDir();
+  fs.writeFileSync(path.join(WORKSPACES_DIR, `${sanitizeName(agentName)}.json`), JSON.stringify(data, null, 2));
+}
+
+// --- Workflow helpers ---
+
+function getWorkflows() {
+  if (!fs.existsSync(WORKFLOWS_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(WORKFLOWS_FILE, 'utf8')); } catch { return []; }
+}
+
+function saveWorkflows(workflows) {
+  fs.writeFileSync(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2));
+}
+
+// --- Branch helpers ---
+
+function getBranches() {
+  if (!fs.existsSync(BRANCHES_FILE)) return { main: { created_at: new Date().toISOString(), created_by: 'system', forked_from: null, fork_point: null } };
+  try { return JSON.parse(fs.readFileSync(BRANCHES_FILE, 'utf8')); } catch { return { main: { created_at: new Date().toISOString(), created_by: 'system', forked_from: null, fork_point: null } }; }
+}
+
+function saveBranches(branches) {
+  fs.writeFileSync(BRANCHES_FILE, JSON.stringify(branches, null, 2));
+}
+
+function getMessagesFile(branch) {
+  if (!branch || branch === 'main') return MESSAGES_FILE;
+  return path.join(DATA_DIR, `branch-${sanitizeName(branch)}-messages.jsonl`);
+}
+
+function getHistoryFile(branch) {
+  if (!branch || branch === 'main') return HISTORY_FILE;
+  return path.join(DATA_DIR, `branch-${sanitizeName(branch)}-history.jsonl`);
+}
+
+// --- Plugin helpers ---
+
+function getPluginRegistry() {
+  if (!fs.existsSync(PLUGINS_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf8')); } catch { return []; }
+}
+
+function savePluginRegistry(plugins) {
+  fs.writeFileSync(PLUGINS_FILE, JSON.stringify(plugins, null, 2));
 }
 
 // --- Tool implementations ---
@@ -267,9 +375,16 @@ function toolRegister(name, provider = null) {
   }
 
   const now = new Date().toISOString();
-  agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown' };
+  agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown', branch: currentBranch };
   saveAgents(agents);
   registeredName = name;
+
+  // Auto-create profile if not exists
+  const profiles = getProfiles();
+  if (!profiles[name]) {
+    profiles[name] = { display_name: name, avatar: getDefaultAvatar(name), bio: '', role: '', created_at: now };
+    saveProfiles(profiles);
+  }
 
   // Start heartbeat — updates last_activity every 10s so dashboard knows we're alive
   if (heartbeatInterval) clearInterval(heartbeatInterval);
@@ -313,11 +428,13 @@ function setListening(isListening) {
 
 function toolListAgents() {
   const agents = getAgents();
+  const profiles = getProfiles();
   const result = {};
   for (const [name, info] of Object.entries(agents)) {
     const alive = isPidAlive(info.pid);
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
+    const profile = profiles[name] || {};
     result[name] = {
       pid: info.pid,
       alive,
@@ -328,6 +445,11 @@ function toolListAgents() {
       listening_since: info.listening_since || null,
       is_listening: !!(info.listening_since && alive),
       provider: info.provider || 'unknown',
+      branch: info.branch || 'main',
+      display_name: profile.display_name || name,
+      avatar: profile.avatar || getDefaultAvatar(name),
+      role: profile.role || '',
+      bio: profile.bio || '',
     };
   }
   return { agents: result };
@@ -371,7 +493,7 @@ function toolSendMessage(content, to = null, reply_to = null) {
   // Resolve threading
   let thread_id = null;
   if (reply_to) {
-    const allMsgs = readJsonl(MESSAGES_FILE);
+    const allMsgs = readJsonl(getMessagesFile(currentBranch));
     const referencedMsg = allMsgs.find(m => m.id === reply_to);
     if (referencedMsg) {
       thread_id = referencedMsg.thread_id || referencedMsg.id;
@@ -393,11 +515,12 @@ function toolSendMessage(content, to = null, reply_to = null) {
   };
 
   ensureDataDir();
-  fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
-  fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
   touchActivity();
 
   const result = { success: true, messageId: msg.id, from: msg.from, to: msg.to };
+  if (currentBranch !== 'main') result.branch = currentBranch;
   if (!recipientAlive) {
     result.warning = `Agent "${to}" appears offline (PID not running). Message queued but may not be received until they reconnect.`;
   }
@@ -432,8 +555,8 @@ function toolBroadcast(content) {
       timestamp: new Date().toISOString(),
       broadcast: true,
     };
-    fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
-    fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+    fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+    fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
     ids.push({ to, messageId: msg.id });
   }
   touchActivity();
@@ -455,8 +578,9 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
     const consumed = getConsumedIds(registeredName);
     consumed.add(msg.id);
     saveConsumedIds(registeredName, consumed);
-    if (fs.existsSync(MESSAGES_FILE)) {
-      lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+    const _mf1 = getMessagesFile(currentBranch);
+    if (fs.existsSync(_mf1)) {
+      lastReadOffset = fs.statSync(_mf1).size;
     }
     touchActivity();
     setListening(false);
@@ -464,8 +588,9 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
   }
 
   // Set offset to current file end before polling for new messages
-  if (fs.existsSync(MESSAGES_FILE)) {
-    lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+  const _mf2 = getMessagesFile(currentBranch);
+  if (fs.existsSync(_mf2)) {
+    lastReadOffset = fs.statSync(_mf2).size;
   }
 
   const deadline = Date.now() + timeoutSeconds * 1000;
@@ -547,8 +672,9 @@ async function toolListen(from = null) {
     const consumed = getConsumedIds(registeredName);
     consumed.add(msg.id);
     saveConsumedIds(registeredName, consumed);
-    if (fs.existsSync(MESSAGES_FILE)) {
-      lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+    const _mfL1 = getMessagesFile(currentBranch);
+    if (fs.existsSync(_mfL1)) {
+      lastReadOffset = fs.statSync(_mfL1).size;
     }
     touchActivity();
     setListening(false);
@@ -556,8 +682,9 @@ async function toolListen(from = null) {
   }
 
   // Set offset to current file end
-  if (fs.existsSync(MESSAGES_FILE)) {
-    lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+  const _mfL2 = getMessagesFile(currentBranch);
+  if (fs.existsSync(_mfL2)) {
+    lastReadOffset = fs.statSync(_mfL2).size;
   }
 
   const consumed = getConsumedIds(registeredName);
@@ -603,16 +730,18 @@ async function toolListenCodex(from = null) {
     const consumed = getConsumedIds(registeredName);
     consumed.add(msg.id);
     saveConsumedIds(registeredName, consumed);
-    if (fs.existsSync(MESSAGES_FILE)) {
-      lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+    const _mfC1 = getMessagesFile(currentBranch);
+    if (fs.existsSync(_mfC1)) {
+      lastReadOffset = fs.statSync(_mfC1).size;
     }
     touchActivity();
     setListening(false);
     return buildMessageResponse(msg, consumed);
   }
 
-  if (fs.existsSync(MESSAGES_FILE)) {
-    lastReadOffset = fs.statSync(MESSAGES_FILE).size;
+  const _mfC2 = getMessagesFile(currentBranch);
+  if (fs.existsSync(_mfC2)) {
+    lastReadOffset = fs.statSync(_mfC2).size;
   }
 
   const consumed = getConsumedIds(registeredName);
@@ -644,7 +773,7 @@ async function toolListenCodex(from = null) {
 }
 
 function toolGetHistory(limit = 50, thread_id = null) {
-  let history = readJsonl(HISTORY_FILE);
+  let history = readJsonl(getHistoryFile(currentBranch));
   if (thread_id) {
     history = history.filter(m => m.thread_id === thread_id || m.id === thread_id);
   }
@@ -695,8 +824,8 @@ function toolHandoff(to, context) {
   };
 
   ensureDataDir();
-  fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
-  fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
   touchActivity();
 
   return {
@@ -763,8 +892,8 @@ function toolShareFile(filePath, to = null, summary = null) {
   };
 
   ensureDataDir();
-  fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
-  fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
   touchActivity();
 
   return {
@@ -877,7 +1006,7 @@ function toolListTasks(status = null, assignee = null) {
 }
 
 function toolGetSummary(lastN = 20) {
-  const history = readJsonl(HISTORY_FILE);
+  const history = readJsonl(getHistoryFile(currentBranch));
   if (history.length === 0) {
     return { summary: 'No messages in conversation yet.', message_count: 0 };
   }
@@ -909,14 +1038,14 @@ function toolReset() {
   }
 
   // Auto-archive before clearing — never lose conversations
-  if (fs.existsSync(HISTORY_FILE)) {
-    const history = readJsonl(HISTORY_FILE);
+  if (fs.existsSync(getHistoryFile('main'))) {
+    const history = readJsonl(getHistoryFile('main'));
     if (history.length > 0) {
       const archiveDir = path.join(DATA_DIR, 'archives');
       if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const archivePath = path.join(archiveDir, `conversation-${timestamp}.jsonl`);
-      fs.copyFileSync(HISTORY_FILE, archivePath);
+      fs.copyFileSync(getHistoryFile('main'), archivePath);
     }
   }
 
@@ -933,21 +1062,323 @@ function toolReset() {
       }
     }
   }
+  // Remove profiles, workflows, branches, plugins
+  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PLUGINS_FILE]) {
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  }
+  // Remove workspaces dir
+  if (fs.existsSync(WORKSPACES_DIR)) {
+    for (const f of fs.readdirSync(WORKSPACES_DIR)) fs.unlinkSync(path.join(WORKSPACES_DIR, f));
+    fs.rmdirSync(WORKSPACES_DIR);
+  }
+  // Remove branch files
+  if (fs.existsSync(DATA_DIR)) {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (f.startsWith('branch-') && (f.endsWith('-messages.jsonl') || f.endsWith('-history.jsonl'))) {
+        fs.unlinkSync(path.join(DATA_DIR, f));
+      }
+    }
+  }
   registeredName = null;
   lastReadOffset = 0;
   messageSeq = 0;
+  currentBranch = 'main';
   if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
   return { success: true, message: 'All data cleared. Conversation archived before reset.' };
+}
+
+// --- Phase 1: Profile tool ---
+
+function toolUpdateProfile(displayName, avatar, bio, role) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const profiles = getProfiles();
+  if (!profiles[registeredName]) {
+    profiles[registeredName] = { display_name: registeredName, avatar: getDefaultAvatar(registeredName), bio: '', role: '', created_at: new Date().toISOString() };
+  }
+  const p = profiles[registeredName];
+  if (displayName !== undefined && displayName !== null) {
+    if (typeof displayName !== 'string' || displayName.length > 30) return { error: 'display_name must be <= 30 chars' };
+    p.display_name = displayName;
+  }
+  if (avatar !== undefined && avatar !== null) {
+    if (typeof avatar !== 'string' || avatar.length > 65536) return { error: 'avatar too large (max 64KB)' };
+    p.avatar = avatar;
+  }
+  if (bio !== undefined && bio !== null) {
+    if (typeof bio !== 'string' || bio.length > 200) return { error: 'bio must be <= 200 chars' };
+    p.bio = bio;
+  }
+  if (role !== undefined && role !== null) {
+    if (typeof role !== 'string' || role.length > 30) return { error: 'role must be <= 30 chars' };
+    p.role = role;
+  }
+  p.updated_at = new Date().toISOString();
+  saveProfiles(profiles);
+  return { success: true, profile: p };
+}
+
+// --- Phase 2: Workspace tools ---
+
+function toolWorkspaceWrite(key, content) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof key !== 'string' || key.length < 1 || key.length > 50) return { error: 'key must be 1-50 chars' };
+  if (!/^[a-zA-Z0-9_\-\.]+$/.test(key)) return { error: 'key must be alphanumeric/underscore/hyphen/dot' };
+  if (typeof content !== 'string') return { error: 'content must be a string' };
+  if (Buffer.byteLength(content, 'utf8') > 102400) return { error: 'content exceeds 100KB limit' };
+
+  ensureDataDir();
+  const ws = getWorkspace(registeredName);
+  if (!ws[key] && Object.keys(ws).length >= 50) return { error: 'Maximum 50 keys per workspace' };
+  ws[key] = { content, updated_at: new Date().toISOString() };
+  saveWorkspace(registeredName, ws);
+  touchActivity();
+  return { success: true, key, size: content.length, total_keys: Object.keys(ws).length };
+}
+
+function toolWorkspaceRead(key, agent) {
+  const targetAgent = agent || registeredName;
+  if (!targetAgent) return { error: 'Specify agent or register first' };
+
+  const ws = getWorkspace(targetAgent);
+  if (key) {
+    if (!ws[key]) return { error: `Key "${key}" not found in ${targetAgent}'s workspace` };
+    return { agent: targetAgent, key, content: ws[key].content, updated_at: ws[key].updated_at };
+  }
+  // Return all keys with content
+  const entries = {};
+  for (const [k, v] of Object.entries(ws)) {
+    entries[k] = { content: v.content, updated_at: v.updated_at };
+  }
+  return { agent: targetAgent, entries, total_keys: Object.keys(ws).length };
+}
+
+function toolWorkspaceList(agent) {
+  const agents = getAgents();
+  if (agent) {
+    const ws = getWorkspace(agent);
+    return { agent, keys: Object.keys(ws).map(k => ({ key: k, size: ws[k].content.length, updated_at: ws[k].updated_at })) };
+  }
+  // List all agents' workspace summaries
+  const result = {};
+  for (const name of Object.keys(agents)) {
+    const ws = getWorkspace(name);
+    result[name] = { key_count: Object.keys(ws).length, keys: Object.keys(ws) };
+  }
+  return { workspaces: result };
+}
+
+// --- Phase 3: Workflow tools ---
+
+function toolCreateWorkflow(name, steps) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!name || typeof name !== 'string' || name.length > 50) return { error: 'name must be 1-50 chars' };
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 20) return { error: 'steps must be array of 2-20 items' };
+
+  const agents = getAgents();
+  const workflows = getWorkflows();
+  const workflowId = 'wf_' + generateId();
+
+  const parsedSteps = steps.map((s, i) => {
+    const step = typeof s === 'string' ? { description: s } : s;
+    if (!step.description) return null;
+    return {
+      id: i + 1,
+      description: step.description.substring(0, 200),
+      assignee: step.assignee || null,
+      status: i === 0 ? 'in_progress' : 'pending',
+      started_at: i === 0 ? new Date().toISOString() : null,
+      completed_at: null,
+      notes: '',
+    };
+  });
+  if (parsedSteps.includes(null)) return { error: 'Each step must have a description' };
+
+  const workflow = {
+    id: workflowId,
+    name,
+    steps: parsedSteps,
+    status: 'active',
+    created_by: registeredName,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  workflows.push(workflow);
+  ensureDataDir();
+  saveWorkflows(workflows);
+
+  // Auto-handoff to first step's assignee if set
+  const firstStep = parsedSteps[0];
+  if (firstStep.assignee && agents[firstStep.assignee] && firstStep.assignee !== registeredName) {
+    const handoffContent = `[Workflow "${name}"] Step 1 assigned to you: ${firstStep.description}`;
+    messageSeq++;
+    const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: firstStep.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
+    fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+    fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+  }
+  touchActivity();
+
+  return { success: true, workflow_id: workflowId, name, step_count: parsedSteps.length, current_step: 1 };
+}
+
+function toolAdvanceWorkflow(workflowId, notes) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const workflows = getWorkflows();
+  const wf = workflows.find(w => w.id === workflowId);
+  if (!wf) return { error: `Workflow not found: ${workflowId}` };
+  if (wf.status !== 'active') return { error: 'Workflow is not active' };
+
+  const currentStep = wf.steps.find(s => s.status === 'in_progress');
+  if (!currentStep) return { error: 'No step currently in progress' };
+
+  currentStep.status = 'done';
+  currentStep.completed_at = new Date().toISOString();
+  if (notes) currentStep.notes = notes.substring(0, 500);
+
+  // Find next pending step
+  const nextStep = wf.steps.find(s => s.status === 'pending');
+  if (nextStep) {
+    nextStep.status = 'in_progress';
+    nextStep.started_at = new Date().toISOString();
+
+    // Auto-handoff to next assignee
+    const agents = getAgents();
+    if (nextStep.assignee && agents[nextStep.assignee] && nextStep.assignee !== registeredName) {
+      const handoffContent = `[Workflow "${wf.name}"] Step ${nextStep.id} assigned to you: ${nextStep.description}`;
+      messageSeq++;
+      const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: nextStep.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
+      fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+      fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+    }
+  } else {
+    wf.status = 'completed';
+  }
+  wf.updated_at = new Date().toISOString();
+  saveWorkflows(workflows);
+  touchActivity();
+
+  const doneCount = wf.steps.filter(s => s.status === 'done').length;
+  const pct = Math.round((doneCount / wf.steps.length) * 100);
+
+  return {
+    success: true,
+    workflow_id: wf.id,
+    completed_step: currentStep.id,
+    next_step: nextStep ? { id: nextStep.id, description: nextStep.description, assignee: nextStep.assignee } : null,
+    progress: `${doneCount}/${wf.steps.length} (${pct}%)`,
+    workflow_status: wf.status,
+  };
+}
+
+function toolWorkflowStatus(workflowId) {
+  const workflows = getWorkflows();
+  if (workflowId) {
+    const wf = workflows.find(w => w.id === workflowId);
+    if (!wf) return { error: `Workflow not found: ${workflowId}` };
+    const doneCount = wf.steps.filter(s => s.status === 'done').length;
+    const pct = Math.round((doneCount / wf.steps.length) * 100);
+    return { workflow: wf, progress: `${doneCount}/${wf.steps.length} (${pct}%)` };
+  }
+  return {
+    count: workflows.length,
+    workflows: workflows.map(w => {
+      const doneCount = w.steps.filter(s => s.status === 'done').length;
+      return { id: w.id, name: w.name, status: w.status, steps: w.steps.length, done: doneCount, progress: Math.round((doneCount / w.steps.length) * 100) + '%' };
+    }),
+  };
+}
+
+// --- Phase 4: Branching tools ---
+
+function toolForkConversation(fromMessageId, branchName) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  sanitizeName(branchName);
+
+  const branches = getBranches();
+  if (branches[branchName]) return { error: `Branch "${branchName}" already exists` };
+
+  const history = readJsonl(getHistoryFile(currentBranch));
+  const forkIdx = fromMessageId ? history.findIndex(m => m.id === fromMessageId) : history.length - 1;
+  if (forkIdx === -1) return { error: `Message ${fromMessageId} not found in current branch` };
+
+  // Copy history up to fork point into new branch
+  const forkedHistory = history.slice(0, forkIdx + 1);
+  ensureDataDir();
+  const newHistFile = getHistoryFile(branchName);
+  const newMsgFile = getMessagesFile(branchName);
+  fs.writeFileSync(newHistFile, forkedHistory.map(m => JSON.stringify(m)).join('\n') + (forkedHistory.length ? '\n' : ''));
+  fs.writeFileSync(newMsgFile, ''); // empty messages for new branch
+
+  branches[branchName] = {
+    created_at: new Date().toISOString(),
+    created_by: registeredName,
+    forked_from: currentBranch,
+    fork_point: fromMessageId || (history[forkIdx] ? history[forkIdx].id : null),
+    message_count: forkedHistory.length,
+  };
+  saveBranches(branches);
+
+  // Switch this agent to the new branch
+  currentBranch = branchName;
+  lastReadOffset = 0;
+  const agents = getAgents();
+  if (agents[registeredName]) {
+    agents[registeredName].branch = branchName;
+    saveAgents(agents);
+  }
+  touchActivity();
+
+  return { success: true, branch: branchName, forked_from: branches[branchName].forked_from, messages_copied: forkedHistory.length };
+}
+
+function toolSwitchBranch(branchName) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const branches = getBranches();
+  if (!branches[branchName]) return { error: `Branch "${branchName}" does not exist. Use list_branches to see available branches.` };
+
+  currentBranch = branchName;
+  lastReadOffset = 0;
+  const agents = getAgents();
+  if (agents[registeredName]) {
+    agents[registeredName].branch = branchName;
+    saveAgents(agents);
+  }
+  touchActivity();
+
+  return { success: true, branch: branchName, message: `Switched to branch "${branchName}". Read offset reset.` };
+}
+
+function toolListBranches() {
+  const branches = getBranches();
+  const result = {};
+  for (const [name, info] of Object.entries(branches)) {
+    const histFile = getHistoryFile(name);
+    let msgCount = 0;
+    if (fs.existsSync(histFile)) {
+      const content = fs.readFileSync(histFile, 'utf8').trim();
+      if (content) msgCount = content.split('\n').length;
+    }
+    result[name] = { ...info, message_count: msgCount, is_current: name === currentBranch };
+  }
+  return { branches: result, current: currentBranch };
 }
 
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '2.5.0' },
+  { name: 'agent-bridge', version: '3.0.0' },
   { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
+  const pluginTools = loadedPlugins.map(p => ({
+    name: 'plugin_' + p.name,
+    description: '[Plugin] ' + p.description,
+    inputSchema: p.inputSchema,
+  }));
   return {
     tools: [
       {
@@ -1197,6 +1628,131 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      // --- Phase 1: Profiles ---
+      {
+        name: 'update_profile',
+        description: 'Update your agent profile (display name, avatar, bio, role). Profile data is shown in the dashboard and messages.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            display_name: { type: 'string', description: 'Display name (max 30 chars)' },
+            avatar: { type: 'string', description: 'Avatar URL or data URI (max 64KB)' },
+            bio: { type: 'string', description: 'Short bio (max 200 chars)' },
+            role: { type: 'string', description: 'Role/title (max 30 chars, e.g. "Architect", "Reviewer")' },
+          },
+        },
+      },
+      // --- Phase 2: Workspaces ---
+      {
+        name: 'workspace_write',
+        description: 'Write a key-value entry to your workspace. Other agents can read your workspace but only you can write to it. Max 50 keys, 100KB per value.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: { type: 'string', description: 'Key name (1-50 alphanumeric/underscore/hyphen/dot chars)' },
+            content: { type: 'string', description: 'Content to store (max 100KB)' },
+          },
+          required: ['key', 'content'],
+        },
+      },
+      {
+        name: 'workspace_read',
+        description: 'Read workspace entries. Read your own or another agent\'s workspace. Omit key to read all entries.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: { type: 'string', description: 'Specific key to read (optional — omit for all keys)' },
+            agent: { type: 'string', description: 'Agent whose workspace to read (optional — defaults to yourself)' },
+          },
+        },
+      },
+      {
+        name: 'workspace_list',
+        description: 'List workspace keys. Specify agent for one workspace, or omit for all agents\' workspace summaries.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            agent: { type: 'string', description: 'Agent name (optional — omit for all)' },
+          },
+        },
+      },
+      // --- Phase 3: Workflows ---
+      {
+        name: 'create_workflow',
+        description: 'Create a multi-step workflow pipeline. Each step can have a description and assignee. The first step auto-starts and the assignee receives a handoff message.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Workflow name (max 50 chars)' },
+            steps: {
+              type: 'array',
+              description: 'Array of steps. Each step is a string (description) or {description, assignee}.',
+              items: {
+                oneOf: [
+                  { type: 'string' },
+                  { type: 'object', properties: { description: { type: 'string' }, assignee: { type: 'string' } }, required: ['description'] },
+                ],
+              },
+            },
+          },
+          required: ['name', 'steps'],
+        },
+      },
+      {
+        name: 'advance_workflow',
+        description: 'Mark the current step as done and start the next step. Auto-sends a handoff message to the next assignee.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflow_id: { type: 'string', description: 'Workflow ID' },
+            notes: { type: 'string', description: 'Optional completion notes (max 500 chars)' },
+          },
+          required: ['workflow_id'],
+        },
+      },
+      {
+        name: 'workflow_status',
+        description: 'Get status of a specific workflow or all workflows. Shows step progress and completion percentage.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflow_id: { type: 'string', description: 'Workflow ID (optional — omit for all workflows)' },
+          },
+        },
+      },
+      // --- Phase 4: Branching ---
+      {
+        name: 'fork_conversation',
+        description: 'Fork the conversation at a specific message, creating a new branch. History up to that point is copied. You are automatically switched to the new branch.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            from_message_id: { type: 'string', description: 'Message ID to fork from (copies history up to this point)' },
+            branch_name: { type: 'string', description: 'Name for the new branch (1-20 alphanumeric chars)' },
+          },
+          required: ['branch_name'],
+        },
+      },
+      {
+        name: 'switch_branch',
+        description: 'Switch to a different conversation branch. Your read offset is reset.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            branch_name: { type: 'string', description: 'Branch to switch to' },
+          },
+          required: ['branch_name'],
+        },
+      },
+      {
+        name: 'list_branches',
+        description: 'List all conversation branches with message counts and metadata.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      ...pluginTools,
     ],
   };
 });
@@ -1259,7 +1815,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'reset':
         result = toolReset();
         break;
+      case 'update_profile':
+        result = toolUpdateProfile(args?.display_name, args?.avatar, args?.bio, args?.role);
+        break;
+      case 'workspace_write':
+        result = toolWorkspaceWrite(args.key, args.content);
+        break;
+      case 'workspace_read':
+        result = toolWorkspaceRead(args?.key, args?.agent);
+        break;
+      case 'workspace_list':
+        result = toolWorkspaceList(args?.agent);
+        break;
+      case 'create_workflow':
+        result = toolCreateWorkflow(args.name, args.steps);
+        break;
+      case 'advance_workflow':
+        result = toolAdvanceWorkflow(args.workflow_id, args?.notes);
+        break;
+      case 'workflow_status':
+        result = toolWorkflowStatus(args?.workflow_id);
+        break;
+      case 'fork_conversation':
+        result = toolForkConversation(args?.from_message_id, args.branch_name);
+        break;
+      case 'switch_branch':
+        result = toolSwitchBranch(args.branch_name);
+        break;
+      case 'list_branches':
+        result = toolListBranches();
+        break;
       default:
+        // Check if it's a plugin tool
+        if (name.startsWith('plugin_')) {
+          const pluginName = name.substring(7);
+          result = await executePlugin(pluginName, args);
+          break;
+        }
         return {
           content: [{ type: 'text', text: `Unknown tool: ${name}` }],
           isError: true,
@@ -1299,11 +1891,86 @@ process.on('exit', () => {
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
+// --- Phase 5: Plugin system ---
+
+let loadedPlugins = []; // { name, description, inputSchema, handler }
+
+function loadPlugins() {
+  loadedPlugins = [];
+  if (!fs.existsSync(PLUGINS_DIR)) return;
+  const registry = getPluginRegistry();
+  const enabledNames = new Set(registry.filter(p => p.enabled !== false).map(p => p.name));
+
+  try {
+    const files = fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js'));
+    for (const file of files) {
+      try {
+        const pluginPath = path.join(PLUGINS_DIR, file);
+        // Clear require cache so plugins can be reloaded
+        delete require.cache[require.resolve(pluginPath)];
+        const plugin = require(pluginPath);
+        if (!plugin.name || !plugin.description || !plugin.handler) {
+          console.error(`Plugin ${file}: missing name, description, or handler`);
+          continue;
+        }
+        if (!enabledNames.has(plugin.name) && enabledNames.size > 0) continue;
+        loadedPlugins.push({
+          name: plugin.name,
+          description: plugin.description,
+          inputSchema: plugin.inputSchema || { type: 'object', properties: {} },
+          handler: plugin.handler,
+        });
+        console.error(`Plugin loaded: ${plugin.name}`);
+      } catch (e) {
+        console.error(`Plugin ${file} failed to load: ${e.message}`);
+      }
+    }
+  } catch {}
+}
+
+function executePlugin(pluginName, args) {
+  const plugin = loadedPlugins.find(p => p.name === pluginName);
+  if (!plugin) return { error: `Plugin "${pluginName}" not found` };
+
+  const context = {
+    registeredName,
+    dataDir: DATA_DIR,
+    sendMessage: (to, content) => toolSendMessage(content, to),
+    getAgents: () => toolListAgents().agents,
+    getHistory: (limit) => toolGetHistory(limit),
+    readFile: (filePath) => {
+      const resolved = path.resolve(filePath);
+      const allowedRoot = path.resolve(process.cwd());
+      if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+        throw new Error('File path must be within the project directory');
+      }
+      return fs.readFileSync(resolved, 'utf8');
+    },
+  };
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve({ error: 'Plugin execution timed out (30s)' }), 30000);
+    try {
+      const result = plugin.handler(args, context);
+      if (result && typeof result.then === 'function') {
+        result.then(r => { clearTimeout(timeout); resolve(r); }).catch(e => { clearTimeout(timeout); resolve({ error: e.message }); });
+      } else {
+        clearTimeout(timeout);
+        resolve(result);
+      }
+    } catch (e) {
+      clearTimeout(timeout);
+      resolve({ error: e.message });
+    }
+  });
+}
+
 async function main() {
   ensureDataDir();
+  loadPlugins();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v2.5.0 running');
+  console.error('Agent Bridge MCP server v3.0.0 running (' + (17 + loadedPlugins.length) + ' tools)');
 }
 
 main().catch(console.error);

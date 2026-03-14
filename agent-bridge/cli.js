@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v2.5.0
+  Let Them Talk — Agent Bridge v3.0.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 
@@ -22,6 +22,11 @@ function printUsage() {
     npx let-them-talk templates         List available agent templates
     npx let-them-talk dashboard         Launch the web dashboard (http://localhost:3000)
     npx let-them-talk reset             Clear all conversation data
+    npx let-them-talk plugin list       List installed plugins
+    npx let-them-talk plugin add <file> Install a plugin from a .js file
+    npx let-them-talk plugin remove <n> Remove a plugin by name
+    npx let-them-talk plugin enable <n> Enable a plugin
+    npx let-them-talk plugin disable <n> Disable a plugin
     npx let-them-talk help              Show this help message
   `);
 }
@@ -289,6 +294,112 @@ function showTemplate(templateName) {
   }
 }
 
+function pluginCmd() {
+  const subCmd = process.argv[3];
+  const dataDir = process.env.AGENT_BRIDGE_DATA_DIR || path.join(process.cwd(), '.agent-bridge');
+  const pluginsDir = path.join(dataDir, 'plugins');
+  const pluginsFile = path.join(dataDir, 'plugins.json');
+
+  function getRegistry() {
+    if (!fs.existsSync(pluginsFile)) return [];
+    try { return JSON.parse(fs.readFileSync(pluginsFile, 'utf8')); } catch { return []; }
+  }
+
+  function saveRegistry(reg) {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(pluginsFile, JSON.stringify(reg, null, 2));
+  }
+
+  switch (subCmd) {
+    case 'list': {
+      const plugins = getRegistry();
+      if (!plugins.length) {
+        console.log('  No plugins installed.');
+        console.log('  Install with: npx let-them-talk plugin add <file.js>');
+        return;
+      }
+      console.log('');
+      console.log('  Installed Plugins');
+      console.log('  =================');
+      for (const p of plugins) {
+        const status = p.enabled !== false ? 'enabled' : 'disabled';
+        console.log('  ' + p.name.padEnd(20) + ' ' + status.padEnd(10) + ' ' + (p.description || ''));
+      }
+      console.log('');
+      break;
+    }
+    case 'add': {
+      const filePath = process.argv[4];
+      if (!filePath) { console.error('  Usage: npx let-them-talk plugin add <file.js>'); process.exit(1); }
+      const absPath = path.resolve(filePath);
+      if (!fs.existsSync(absPath)) { console.error('  File not found: ' + absPath); process.exit(1); }
+
+      // Validate plugin exports
+      try {
+        const plugin = require(absPath);
+        if (!plugin.name || !plugin.handler) { console.error('  Plugin must export name, description, and handler'); process.exit(1); }
+
+        if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
+        const destFile = path.join(pluginsDir, path.basename(absPath));
+        fs.copyFileSync(absPath, destFile);
+
+        const reg = getRegistry();
+        if (!reg.find(p => p.name === plugin.name)) {
+          reg.push({ name: plugin.name, description: plugin.description || '', file: path.basename(absPath), enabled: true, added_at: new Date().toISOString() });
+          saveRegistry(reg);
+        }
+        console.log('  Plugin "' + plugin.name + '" installed successfully.');
+        console.log('  Restart CLI to load the new tool.');
+      } catch (e) {
+        console.error('  Failed to load plugin: ' + e.message);
+        process.exit(1);
+      }
+      break;
+    }
+    case 'remove': {
+      const name = process.argv[4];
+      if (!name) { console.error('  Usage: npx let-them-talk plugin remove <name>'); process.exit(1); }
+      const reg = getRegistry();
+      const plugin = reg.find(p => p.name === name);
+      if (!plugin) { console.error('  Plugin not found: ' + name); process.exit(1); }
+      const newReg = reg.filter(p => p.name !== name);
+      saveRegistry(newReg);
+      if (plugin.file) {
+        const pluginFile = path.join(pluginsDir, plugin.file);
+        if (fs.existsSync(pluginFile)) fs.unlinkSync(pluginFile);
+      }
+      console.log('  Plugin "' + name + '" removed.');
+      break;
+    }
+    case 'enable': {
+      const name = process.argv[4];
+      if (!name) { console.error('  Usage: npx let-them-talk plugin enable <name>'); process.exit(1); }
+      const reg = getRegistry();
+      const plugin = reg.find(p => p.name === name);
+      if (!plugin) { console.error('  Plugin not found: ' + name); process.exit(1); }
+      plugin.enabled = true;
+      saveRegistry(reg);
+      console.log('  Plugin "' + name + '" enabled.');
+      break;
+    }
+    case 'disable': {
+      const name = process.argv[4];
+      if (!name) { console.error('  Usage: npx let-them-talk plugin disable <name>'); process.exit(1); }
+      const reg = getRegistry();
+      const plugin = reg.find(p => p.name === name);
+      if (!plugin) { console.error('  Plugin not found: ' + name); process.exit(1); }
+      plugin.enabled = false;
+      saveRegistry(reg);
+      console.log('  Plugin "' + name + '" disabled.');
+      break;
+    }
+    default:
+      console.error('  Unknown plugin command: ' + (subCmd || ''));
+      console.error('  Available: list, add, remove, enable, disable');
+      process.exit(1);
+  }
+}
+
 function dashboard() {
   require('./dashboard.js');
 }
@@ -305,6 +416,10 @@ switch (command) {
     break;
   case 'reset':
     reset();
+    break;
+  case 'plugin':
+  case 'plugins':
+    pluginCmd();
     break;
   case 'help':
   case '--help':

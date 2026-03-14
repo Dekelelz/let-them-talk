@@ -41,50 +41,81 @@ Terminal 1 (Claude Code)          Terminal 2 (Gemini CLI)          Terminal 3 (C
         +------------- Shared Filesystem (.agent-bridge/) ----------------+
                        |  messages.jsonl  |  history.jsonl  |
                        |  agents.json     |  tasks.json     |
+                       |  profiles.json   |  workflows.json |
+                       |  workspaces/     |  plugins/       |
                                     |
                                     v
                         Web Dashboard (localhost:3000)
                         Real-time SSE + Agent monitoring
-                        Kanban board + Message injection
+                        Tasks + Workspaces + Workflows + Plugins
 ```
 
 Each CLI terminal spawns its own MCP server process via stdio. All processes read/write to a shared `.agent-bridge/` directory. The dashboard monitors the same files via Server-Sent Events for real-time updates.
 
 ## Features
 
-### 17 MCP Tools
+### 27 MCP Tools + Plugins
+
+**Messaging**
 
 | Tool | Description |
 |------|-------------|
-| `register` | Set agent identity (any name) |
-| `list_agents` | Show all agents with status |
+| `register` | Set agent identity (any name, optional provider) |
+| `list_agents` | Show all agents with status, profiles, branches |
 | `send_message` | Send to specific agent (auto-routes with 2) |
 | `broadcast` | Send to all agents at once |
 | `wait_for_reply` | Block until message arrives (5min timeout) |
 | `listen` | Block indefinitely — never times out |
 | `check_messages` | Non-blocking peek at inbox |
 | `ack_message` | Confirm message was processed |
-| `get_history` | View conversation with thread filter |
+| `get_history` | View conversation with thread/branch filter |
 | `get_summary` | Condensed conversation recap |
 | `handoff` | Transfer work to another agent with context |
 | `share_file` | Send file contents to another agent |
+| `reset` | Clear data (auto-archives first) |
+
+**Tasks & Workflows**
+
+| Tool | Description |
+|------|-------------|
 | `create_task` | Create and assign tasks |
 | `update_task` | Update task status (pending/in_progress/done/blocked) |
 | `list_tasks` | View tasks with filters |
-| `reset` | Clear data (auto-archives first) |
+| `create_workflow` | Create multi-step pipeline with assignees |
+| `advance_workflow` | Complete current step, auto-handoff to next |
+| `workflow_status` | Get workflow progress |
 
-### Web Dashboard
+**Profiles & Workspaces**
 
-- **Real-time feed** — SSE-powered, ~200ms latency, full markdown rendering
-- **Agent monitoring** — active/sleeping/dead/listening status with idle times
-- **Kanban board** — task management with drag-free status updates
-- **Message injection** — send messages to agents from the browser
-- **Bookmarks** — star important messages, filter by bookmarks
-- **Search** — filter by content, sender, or recipient
-- **Sound notifications** — optional audio alert for new messages
+| Tool | Description |
+|------|-------------|
+| `update_profile` | Set display name, avatar, bio, role |
+| `workspace_write` | Write to your key-value workspace (50 keys, 100KB/value) |
+| `workspace_read` | Read workspace entries (yours or another agent's) |
+| `workspace_list` | List workspace keys |
+
+**Conversation Branching**
+
+| Tool | Description |
+|------|-------------|
+| `fork_conversation` | Fork conversation at any message point |
+| `switch_branch` | Switch to a different branch |
+| `list_branches` | List all branches with message counts |
+
+### Web Dashboard (4 tabs)
+
+- **Messages** — SSE-powered real-time feed, full markdown, message grouping, date separators, bookmarks, pins, emoji reactions, search, conversation replay
+- **Tasks** — Kanban board (pending/in_progress/done/blocked), status updates from dashboard
+- **Workspaces** — Per-agent key-value browser with collapsible accordion UI
+- **Workflows** — Horizontal pipeline visualization, advance/skip steps from dashboard
+- **Agent monitoring** — active/sleeping/dead/listening status, profile popups with avatars, provider badges, activity heatmap
+- **Conversation branching** — branch tabs, switch between conversation forks
+- **Message injection** — send messages or broadcast to agents from the browser
+- **Plugin management** — plugin cards with enable/disable toggles
 - **Export** — shareable HTML or Markdown download
-- **Multi-project** — monitor multiple project folders + auto-discover
-- **Mobile responsive** — works on phones and tablets
+- **Multi-project** — monitor multiple folders + auto-discover
+- **Dark/light theme** — toggle with localStorage persistence
+- **Mobile responsive** — hamburger sidebar, works on phones and tablets
 
 ### Reliability
 
@@ -115,8 +146,38 @@ npx let-them-talk init --template <name>  # Use a team template
 npx let-them-talk templates               # List available templates
 npx let-them-talk dashboard               # Launch web dashboard
 npx let-them-talk reset                   # Clear conversation data
+npx let-them-talk plugin list             # List installed plugins
+npx let-them-talk plugin add <file.js>    # Install a plugin
+npx let-them-talk plugin remove <name>    # Remove a plugin
+npx let-them-talk plugin enable <name>    # Enable a plugin
+npx let-them-talk plugin disable <name>   # Disable a plugin
 npx let-them-talk help                    # Show help
 ```
+
+## Plugins
+
+Extend Let Them Talk with custom tools. Plugins are `.js` files in the `.agent-bridge/plugins/` directory.
+
+```javascript
+// plugins/my-tool.js
+module.exports = {
+  name: 'my-tool',
+  description: 'What this tool does',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Input text' }
+    },
+    required: ['query']
+  },
+  handler(args, ctx) {
+    // ctx provides: sendMessage, getAgents, getHistory, readFile, registeredName, dataDir
+    return { result: 'done', query: args.query };
+  }
+};
+```
+
+Plugins run sandboxed with a 30-second timeout. Manage them via CLI or the dashboard.
 
 ## Supported CLIs
 
