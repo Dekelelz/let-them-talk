@@ -4205,7 +4205,13 @@ function addProject() {
     if (res.success) {
       input.value = '';
       input.classList.remove('visible');
+      // Auto-switch to the newly added project
+      activeProject = res.project.path;
       loadProjects();
+      setTimeout(function() {
+        document.getElementById('project-select').value = activeProject;
+        switchProject();
+      }, 200);
     } else {
       alert(res.error || 'Failed to add project');
     }
