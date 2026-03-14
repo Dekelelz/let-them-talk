@@ -858,6 +858,87 @@
     color: var(--orange);
   }
 
+  /* ===== MESSAGE GROUPING ===== */
+  .message.grouped {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .message.grouped .msg-avatar {
+    visibility: hidden;
+    width: 32px;
+    height: 0;
+  }
+
+  .message.grouped .msg-header {
+    display: none;
+  }
+
+  /* ===== DATE SEPARATOR ===== */
+  .date-sep {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .date-sep::before, .date-sep::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ===== SOUND TOGGLE ===== */
+  .sound-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: all 0.15s;
+    color: var(--text-dim);
+  }
+
+  .sound-toggle:hover { border-color: var(--border-light); }
+  .sound-toggle.active { color: var(--accent); border-color: var(--accent); }
+
+  /* ===== TYPING INDICATOR ===== */
+  .typing-bar {
+    padding: 4px 20px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+    min-height: 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: none;
+  }
+
+  .typing-bar.visible { display: block; }
+
+  .typing-dots {
+    display: inline-block;
+    animation: typingDots 1.2s infinite;
+  }
+
+  @keyframes typingDots {
+    0%, 20% { content: '.'; }
+    40% { content: '..'; }
+    60%, 100% { content: '...'; }
+  }
+
+  /* ===== CONNECTION QUALITY ===== */
+  .conn-detail {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
   /* ===== SYSTEM MESSAGE ===== */
   .message.system-msg {
     justify-content: center;
@@ -939,7 +1020,8 @@
     </div>
   </div>
   <div class="header-actions">
-    <div class="connection"><span class="conn-dot"></span><span>Live</span></div>
+    <button class="sound-toggle" id="sound-toggle" onclick="toggleSound()" title="Toggle notification sound">&#x1f508;</button>
+    <div class="connection"><span class="conn-dot"></span><span id="conn-label">Live</span><span class="conn-detail" id="conn-detail"></span></div>
     <button class="btn btn-primary" onclick="exportConversation()" title="Export as Markdown">Export</button>
     <button class="btn btn-danger" onclick="doReset()">Reset</button>
   </div>
@@ -990,6 +1072,7 @@
     </div>
     <div class="messages-area" id="messages"></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
+    <div class="typing-bar" id="typing-bar"></div>
 
     <!-- MESSAGE INPUT -->
     <div class="msg-input-bar">
@@ -1473,12 +1556,43 @@ function renderMessages(messages) {
     countEl.style.display = '';
     document.getElementById('scroll-bottom').classList.add('visible');
   }
+  // Play sound if new messages arrived
+  if (isNew && soundEnabled && lastMessageCount > 0) {
+    playNotifSound();
+  }
+
   var html = '';
+  var lastDate = '';
+  var lastFrom = '';
+  var lastTo = '';
+
   for (var i = 0; i < filtered.length; i++) {
     var m = filtered[i];
     var color = getColor(m.from);
     var newClass = (isNew && i >= lastMessageCount) ? ' message-new' : '';
     var isSystem = m.system === true;
+
+    // Date separator
+    var msgDate = new Date(m.timestamp).toLocaleDateString();
+    if (msgDate !== lastDate) {
+      var today = new Date().toLocaleDateString();
+      var yesterday = new Date(Date.now() - 86400000).toLocaleDateString();
+      var dateLabel = msgDate === today ? 'Today' : msgDate === yesterday ? 'Yesterday' : msgDate;
+      html += '<div class="date-sep">' + dateLabel + '</div>';
+      lastDate = msgDate;
+      lastFrom = '';
+      lastTo = '';
+    }
+
+    // Message grouping — same sender+recipient within 2 minutes
+    var isGrouped = false;
+    if (i > 0 && !isSystem && m.from === lastFrom && m.to === lastTo) {
+      var prevTime = new Date(filtered[i - 1].timestamp).getTime();
+      var thisTime = new Date(m.timestamp).getTime();
+      if (thisTime - prevTime < 120000) isGrouped = true;
+    }
+
+    var groupClass = isGrouped ? ' grouped' : '';
 
     var badges = '';
     if (m.acked) badges += '<span class="badge badge-ack">ACK</span>';
@@ -1489,8 +1603,10 @@ function renderMessages(messages) {
         '<div class="msg-body">' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
         '</div></div>';
+      lastFrom = '';
+      lastTo = '';
     } else {
-      html += '<div class="message' + newClass + '">' +
+      html += '<div class="message' + newClass + groupClass + '">' +
         '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
@@ -1502,6 +1618,8 @@ function renderMessages(messages) {
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
         '</div></div>';
+      lastFrom = m.from;
+      lastTo = m.to;
     }
   }
   el.innerHTML = html;
@@ -1601,11 +1719,13 @@ textarea.addEventListener('input', function() {
 function poll() {
   var pp = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+  var pollStart = Date.now();
   Promise.all([
     fetch('/api/history?limit=500' + pp).then(function(r) { return r.json(); }),
     fetch('/api/agents' + pq).then(function(r) { return r.json(); }),
     fetch('/api/status' + pq).then(function(r) { return r.json(); }),
   ]).then(function(results) {
+    updateConnectionInfo(Date.now() - pollStart);
     cachedHistory = results[0];
     cachedAgents = results[1];
     var status = results[2];
@@ -1618,8 +1738,10 @@ function poll() {
     renderAgents(cachedAgents);
     renderThreads(cachedHistory);
     renderMessages(cachedHistory);
+    updateTypingIndicator(cachedAgents);
   }).catch(function(e) {
     console.error('Poll failed:', e);
+    document.getElementById('conn-detail').textContent = ' err';
   });
 }
 
@@ -1707,6 +1829,80 @@ function removeProject() {
       poll();
     }
   }).catch(function(e) { console.error('Remove project failed:', e); });
+}
+
+// ==================== SOUND NOTIFICATIONS ====================
+
+var soundEnabled = false;
+var audioCtx = null;
+
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  var btn = document.getElementById('sound-toggle');
+  if (soundEnabled) {
+    btn.classList.add('active');
+    btn.innerHTML = '&#x1f50a;';
+    // Init audio context on first user interaction
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '&#x1f508;';
+  }
+}
+
+function playNotifSound() {
+  if (!audioCtx) return;
+  try {
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.value = 800;
+    osc.type = 'sine';
+    gain.gain.value = 0.08;
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.15);
+  } catch (e) {}
+}
+
+// ==================== TYPING INDICATOR ====================
+
+function updateTypingIndicator(agents) {
+  var typing = [];
+  var keys = Object.keys(agents);
+  for (var i = 0; i < keys.length; i++) {
+    var info = agents[keys[i]];
+    // Agent is alive, not listening, and was recently active (processing a message)
+    if (info.alive && !info.is_listening && info.status === 'active') {
+      typing.push(keys[i]);
+    }
+  }
+  var bar = document.getElementById('typing-bar');
+  if (typing.length > 0) {
+    var text = typing.join(', ') + (typing.length === 1 ? ' is' : ' are') + ' processing...';
+    bar.textContent = text;
+    bar.classList.add('visible');
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+// ==================== CONNECTION QUALITY ====================
+
+var lastPollTime = 0;
+var pollLatency = 0;
+
+function updateConnectionInfo(latency) {
+  pollLatency = latency;
+  var detail = document.getElementById('conn-detail');
+  if (latency < 100) {
+    detail.textContent = ' ' + latency + 'ms';
+  } else if (latency < 500) {
+    detail.textContent = ' ' + latency + 'ms';
+  } else {
+    detail.textContent = ' slow';
+  }
 }
 
 // ==================== INIT ====================

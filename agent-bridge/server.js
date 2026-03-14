@@ -18,6 +18,7 @@ const ACKS_FILE = path.join(DATA_DIR, 'acks.json');
 let registeredName = null;
 let lastReadOffset = 0; // byte offset into messages.jsonl for efficient polling
 let heartbeatInterval = null; // heartbeat timer reference
+let messageSeq = 0; // monotonic sequence counter for message ordering
 
 // --- Helpers ---
 
@@ -121,6 +122,31 @@ function readNewMessages(fromOffset) {
   }).filter(Boolean);
 
   return { messages, newOffset: stat.size };
+}
+
+// Build a standard message delivery response with context
+function buildMessageResponse(msg, consumedIds) {
+  // Count remaining unconsumed messages after this one
+  const allUnconsumed = getUnconsumedMessages(registeredName);
+  const pendingCount = allUnconsumed.filter(m => m.id !== msg.id && !consumedIds.has(m.id)).length;
+
+  // Count online agents
+  const agents = getAgents();
+  const agentsOnline = Object.entries(agents).filter(([, info]) => isPidAlive(info.pid)).length;
+
+  return {
+    success: true,
+    message: {
+      id: msg.id,
+      from: msg.from,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      ...(msg.reply_to && { reply_to: msg.reply_to }),
+      ...(msg.thread_id && { thread_id: msg.thread_id }),
+    },
+    pending_count: pendingCount,
+    agents_online: agentsOnline,
+  };
 }
 
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
@@ -238,13 +264,12 @@ function toolSendMessage(content, to = null, reply_to = null) {
     }
   }
 
-  if (!agents[to]) {
-    return { error: `Agent "${to}" is not registered` };
-  }
-
   if (to === registeredName) {
     return { error: 'Cannot send a message to yourself' };
   }
+
+  // Check if recipient is alive — warn if dead
+  const recipientAlive = agents[to] ? isPidAlive(agents[to].pid) : false;
 
   // Resolve threading
   let thread_id = null;
@@ -258,8 +283,10 @@ function toolSendMessage(content, to = null, reply_to = null) {
     }
   }
 
+  messageSeq++;
   const msg = {
     id: generateId(),
+    seq: messageSeq,
     from: registeredName,
     to,
     content,
@@ -273,7 +300,45 @@ function toolSendMessage(content, to = null, reply_to = null) {
   fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
   touchActivity();
 
-  return { success: true, messageId: msg.id, from: msg.from, to: msg.to };
+  const result = { success: true, messageId: msg.id, from: msg.from, to: msg.to };
+  if (!recipientAlive) {
+    result.warning = `Agent "${to}" appears offline (PID not running). Message queued but may not be received until they reconnect.`;
+  }
+  return result;
+}
+
+function toolBroadcast(content) {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  const agents = getAgents();
+  const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
+
+  if (otherAgents.length === 0) {
+    return { error: 'No other agents registered' };
+  }
+
+  ensureDataDir();
+  const ids = [];
+  for (const to of otherAgents) {
+    messageSeq++;
+    const msg = {
+      id: generateId(),
+      seq: messageSeq,
+      from: registeredName,
+      to,
+      content,
+      timestamp: new Date().toISOString(),
+      broadcast: true,
+    };
+    fs.appendFileSync(MESSAGES_FILE, JSON.stringify(msg) + '\n');
+    fs.appendFileSync(HISTORY_FILE, JSON.stringify(msg) + '\n');
+    ids.push({ to, messageId: msg.id });
+  }
+  touchActivity();
+
+  return { success: true, sent_to: ids, recipient_count: otherAgents.length };
 }
 
 async function toolWaitForReply(timeoutSeconds = 300, from = null) {
@@ -295,17 +360,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
     }
     touchActivity();
     setListening(false);
-    return {
-      success: true,
-      message: {
-        id: msg.id,
-        from: msg.from,
-        content: msg.content,
-        timestamp: msg.timestamp,
-        ...(msg.reply_to && { reply_to: msg.reply_to }),
-        ...(msg.thread_id && { thread_id: msg.thread_id }),
-      },
-    };
+    return buildMessageResponse(msg, consumed);
   }
 
   // Set offset to current file end before polling for new messages
@@ -328,17 +383,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
       saveConsumedIds(registeredName, consumed);
       touchActivity();
       setListening(false);
-      return {
-        success: true,
-        message: {
-          id: msg.id,
-          from: msg.from,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          ...(msg.reply_to && { reply_to: msg.reply_to }),
-          ...(msg.thread_id && { thread_id: msg.thread_id }),
-        },
-      };
+      return buildMessageResponse(msg, consumed);
     }
     await sleep(500);
   }
@@ -405,17 +450,7 @@ async function toolListen(from = null) {
     }
     touchActivity();
     setListening(false);
-    return {
-      success: true,
-      message: {
-        id: msg.id,
-        from: msg.from,
-        content: msg.content,
-        timestamp: msg.timestamp,
-        ...(msg.reply_to && { reply_to: msg.reply_to }),
-        ...(msg.thread_id && { thread_id: msg.thread_id }),
-      },
-    };
+    return buildMessageResponse(msg, consumed);
   }
 
   // Set offset to current file end
@@ -441,17 +476,7 @@ async function toolListen(from = null) {
         saveConsumedIds(registeredName, consumed);
         touchActivity();
         setListening(false);
-        return {
-          success: true,
-          message: {
-            id: msg.id,
-            from: msg.from,
-            content: msg.content,
-            timestamp: msg.timestamp,
-            ...(msg.reply_to && { reply_to: msg.reply_to }),
-            ...(msg.thread_id && { thread_id: msg.thread_id }),
-          },
-        };
+        return buildMessageResponse(msg, consumed);
       }
       await sleep(500);
     }
@@ -575,6 +600,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'broadcast',
+        description: 'Send a message to ALL other registered agents at once. Useful for announcements or coordinating multiple agents.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            content: {
+              type: 'string',
+              description: 'The message content to broadcast',
+            },
+          },
+          required: ['content'],
+        },
+      },
+      {
         name: 'listen',
         description: 'Listen for messages indefinitely. Unlike wait_for_reply, this never times out — it blocks until a message arrives. The agent should call listen() after finishing any task to stay available. After receiving a message, process it, respond, then call listen() again.',
         inputSchema: {
@@ -661,6 +700,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'wait_for_reply':
         result = await toolWaitForReply(args?.timeout_seconds, args?.from);
+        break;
+      case 'broadcast':
+        result = toolBroadcast(args.content);
         break;
       case 'listen':
         result = await toolListen(args?.from);
