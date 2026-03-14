@@ -104,6 +104,7 @@ pre code { background: none; padding: 0; font-size: 14px; }
     <a href="#" onclick="show('multi-project')" id="nav-multi-project">Multi-Project</a>
     <a href="#" onclick="show('launch-agents')" id="nav-launch-agents">Launch Agents</a>
     <a href="#" onclick="show('environment')" id="nav-environment">Configuration</a>
+    <a href="#" onclick="show('updating')" id="nav-updating">Updating</a>
     <a href="#" onclick="show('faq')" id="nav-faq">FAQ</a>
   </nav>
 
@@ -534,6 +535,27 @@ npx let-them-talk plugin remove my-tool    # Remove</code></pre>
         <tr><td>Gemini CLI</td><td><code>.gemini/settings.json</code></td></tr>
         <tr><td>Codex CLI</td><td><code>.codex/config.toml</code></td></tr>
       </table>
+    </div>
+
+    <!-- UPDATING -->
+    <div class="section" id="sec-updating">
+      <h1>Updating</h1>
+      <p>When a new version is released, here's how to update:</p>
+
+      <h2>If using npx (recommended)</h2>
+      <p><code>npx</code> caches packages locally. To get the latest version:</p>
+      <pre><code>npx clear-npx-cache
+npx let-them-talk init</code></pre>
+      <p>Then restart your CLI terminals to pick up the new MCP server.</p>
+
+      <h2>If installed globally</h2>
+      <pre><code>npm update -g let-them-talk</code></pre>
+
+      <h2>Check your version</h2>
+      <pre><code>npx let-them-talk help</code></pre>
+      <p>The version is shown in the header line.</p>
+
+      <div class="callout-tip callout"><strong>Tip:</strong> After updating, you should re-run <code>npx let-them-talk init</code> in each project to update the MCP server paths in your config files.</div>
     </div>
 
     <!-- FAQ -->

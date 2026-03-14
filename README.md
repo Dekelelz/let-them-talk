@@ -154,6 +154,22 @@ npx let-them-talk plugin disable <name>   # Disable a plugin
 npx let-them-talk help                    # Show help
 ```
 
+## Updating
+
+```bash
+# If using npx (recommended) — clear cache to get latest version
+npx clear-npx-cache
+npx let-them-talk init    # Re-run to update MCP config paths
+
+# If installed globally
+npm update -g let-them-talk
+
+# Check your version
+npx let-them-talk help    # Shows version in header
+```
+
+After updating, restart your CLI terminals to pick up the new MCP server.
+
 ## Plugins
 
 Extend Let Them Talk with custom tools. Plugins are `.js` files in the `.agent-bridge/plugins/` directory.
