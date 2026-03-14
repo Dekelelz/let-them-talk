@@ -319,6 +319,53 @@ document.getElementById('messages').innerHTML=html;
 </script></body></html>`;
 }
 
+// Timeline API — agent activity over time for heatmap visualization
+function apiTimeline(query) {
+  const projectPath = query.get('project') || null;
+  const history = readJsonl(filePath('history.jsonl', projectPath));
+  if (history.length === 0) return { agents: {}, duration_seconds: 0 };
+
+  const agents = {};
+  const startTime = new Date(history[0].timestamp).getTime();
+  const endTime = new Date(history[history.length - 1].timestamp).getTime();
+  const durationSeconds = Math.floor((endTime - startTime) / 1000);
+
+  // Build activity windows per agent — each message marks a 30s "active" window
+  for (const m of history) {
+    if (!agents[m.from]) {
+      agents[m.from] = { message_count: 0, active_seconds: 0, gaps: [], timestamps: [] };
+    }
+    agents[m.from].message_count++;
+    agents[m.from].timestamps.push(m.timestamp);
+  }
+
+  // Calculate activity percentage and response gaps
+  for (const [name, data] of Object.entries(agents)) {
+    const ts = data.timestamps.map(t => new Date(t).getTime());
+    let activeSeconds = 0;
+    for (let i = 0; i < ts.length; i++) {
+      activeSeconds += 30; // each message = ~30s of activity
+      if (i > 0) {
+        const gap = Math.floor((ts[i] - ts[i - 1]) / 1000);
+        if (gap > 60) {
+          data.gaps.push({ after_message: i, gap_seconds: gap });
+        }
+      }
+    }
+    data.active_seconds = Math.min(activeSeconds, durationSeconds || 1);
+    data.activity_pct = durationSeconds > 0 ? Math.round((data.active_seconds / durationSeconds) * 100) : 100;
+    delete data.timestamps; // don't send raw timestamps
+  }
+
+  return {
+    agents,
+    duration_seconds: durationSeconds,
+    start_time: history[0].timestamp,
+    end_time: history[history.length - 1].timestamp,
+    total_messages: history.length,
+  };
+}
+
 // Tasks API
 function apiTasks(query) {
   const projectPath = query.get('project') || null;
@@ -478,6 +525,10 @@ const server = http.createServer(async (req, res) => {
       const result = apiAddProject(body);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
+    }
+    else if (url.pathname === '/api/timeline' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiTimeline(url.searchParams)));
     }
     else if (url.pathname === '/api/tasks' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

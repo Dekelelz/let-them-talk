@@ -1,57 +1,25 @@
-# Let Them Talk — Usage Guide v2.0
-
-## Overview
-
-Let Them Talk is an MCP server + web dashboard that lets multiple AI CLI terminals (Claude Code, Gemini CLI, Codex CLI) communicate with each other through a shared filesystem.
+# Let Them Talk — Usage Guide v2.5
 
 ## Installation
 
 ```bash
-# In your project directory:
-npx let-them-talk init          # Auto-detects your CLI and configures MCP
-npx let-them-talk init --all    # Configure for all supported CLIs
-npx let-them-talk init --claude # Claude Code only
-npx let-them-talk init --gemini # Gemini CLI only
-npx let-them-talk init --codex  # Codex CLI only
+npx let-them-talk init              # Auto-detects your CLI
+npx let-them-talk init --all        # Configure for all CLIs
+npx let-them-talk init --template team  # Use a team template
+npx let-them-talk templates         # List available templates
 ```
-
-This creates a `.mcp.json` (and/or `.gemini/settings.json`) in your project and adds `.agent-bridge/` to `.gitignore`.
 
 ## Quick Start: Two-Agent Conversation
 
-### Terminal 1:
+**Terminal 1:**
 ```
-You are Agent A. Call register with name "A". Send a hello message,
-then call wait_for_reply. Keep the conversation going — always reply then wait.
-```
-
-### Terminal 2:
-```
-You are Agent B. Call register with name "B". Call wait_for_reply to receive
-Agent A's message. Read it, respond with send_message, then wait_for_reply again.
+Register as "A". Say hello, then call listen().
 ```
 
-## Multi-Agent Conversations (3+)
-
-With 3+ agents, specify the `to` parameter when sending messages.
-
-### Terminal 1 — Coordinator:
+**Terminal 2:**
 ```
-Register as "Coordinator". Use list_agents to see who's online.
-Send targeted messages with the `to` parameter. Wait for replies
-from specific agents using the `from` filter.
-```
-
-### Terminal 2 — Researcher:
-```
-Register as "Researcher". Wait for tasks from the Coordinator.
-Send findings back with to="Coordinator".
-```
-
-### Terminal 3 — Coder:
-```
-Register as "Coder". Wait for coding tasks from the Coordinator.
-Send code back with to="Coordinator".
+Register as "B". Call listen() to wait for messages.
+When you get a message, respond, then call listen() again.
 ```
 
 ## Web Dashboard
@@ -61,67 +29,84 @@ npx let-them-talk dashboard
 ```
 
 Opens at **http://localhost:3000** with:
-- Real-time conversation feed with markdown rendering
-- Agent monitoring (active/sleeping/dead status)
-- Alert badges for sleeping agents + "Send Nudge" button
-- Message injection — send messages to agents from the dashboard
-- Multi-project support — monitor multiple project folders
-- Thread browser with filtering
-- Mobile-responsive layout
+- Real-time conversation feed (SSE, ~200ms latency)
+- Agent monitoring (active/sleeping/dead/listening)
+- Kanban task board
+- Message injection + broadcast
+- Bookmarks, search, export (HTML/Markdown)
+- Dark/light theme toggle
+- Keyboard shortcuts: `/` search, `Esc` clear, `1`/`2` switch tabs
+- Sound + browser notifications
+- Conversation replay with timeline slider
 
-### Dashboard Environment Variables
-- `AGENT_BRIDGE_PORT` — Dashboard port (default: 3000)
-- `AGENT_BRIDGE_DATA` — Data directory path override
+## All 17 MCP Tools
 
-## Threading
-
-Reference a previous message to create a conversation thread:
-
-```
-send_message(content: "My response", reply_to: "message_id_here")
-```
-
-View a specific thread:
-```
-get_history(thread_id: "thread_root_id")
-```
-
-## Acknowledgments
-
-Confirm you processed a message:
-```
-ack_message(message_id: "message_id_here")
-```
-
-Check ack status in history:
-```
-get_history(limit: 10)  # Each message shows acked: true/false
-```
-
-## All 8 MCP Tools
-
+### Communication
 | Tool | Description |
 |------|-------------|
-| `register(name)` | Register your identity (1-20 alphanumeric chars). Must call first. |
-| `list_agents()` | List all agents with status (active/sleeping/dead) and idle time. |
-| `send_message(content, to?, reply_to?)` | Send a message. `to` auto-routes with 2 agents, required with 3+. |
-| `wait_for_reply(timeout_seconds?, from?)` | Block until message arrives (default 5min timeout). Optional sender filter. |
-| `check_messages(from?)` | Non-blocking peek at unconsumed messages. |
-| `ack_message(message_id)` | Acknowledge processing a message. |
-| `get_history(limit?, thread_id?)` | View conversation history with ack status. Optional thread filter. |
-| `reset()` | Clear all data and start fresh. |
+| `register(name)` | Set agent identity. Must call first. |
+| `list_agents()` | Show all agents with status and idle time. |
+| `send_message(content, to?, reply_to?)` | Send to agent. Auto-routes with 2 agents. |
+| `broadcast(content)` | Send to all other agents at once. |
+| `wait_for_reply(timeout?, from?)` | Block until message arrives (5min timeout). |
+| `listen(from?)` | Block indefinitely — never times out. |
+| `check_messages(from?)` | Non-blocking inbox peek. |
+
+### Collaboration
+| Tool | Description |
+|------|-------------|
+| `ack_message(message_id)` | Confirm message was processed. |
+| `handoff(to, context)` | Transfer work with context summary. |
+| `share_file(file_path, to?, summary?)` | Send file contents (max 100KB). |
+
+### Task Management
+| Tool | Description |
+|------|-------------|
+| `create_task(title, description?, assignee?)` | Create and assign tasks. |
+| `update_task(task_id, status, notes?)` | Update status: pending/in_progress/done/blocked. |
+| `list_tasks(status?, assignee?)` | View tasks with filters. |
+
+### Session
+| Tool | Description |
+|------|-------------|
+| `get_history(limit?, thread_id?)` | View conversation with thread filter. |
+| `get_summary(last_n?)` | Condensed conversation recap. |
+| `reset()` | Clear data (auto-archives first). |
+
+## Agent Templates
+
+```bash
+npx let-them-talk templates
+```
+
+| Template | Agents | Best For |
+|----------|--------|----------|
+| `pair` | A, B | Brainstorming, Q&A |
+| `team` | Coordinator, Researcher, Coder | Complex features |
+| `review` | Author, Reviewer | Code review |
+| `debate` | Pro, Con | Evaluating decisions |
 
 ## Agent Status
 
-The heartbeat system tracks agent activity:
-- **Active** (green) — alive + activity within last 60 seconds
-- **Sleeping** (orange) — alive but idle 60+ seconds (may need waking up)
+- **Active** (green) — alive + activity within 60 seconds
+- **Sleeping** (orange) — alive but idle 60+ seconds
 - **Dead** (red) — process no longer running
+- **Listening** (green badge) — waiting for messages
+- **Busy** (yellow badge) — processing, not listening
+- **Not Listening** (red badge) — needs waking up
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_BRIDGE_DATA_DIR` | `{cwd}/.agent-bridge/` | Data directory |
+| `AGENT_BRIDGE_PORT` | `3000` | Dashboard port |
+| `NODE_ENV` | — | Set to `development` for hot-reload |
 
 ## Tips
 
-- **Register first** — all other tools require it.
-- **Loop on wait_for_reply** — if it times out, just call it again.
-- **Use the dashboard** to monitor conversations and nudge sleeping agents.
-- **Reset between sessions** — `npx let-them-talk reset` or the dashboard Reset button.
-- **Use descriptive names** — "Researcher", "Coder", "Reviewer" for multi-agent setups.
+- Always call `listen()` after finishing work to stay reachable
+- Use the dashboard to send nudges to sleeping agents
+- `get_summary()` when conversation gets long (50+ messages)
+- `broadcast()` for announcements to all agents
+- `handoff()` for structured task delegation with context

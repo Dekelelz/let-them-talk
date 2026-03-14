@@ -1195,6 +1195,104 @@
     .kanban { grid-template-columns: 1fr; }
   }
 
+  /* ===== REPLAY MODE ===== */
+  .replay-bar {
+    display: none;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .replay-bar.visible { display: flex; }
+
+  .replay-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .replay-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .replay-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .replay-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+  .replay-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .replay-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+
+  .replay-progress {
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    min-width: 60px;
+    text-align: right;
+  }
+
+  .replay-exit {
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .replay-exit:hover { background: rgba(248, 81, 73, 0.2); }
+
+  .time-gap {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 4px 0;
+    font-style: italic;
+  }
+
+  /* ===== NOTIFICATION TOGGLE ===== */
+  .notif-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: all 0.15s;
+    color: var(--text-dim);
+  }
+
+  .notif-toggle:hover { border-color: var(--border-light); }
+  .notif-toggle.active { color: var(--accent); border-color: var(--accent); }
+
   /* ===== CONNECTION QUALITY ===== */
   .conn-detail {
     font-size: 10px;
@@ -1358,9 +1456,11 @@
     </div>
   </div>
   <div class="header-actions">
+    <button class="notif-toggle" id="notif-toggle" onclick="toggleNotifications()" title="Browser notifications">&#x1f514;</button>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light theme">&#x1f319;</button>
     <button class="sound-toggle" id="sound-toggle" onclick="toggleSound()" title="Toggle notification sound">&#x1f508;</button>
     <div class="connection"><span class="conn-dot"></span><span id="conn-label">Live</span><span class="conn-detail" id="conn-detail"></span></div>
+    <button class="btn" onclick="enterReplay()" id="replay-header-btn" title="Replay conversation">Replay</button>
     <div style="position:relative;display:inline-block">
       <button class="btn btn-primary" onclick="toggleExportMenu()">Export &#x25BE;</button>
       <div id="export-menu" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;overflow:hidden;z-index:200;min-width:160px">
@@ -1429,7 +1529,19 @@
 
   <!-- MAIN -->
   <div class="main" style="position:relative">
-    <div class="view-tabs">
+    <div class="replay-bar" id="replay-bar">
+      <div class="replay-controls">
+        <button class="replay-btn" onclick="replayPlayPause()" id="replay-play">&#x25B6;</button>
+        <button class="replay-btn" onclick="setReplaySpeed(0.5)" id="speed-05">0.5x</button>
+        <button class="replay-btn active" onclick="setReplaySpeed(1)" id="speed-1">1x</button>
+        <button class="replay-btn" onclick="setReplaySpeed(2)" id="speed-2">2x</button>
+        <button class="replay-btn" onclick="setReplaySpeed(5)" id="speed-5">5x</button>
+      </div>
+      <input type="range" class="replay-slider" id="replay-slider" min="0" max="0" value="0" oninput="onReplaySlider()">
+      <span class="replay-progress" id="replay-progress">0 / 0</span>
+      <button class="replay-exit" onclick="exitReplay()">Exit Replay</button>
+    </div>
+    <div class="view-tabs" id="view-tabs">
       <div class="view-tab active" id="tab-messages" onclick="switchView('messages')">Messages</div>
       <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
     </div>
@@ -2138,8 +2250,9 @@ document.addEventListener('keydown', function(e) {
   var tag = document.activeElement.tagName;
   var inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-  // Escape — clear search and filters
+  // Escape — exit replay or clear search/filters
   if (e.key === 'Escape') {
+    if (replayActive) { exitReplay(); return; }
     document.getElementById('search-input').value = '';
     searchQuery = '';
     bookmarkFilter = false;
@@ -2499,9 +2612,15 @@ function poll() {
     fetch('/api/status' + pq).then(function(r) { return r.json(); }),
   ]).then(function(results) {
     updateConnectionInfo(Date.now() - pollStart);
+    var prevHistLen = cachedHistory.length;
     cachedHistory = results[0];
     cachedAgents = results[1];
     var status = results[2];
+
+    // Browser notification for new messages
+    if (prevHistLen > 0 && cachedHistory.length > prevHistLen) {
+      sendBrowserNotification(cachedHistory[cachedHistory.length - 1]);
+    }
 
     document.getElementById('stat-messages').textContent = status.messageCount;
     document.getElementById('stat-agents').textContent = status.agentCount;
@@ -2516,7 +2635,7 @@ function poll() {
     renderAgents(cachedAgents);
     renderAgentStats();
     renderThreads(cachedHistory);
-    renderMessages(cachedHistory);
+    if (!replayActive) renderMessages(cachedHistory);
     renderBookmarksSidebar();
     updateTypingIndicator(cachedAgents);
     if (activeView === 'tasks') fetchTasks();
@@ -2722,6 +2841,175 @@ function updateConnectionInfo(latency) {
     detail.textContent = ' slow';
   }
 }
+
+// ==================== REPLAY MODE ====================
+
+var replayActive = false;
+var replayPlaying = false;
+var replayPosition = 0;
+var replaySpeed = 1;
+var replayTimer = null;
+
+function enterReplay() {
+  if (!cachedHistory.length) return;
+  replayActive = true;
+  replayPosition = 0;
+  replayPlaying = false;
+  document.getElementById('replay-bar').classList.add('visible');
+  document.getElementById('view-tabs').style.display = 'none';
+  document.getElementById('search-bar').style.display = 'none';
+  document.getElementById('replay-slider').max = cachedHistory.length;
+  document.getElementById('replay-slider').value = 0;
+  document.getElementById('replay-header-btn').style.display = 'none';
+  renderReplayMessages();
+}
+
+function exitReplay() {
+  replayActive = false;
+  replayPlaying = false;
+  if (replayTimer) { clearTimeout(replayTimer); replayTimer = null; }
+  document.getElementById('replay-bar').classList.remove('visible');
+  document.getElementById('view-tabs').style.display = '';
+  document.getElementById('search-bar').style.display = '';
+  document.getElementById('replay-header-btn').style.display = '';
+  lastMessageCount = 0;
+  renderMessages(cachedHistory);
+}
+
+function onReplaySlider() {
+  replayPosition = parseInt(document.getElementById('replay-slider').value);
+  renderReplayMessages();
+}
+
+function replayPlayPause() {
+  replayPlaying = !replayPlaying;
+  document.getElementById('replay-play').innerHTML = replayPlaying ? '&#x23F8;' : '&#x25B6;';
+  if (replayPlaying) replayAdvance();
+}
+
+function setReplaySpeed(speed) {
+  replaySpeed = speed;
+  var speeds = [0.5, 1, 2, 5];
+  for (var i = 0; i < speeds.length; i++) {
+    var id = 'speed-' + String(speeds[i]).replace('.', '');
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('active', speeds[i] === speed);
+  }
+}
+
+function replayAdvance() {
+  if (!replayPlaying || !replayActive) return;
+  if (replayPosition < cachedHistory.length) {
+    replayPosition++;
+    document.getElementById('replay-slider').value = replayPosition;
+    renderReplayMessages();
+    replayTimer = setTimeout(replayAdvance, 1000 / replaySpeed);
+  } else {
+    replayPlaying = false;
+    document.getElementById('replay-play').innerHTML = '&#x25B6;';
+  }
+}
+
+function renderReplayMessages() {
+  var el = document.getElementById('messages');
+  document.getElementById('replay-progress').textContent = replayPosition + ' / ' + cachedHistory.length;
+
+  if (replayPosition === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x23F5;</div><div class="empty-text">Press play or drag the slider</div></div>';
+    return;
+  }
+
+  var slice = cachedHistory.slice(0, replayPosition);
+  var html = '';
+  for (var i = 0; i < slice.length; i++) {
+    var m = slice[i];
+    var color = getColor(m.from);
+
+    // Time gap between messages
+    if (i > 0) {
+      var gap = new Date(m.timestamp).getTime() - new Date(slice[i-1].timestamp).getTime();
+      if (gap > 5000) {
+        var gapText = '';
+        var gapSecs = Math.floor(gap / 1000);
+        if (gapSecs < 60) gapText = gapSecs + ' seconds later';
+        else if (gapSecs < 3600) gapText = Math.floor(gapSecs / 60) + 'm ' + (gapSecs % 60) + 's later';
+        else gapText = Math.floor(gapSecs / 3600) + 'h later';
+        html += '<div class="time-gap">&#x23F1; ' + gapText + '</div>';
+      }
+    }
+
+    var isLast = (i === slice.length - 1);
+    var newClass = isLast ? ' message-new' : '';
+
+    html += '<div class="message' + newClass + '">' +
+      '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+      '<div class="msg-body">' +
+        '<div class="msg-header">' +
+          '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+          '<span class="msg-arrow">&rarr;</span>' +
+          '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
+          '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+        '</div>' +
+        '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+      '</div></div>';
+  }
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+
+// ==================== BROWSER NOTIFICATIONS ====================
+
+var notifEnabled = localStorage.getItem('ltt-notif') === 'true';
+var notifPermission = Notification ? Notification.permission : 'denied';
+
+function toggleNotifications() {
+  if (!notifEnabled) {
+    if (notifPermission !== 'granted') {
+      Notification.requestPermission().then(function(perm) {
+        notifPermission = perm;
+        if (perm === 'granted') {
+          notifEnabled = true;
+          localStorage.setItem('ltt-notif', 'true');
+          updateNotifBtn();
+        }
+      });
+    } else {
+      notifEnabled = true;
+      localStorage.setItem('ltt-notif', 'true');
+    }
+  } else {
+    notifEnabled = false;
+    localStorage.setItem('ltt-notif', 'false');
+  }
+  updateNotifBtn();
+}
+
+function updateNotifBtn() {
+  var btn = document.getElementById('notif-toggle');
+  if (notifEnabled) {
+    btn.classList.add('active');
+    btn.innerHTML = '&#x1f514;';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '&#x1f515;';
+  }
+}
+
+function sendBrowserNotification(msg) {
+  if (!notifEnabled || notifPermission !== 'granted') return;
+  if (document.hasFocus()) return; // Only notify when tab is in background
+  try {
+    var preview = msg.content.substring(0, 80);
+    var n = new Notification(msg.from + ' sent a message', {
+      body: preview,
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect rx="20" width="100" height="100" fill="%230d1117"/><path d="M20 30 Q20 20 30 20 H70 Q80 20 80 30 V55 Q80 65 70 65 H55 L40 80 V65 H30 Q20 65 20 55Z" fill="%2358a6ff"/></svg>',
+      tag: 'ltt-' + msg.id
+    });
+    n.onclick = function() { window.focus(); n.close(); };
+  } catch (e) {}
+}
+
+updateNotifBtn();
 
 // ==================== SSE + POLLING ====================
 
