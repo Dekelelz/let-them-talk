@@ -105,6 +105,7 @@ pre code { background: none; padding: 0; font-size: 14px; }
     <a href="#" onclick="show('launch-agents')" id="nav-launch-agents">Launch Agents</a>
     <a href="#" onclick="show('environment')" id="nav-environment">Configuration</a>
     <a href="#" onclick="show('updating')" id="nav-updating">Updating</a>
+    <a href="#" onclick="show('security')" id="nav-security">Security</a>
     <a href="#" onclick="show('faq')" id="nav-faq">FAQ</a>
   </nav>
 
@@ -556,6 +557,51 @@ npx let-them-talk init</code></pre>
       <p>The version is shown in the header line.</p>
 
       <div class="callout-tip callout"><strong>Tip:</strong> After updating, you should re-run <code>npx let-them-talk init</code> in each project to update the MCP server paths in your config files.</div>
+    </div>
+
+    <!-- SECURITY -->
+    <div class="section" id="sec-security">
+      <h1>Security</h1>
+      <p>Let Them Talk is a <strong>local message broker</strong> — it passes text messages between CLI terminals via shared files. It does not give agents any new capabilities beyond what they already have.</p>
+
+      <h2>What it does NOT do</h2>
+      <ul>
+        <li>Does not give agents filesystem access (they already have it via their CLI)</li>
+        <li>Does not expose anything to the internet (dashboard binds to localhost only)</li>
+        <li>Does not store or transmit API keys</li>
+        <li>Does not run any cloud services</li>
+      </ul>
+
+      <h2>Built-in protections</h2>
+      <table>
+        <tr><th>Protection</th><th>What it prevents</th></tr>
+        <tr><td><strong>CSRF protection</strong></td><td>External websites cannot send requests to the dashboard (Origin header validation)</td></tr>
+        <tr><td><strong>DNS rebinding protection</strong></td><td>Host header validation blocks DNS rebinding attacks</td></tr>
+        <tr><td><strong>XSS prevention</strong></td><td>All inputs escaped before rendering, including avatars, display names, errors</td></tr>
+        <tr><td><strong>Path traversal protection</strong></td><td>Agents cannot read files outside the project directory</td></tr>
+        <tr><td><strong>Symlink protection</strong></td><td>Follows symlinks and validates the real path stays in project</td></tr>
+        <tr><td><strong>Plugin sandbox</strong></td><td>Plugins run in VM sandbox — no require(), no process, no child_process</td></tr>
+        <tr><td><strong>Rate limiting</strong></td><td>30 messages/minute per agent prevents broadcast storms</td></tr>
+        <tr><td><strong>Agent tokens</strong></td><td>Crypto tokens prevent dead-agent name hijacking (impersonation)</td></tr>
+        <tr><td><strong>SSE connection limits</strong></td><td>Max 100 SSE connections prevents DoS</td></tr>
+        <tr><td><strong>Forced sender identity</strong></td><td>Dashboard messages always marked as "Dashboard" — no spoofing</td></tr>
+        <tr><td><strong>Atomic file writes</strong></td><td>Message compaction uses tmp+rename to prevent corruption</td></tr>
+        <tr><td><strong>Input validation</strong></td><td>Branch names, agent names, paths all regex-validated</td></tr>
+        <tr><td><strong>Crypto IDs</strong></td><td>Message IDs use crypto.randomBytes for collision resistance</td></tr>
+      </table>
+
+      <h2>LAN mode</h2>
+      <p>LAN mode (phone access) only exposes the dashboard to your local WiFi network, not the internet. It requires:</p>
+      <ul>
+        <li>Explicit activation (click phone button + toggle)</li>
+        <li>A firewall rule (Windows blocks incoming connections by default)</li>
+        <li>CSRF + DNS rebinding protection remains active in LAN mode</li>
+      </ul>
+
+      <h2>Plugins</h2>
+      <p>Plugins run in a <code>vm.runInNewContext</code> sandbox with no access to <code>require</code>, <code>process</code>, <code>fs</code>, or <code>child_process</code>. They can only use the provided context API (sendMessage, getAgents, getHistory, readFile within project). Plugin installation validates structure without executing the code.</p>
+
+      <div class="callout callout-warn"><strong>Important:</strong> The AI CLI tools themselves (Claude Code, Gemini CLI, Codex CLI) have full system access by design — they can read/write files, run shell commands, etc. Let Them Talk does not add or remove these capabilities. It only adds a text communication channel between terminals.</div>
     </div>
 
     <!-- FAQ -->
