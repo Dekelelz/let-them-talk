@@ -10,12 +10,17 @@ let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
 
 function getLanIP() {
   const interfaces = os.networkInterfaces();
+  let fallback = null;
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+      if (iface.family === 'IPv4' && !iface.internal) {
+        // Prefer real LAN IPs (192.168.x, 10.x, 172.16-31.x) over link-local (169.254.x)
+        if (!iface.address.startsWith('169.254.')) return iface.address;
+        if (!fallback) fallback = iface.address;
+      }
     }
   }
-  return null;
+  return fallback;
 }
 const DEFAULT_DATA_DIR = process.env.AGENT_BRIDGE_DATA || path.join(process.cwd(), '.agent-bridge');
 const HTML_FILE = path.join(__dirname, 'dashboard.html');
