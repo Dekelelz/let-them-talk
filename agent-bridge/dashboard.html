@@ -4159,7 +4159,7 @@ function doReset() {
 // ==================== PROJECT MANAGEMENT ====================
 
 function loadProjects() {
-  fetch('/api/projects').then(function(r) { return r.json(); }).then(function(projects) {
+  return fetch('/api/projects').then(function(r) { return r.json(); }).then(function(projects) {
     var sel = document.getElementById('project-select');
     // Keep the first option (Default)
     while (sel.options.length > 1) sel.remove(1);
@@ -4823,9 +4823,11 @@ function initSSE() {
   }
 })();
 
-loadProjects();
-poll();
-initSSE();
+// Load projects first, then poll (so auto-select works before first data fetch)
+loadProjects().then(function() {
+  poll();
+  initSSE();
+});
 // Safety-net poll at 10s (SSE handles real-time, this catches any missed updates)
 setInterval(poll, 10000);
 </script>
