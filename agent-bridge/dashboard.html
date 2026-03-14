@@ -2810,7 +2810,7 @@ function renderAgents(agents) {
     }
 
     var avatarHtml = info.avatar
-      ? '<img class="agent-avatar-img" src="' + info.avatar + '" alt="' + escapeHtml(name) + '" onerror="this.style.display=\'none\'">'
+      ? '<img class="agent-avatar-img" src="' + escapeHtml(info.avatar) + '" alt="' + escapeHtml(name) + '" onerror="this.style.display=\'none\'">'
       : '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>';
     var displayName = info.display_name || name;
     var roleHtml = info.role ? '<span class="role-badge">' + escapeHtml(info.role) + '</span>' : '';
@@ -3755,7 +3755,7 @@ textarea.addEventListener('input', function() {
 function getMsgAvatar(name, color) {
   var agent = cachedAgents[name];
   if (agent && agent.avatar) {
-    return '<img class="msg-avatar-img" src="' + agent.avatar + '" alt="' + escapeHtml(name) + '" onerror="this.outerHTML=\'<div class=&quot;msg-avatar&quot; style=&quot;background:' + color + '&quot;>' + initial(name) + '</div>\'">';
+    return '<img class="msg-avatar-img" src="' + escapeHtml(agent.avatar) + '" alt="' + escapeHtml(name) + '" onerror="this.outerHTML=\'<div class=&quot;msg-avatar&quot; style=&quot;background:' + color + '&quot;>' + initial(name) + '</div>\'">';
   }
   return '<div class="msg-avatar" style="background:' + color + '">' + initial(name) + '</div>';
 }
@@ -4323,7 +4323,7 @@ function updateTypingIndicator(agents) {
     var info = agents[keys[i]];
     // Agent is alive, not listening, and was recently active (processing a message)
     if (info.alive && !info.is_listening && info.status === 'active') {
-      typing.push(info.display_name || keys[i]);
+      typing.push(escapeHtml(info.display_name || keys[i]));
     }
   }
   var bar = document.getElementById('typing-bar');
@@ -4729,7 +4729,7 @@ function doLaunch() {
   }).then(function(r) { return r.json(); }).then(function(data) {
     if (data.error) {
       resultEl.className = 'launch-result error';
-      resultEl.innerHTML = data.error;
+      resultEl.innerHTML = escapeHtml(data.error);
       return;
     }
     resultEl.className = 'launch-result success';

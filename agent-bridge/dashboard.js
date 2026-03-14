@@ -3,7 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
 let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
@@ -139,6 +139,9 @@ function getDefaultAvatar(name) {
 function apiHistory(query) {
   const projectPath = query.get('project') || null;
   const branch = query.get('branch') || null;
+  if (branch && !/^[a-zA-Z0-9_-]{1,64}$/.test(branch)) {
+    return { error: 'Invalid branch name' };
+  }
   const histFile = branch && branch !== 'main'
     ? filePath(`branch-${branch}-history.jsonl`, projectPath)
     : filePath('history.jsonl', projectPath);
@@ -615,8 +618,7 @@ function apiLaunchAgent(body) {
 
   // Try to launch terminal on Windows
   if (process.platform === 'win32') {
-    const escapedDir = projectDir.replace(/"/g, '\\"');
-    exec(`start cmd /k "cd /d "${escapedDir}" && ${cliCmd}"`, { cwd: projectDir });
+    spawn('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${projectDir}" && ${cliCmd}`], { cwd: projectDir, shell: false, detached: true, stdio: 'ignore' });
     return { success: true, launched: true, cli, project_dir: projectDir, prompt: launchPrompt };
   }
 
@@ -662,7 +664,7 @@ const server = http.createServer(async (req, res) => {
   const allowedOrigin = `http://localhost:${PORT}`;
   const reqOrigin = req.headers.origin;
   if (LAN_MODE && reqOrigin) {
-    res.setHeader('Access-Control-Allow-Origin', reqOrigin);
+    res.setHeader('Access-Control-Allow-Origin', '*');
   } else if (reqOrigin === allowedOrigin || reqOrigin === `http://127.0.0.1:${PORT}`) {
     res.setHeader('Access-Control-Allow-Origin', reqOrigin);
   }
@@ -794,6 +796,11 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/workspaces' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
       const agentParam = url.searchParams.get('agent');
+      if (agentParam && !/^[a-zA-Z0-9]{1,20}$/.test(agentParam)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid agent name' }));
+        return;
+      }
       const dataDir = resolveDataDir(projectPath);
       const wsDir = path.join(dataDir, 'workspaces');
       const result = {};
