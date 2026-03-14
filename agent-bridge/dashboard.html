@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Let Them Talk</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230d1117'/><path d='M20 30 Q20 20 30 20 H70 Q80 20 80 30 V55 Q80 65 70 65 H55 L40 80 V65 H30 Q20 65 20 55Z' fill='%2358a6ff'/><circle cx='38' cy='42' r='5' fill='%230d1117'/><circle cx='55' cy='42' r='5' fill='%230d1117'/></svg>">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #21262d;
+    --surface-3: #2d333b;
+    --border: #30363d;
+    --border-light: #3d444d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --text-muted: #656d76;
+    --accent: #58a6ff;
+    --accent-dim: rgba(88, 166, 255, 0.15);
+    --green: #3fb950;
+    --green-dim: rgba(63, 185, 80, 0.15);
+    --red: #f85149;
+    --red-dim: rgba(248, 81, 73, 0.15);
+    --orange: #d29922;
+    --orange-dim: rgba(210, 153, 34, 0.15);
+    --purple: #bc8cff;
+    --purple-dim: rgba(188, 140, 255, 0.15);
+    --yellow: #e3b341;
+    --sidebar-w: 280px;
+    --header-h: 56px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ===== HEADER ===== */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    height: var(--header-h);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .logo {
+    font-size: 18px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    white-space: nowrap;
+  }
+
+  .header-stats {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+
+  .h-stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .h-stat-val {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 13px;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .connection {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-right: 8px;
+  }
+
+  .conn-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .btn {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .btn:hover { border-color: var(--border-light); background: var(--surface-3); }
+  .btn-danger { color: var(--red); }
+  .btn-danger:hover { background: var(--red-dim); border-color: var(--red); }
+  .btn-primary { color: var(--accent); }
+  .btn-primary:hover { background: var(--accent-dim); border-color: var(--accent); }
+
+  .mobile-toggle {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
+
+  /* ===== LAYOUT ===== */
+  .app {
+    display: flex;
+    height: calc(100vh - var(--header-h));
+    margin-top: var(--header-h);
+  }
+
+  /* ===== SIDEBAR ===== */
+  .sidebar {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: transform 0.25s ease;
+  }
+
+  .sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .sidebar-section {
+    margin-bottom: 20px;
+  }
+
+  .sidebar-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .sidebar-title .alert-count {
+    background: var(--orange);
+    color: #000;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 8px;
+    min-width: 16px;
+    text-align: center;
+  }
+
+  /* ===== AGENT CARDS ===== */
+  .agent-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    transition: all 0.15s;
+  }
+
+  .agent-card.sleeping {
+    border-color: var(--orange);
+    border-left: 3px solid var(--orange);
+  }
+
+  .agent-card.dead {
+    opacity: 0.5;
+  }
+
+  .agent-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .agent-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+    color: #fff;
+    flex-shrink: 0;
+  }
+
+  .agent-info { flex: 1; min-width: 0; }
+
+  .agent-name {
+    font-weight: 600;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .agent-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .agent-badge.active { background: var(--green-dim); color: var(--green); }
+  .agent-badge.sleeping { background: var(--orange-dim); color: var(--orange); }
+  .agent-badge.dead { background: var(--red-dim); color: var(--red); }
+
+  .listen-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 5px;
+  }
+
+  .listen-badge.listening {
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+  }
+
+  .listen-badge.busy {
+    background: var(--orange-dim);
+    color: var(--yellow);
+    border: 1px solid rgba(227, 179, 65, 0.3);
+  }
+
+  .listen-badge.not-listening {
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    animation: pulseAlert 1.5s infinite;
+  }
+
+  .listen-badge.offline {
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .listen-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .listen-dot.on { background: var(--green); box-shadow: 0 0 4px var(--green); }
+  .listen-dot.off { background: var(--red); }
+
+  @keyframes pulseAlert {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .agent-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 8px;
+  }
+
+  .agent-activity {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .agent-activity-icon {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .agent-activity-icon.active { background: var(--green); box-shadow: 0 0 4px var(--green); }
+  .agent-activity-icon.sleeping { background: var(--orange); animation: pulse 2s infinite; }
+  .agent-activity-icon.dead { background: var(--red); }
+
+  .nudge-btn {
+    background: var(--orange-dim);
+    color: var(--orange);
+    border: 1px solid rgba(210, 153, 34, 0.3);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: all 0.15s;
+    display: block;
+    width: 100%;
+    text-align: center;
+  }
+
+  .nudge-btn:hover {
+    background: rgba(210, 153, 34, 0.25);
+    border-color: var(--orange);
+  }
+
+  /* ===== PROJECT SWITCHER ===== */
+  .project-switcher {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .project-select {
+    width: 100%;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+    margin-bottom: 6px;
+  }
+
+  .project-select:focus { border-color: var(--accent); }
+
+  .project-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .project-actions .btn {
+    flex: 1;
+    font-size: 10px;
+    padding: 4px 8px;
+    text-align: center;
+  }
+
+  .project-input {
+    width: 100%;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    outline: none;
+    margin-bottom: 6px;
+    display: none;
+  }
+
+  .project-input:focus { border-color: var(--accent); }
+  .project-input.visible { display: block; }
+
+  /* ===== THREAD LIST ===== */
+  .thread-item {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 12px;
+  }
+
+  .thread-item:hover, .thread-item.active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .thread-preview {
+    font-weight: 500;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .thread-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .filter-clear {
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    margin-top: 6px;
+    display: none;
+    padding: 0 4px;
+  }
+
+  .filter-clear.visible { display: block; }
+
+  /* ===== MAIN CONTENT ===== */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* ===== MESSAGES ===== */
+  .messages-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .message {
+    display: flex;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    transition: background 0.15s;
+  }
+
+  .message:hover { background: var(--surface); }
+
+  .msg-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    flex-shrink: 0;
+    color: #fff;
+    margin-top: 2px;
+  }
+
+  .msg-body { flex: 1; min-width: 0; }
+
+  .msg-header {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 3px;
+    flex-wrap: wrap;
+  }
+
+  .msg-from { font-weight: 600; font-size: 13px; }
+  .msg-arrow { color: var(--text-muted); font-size: 11px; }
+  .msg-to { font-size: 12px; color: var(--text-dim); }
+  .msg-time { font-size: 10px; color: var(--text-muted); }
+
+  .msg-badges {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  .badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+
+  .badge-ack { background: var(--green-dim); color: var(--green); }
+  .badge-thread { background: var(--purple-dim); color: var(--purple); }
+
+  /* ===== MARKDOWN CONTENT ===== */
+  .msg-content {
+    font-size: 13px;
+    line-height: 1.6;
+    word-break: break-word;
+    color: var(--text);
+  }
+
+  .msg-content h1 { font-size: 20px; font-weight: 700; margin: 12px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .msg-content h2 { font-size: 17px; font-weight: 700; margin: 10px 0 5px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+  .msg-content h3 { font-size: 15px; font-weight: 600; margin: 8px 0 4px; }
+  .msg-content h4 { font-size: 14px; font-weight: 600; margin: 6px 0 3px; }
+
+  .msg-content p { margin: 4px 0; }
+
+  .msg-content strong { font-weight: 700; }
+  .msg-content em { font-style: italic; color: var(--text-dim); }
+
+  .msg-content code {
+    background: var(--surface-3);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    color: var(--orange);
+  }
+
+  .msg-content pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: 6px 0;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    position: relative;
+  }
+
+  .msg-content pre code {
+    background: none;
+    padding: 0;
+    color: var(--text);
+    font-size: inherit;
+  }
+
+  .msg-content pre .lang-tag {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+
+  .msg-content ul, .msg-content ol {
+    padding-left: 20px;
+    margin: 4px 0;
+  }
+
+  .msg-content li {
+    margin: 2px 0;
+  }
+
+  .msg-content blockquote {
+    border-left: 3px solid var(--border-light);
+    padding: 2px 12px;
+    margin: 4px 0;
+    color: var(--text-dim);
+  }
+
+  .msg-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 8px 0;
+  }
+
+  .msg-content table {
+    border-collapse: collapse;
+    margin: 6px 0;
+    width: 100%;
+    font-size: 12px;
+  }
+
+  .msg-content th, .msg-content td {
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    text-align: left;
+  }
+
+  .msg-content th {
+    background: var(--surface-2);
+    font-weight: 600;
+  }
+
+  .msg-content a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .msg-content a:hover { text-decoration: underline; }
+
+  /* ===== MESSAGE INPUT ===== */
+  .msg-input-bar {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 12px 20px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  .input-target {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 100px;
+  }
+
+  .input-target label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .input-target select {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .input-target select:focus { border-color: var(--accent); }
+
+  .input-msg {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .input-msg label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .input-msg textarea {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    resize: none;
+    height: 34px;
+    max-height: 80px;
+    outline: none;
+  }
+
+  .input-msg textarea:focus { border-color: var(--accent); }
+
+  .send-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+    height: 34px;
+  }
+
+  .send-btn:hover { opacity: 0.85; }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ===== EMPTY STATE ===== */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    gap: 8px;
+  }
+
+  .empty-icon { font-size: 40px; opacity: 0.2; }
+  .empty-text { font-size: 15px; }
+  .empty-sub { font-size: 12px; color: var(--text-muted); }
+
+  /* ===== MESSAGE FLASH ===== */
+  .message-new { animation: flashIn 0.6s ease-out; }
+
+  @keyframes flashIn {
+    from { background: var(--accent-dim); }
+    to { background: transparent; }
+  }
+
+  /* ===== SCROLLBAR ===== */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  /* ===== SCROLL TO BOTTOM ===== */
+  .scroll-bottom {
+    position: absolute;
+    bottom: 80px;
+    right: 24px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    z-index: 10;
+    transition: opacity 0.2s;
+  }
+
+  .scroll-bottom.visible { display: flex; }
+  .scroll-bottom:hover { opacity: 0.85; }
+
+  .scroll-bottom .new-count {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: var(--red);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+  }
+
+  /* ===== SEARCH BAR ===== */
+  .search-bar {
+    padding: 8px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .search-input {
+    flex: 1;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--text-muted); }
+
+  .search-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* ===== EMPTY STATE ONBOARDING ===== */
+  .onboard-steps {
+    text-align: left;
+    margin-top: 12px;
+    max-width: 400px;
+  }
+
+  .onboard-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .onboard-num {
+    background: var(--accent);
+    color: #fff;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .onboard-step code {
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    color: var(--orange);
+  }
+
+  /* ===== SYSTEM MESSAGE ===== */
+  .message.system-msg {
+    justify-content: center;
+    padding: 6px 14px;
+  }
+
+  .message.system-msg .msg-body {
+    max-width: 600px;
+    text-align: center;
+  }
+
+  .message.system-msg .msg-content {
+    color: var(--text-dim);
+    font-style: italic;
+    font-size: 12px;
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    :root {
+      --sidebar-w: 260px;
+    }
+
+    .mobile-toggle { display: block; }
+
+    .sidebar {
+      position: fixed;
+      top: var(--header-h);
+      left: 0;
+      bottom: 0;
+      z-index: 90;
+      transform: translateX(-100%);
+      box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+    }
+
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      top: var(--header-h);
+      background: rgba(0,0,0,0.5);
+      z-index: 89;
+    }
+
+    .sidebar-overlay.open { display: block; }
+
+    .header-stats { display: none; }
+
+    .msg-input-bar {
+      flex-wrap: wrap;
+    }
+
+    .input-target { min-width: 80px; }
+
+    .messages-area { padding: 12px; }
+  }
+
+  @media (max-width: 480px) {
+    .header { padding: 0 12px; }
+    .logo { font-size: 15px; }
+    .msg-input-bar { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <button class="mobile-toggle" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+    <div class="logo">Let Them Talk</div>
+    <div class="header-stats">
+      <div class="h-stat"><span class="h-stat-val" id="stat-messages">0</span> msgs</div>
+      <div class="h-stat"><span class="h-stat-val" id="stat-agents">0</span> agents</div>
+      <div class="h-stat"><span class="h-stat-val" id="stat-sleeping" style="color:var(--orange)">0</span> sleeping</div>
+      <div class="h-stat"><span class="h-stat-val" id="stat-threads">0</span> threads</div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div class="connection"><span class="conn-dot"></span><span>Live</span></div>
+    <button class="btn btn-primary" onclick="exportConversation()" title="Export as Markdown">Export</button>
+    <button class="btn btn-danger" onclick="doReset()">Reset</button>
+  </div>
+</div>
+
+<!-- APP LAYOUT -->
+<div class="app">
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar" id="sidebar">
+    <!-- Project Switcher -->
+    <div class="project-switcher">
+      <select class="project-select" id="project-select" onchange="switchProject()">
+        <option value="">Default (local)</option>
+      </select>
+      <input class="project-input" id="project-path-input" placeholder="Enter project folder path..."
+        onkeydown="if(event.key==='Enter'){addProject();}">
+      <div class="project-actions">
+        <button class="btn btn-primary" onclick="showAddProject()">+ Add</button>
+        <button class="btn btn-danger" onclick="removeProject()" id="remove-project-btn" style="display:none">Remove</button>
+      </div>
+    </div>
+    <div class="sidebar-scroll">
+      <!-- Agents Section -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">
+          <span>Agents</span>
+          <span class="alert-count" id="alert-count" style="display:none">0</span>
+        </div>
+        <div id="agents-list"></div>
+      </div>
+
+      <!-- Threads Section -->
+      <div class="sidebar-section">
+        <div class="sidebar-title"><span>Threads</span></div>
+        <div id="threads-list"></div>
+        <div class="filter-clear" id="filter-clear" onclick="clearThreadFilter()">&#x2715; Clear filter</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main" style="position:relative">
+    <div class="search-bar">
+      <input class="search-input" id="search-input" placeholder="Search messages..." oninput="onSearch()">
+      <span class="search-count" id="search-count"></span>
+    </div>
+    <div class="messages-area" id="messages"></div>
+    <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
+
+    <!-- MESSAGE INPUT -->
+    <div class="msg-input-bar">
+      <div class="input-target">
+        <label>Send to</label>
+        <select id="inject-target">
+          <option value="">Select agent...</option>
+        </select>
+      </div>
+      <div class="input-msg">
+        <label>Message</label>
+        <textarea id="inject-content" placeholder="Type a message to inject..." rows="1"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doInject();}"></textarea>
+      </div>
+      <button class="send-btn" onclick="doInject()" id="inject-btn" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var POLL_INTERVAL = 2000;
+var SLEEP_THRESHOLD = 60; // seconds
+var lastMessageCount = 0;
+var autoScroll = true;
+var activeThread = null;
+var activeProject = ''; // empty = default/local
+var cachedHistory = [];
+var cachedAgents = {};
+
+// Agent color palette
+var COLORS = [
+  '#58a6ff','#3fb950','#d29922','#f85149','#bc8cff',
+  '#f778ba','#79c0ff','#7ee787','#e3b341','#ffa198'
+];
+var agentColors = {};
+var colorIdx = 0;
+
+function getColor(name) {
+  if (!agentColors[name]) { agentColors[name] = COLORS[colorIdx % COLORS.length]; colorIdx++; }
+  return agentColors[name];
+}
+
+function initial(name) { return name.charAt(0).toUpperCase(); }
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function timeAgo(ts) {
+  var secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return secs + 's ago';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  return hrs + 'h ago';
+}
+
+function escapeHtml(text) {
+  var d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+// ==================== MARKDOWN RENDERER ====================
+
+function renderMarkdown(text) {
+  // Extract fenced code blocks first to protect them
+  var codeBlocks = [];
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+    var idx = codeBlocks.length;
+    codeBlocks.push({ lang: lang, code: code.replace(/\n$/, '') });
+    return '\x00CODEBLOCK' + idx + '\x00';
+  });
+  // Also handle ``` without newline after lang
+  text = text.replace(/```(\w*)([\s\S]*?)```/g, function(match, lang, code) {
+    var idx = codeBlocks.length;
+    codeBlocks.push({ lang: lang, code: code.replace(/^\n/, '').replace(/\n$/, '') });
+    return '\x00CODEBLOCK' + idx + '\x00';
+  });
+
+  // Split into lines for block-level processing
+  var lines = text.split('\n');
+  var html = '';
+  var inList = false;
+  var listType = '';
+  var inTable = false;
+  var tableRows = [];
+  var inBlockquote = false;
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+
+    // Code block placeholder
+    var cbMatch = line.match(/^\x00CODEBLOCK(\d+)\x00$/);
+    if (cbMatch) {
+      if (inList) { html += '</' + listType + '>'; inList = false; }
+      if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; }
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+      var cb = codeBlocks[parseInt(cbMatch[1])];
+      var langTag = cb.lang ? '<span class="lang-tag">' + escapeHtml(cb.lang) + '</span>' : '';
+      html += '<pre>' + langTag + '<code>' + escapeHtml(cb.code) + '</code></pre>';
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(---|\*\*\*|___)$/.test(line.trim())) {
+      if (inList) { html += '</' + listType + '>'; inList = false; }
+      if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; }
+      html += '<hr>';
+      continue;
+    }
+
+    // Table detection
+    if (line.indexOf('|') !== -1 && line.trim().charAt(0) === '|') {
+      if (inList) { html += '</' + listType + '>'; inList = false; }
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+      // Check if this is a separator row
+      if (/^\|[\s\-:|]+\|$/.test(line.trim())) {
+        // separator, skip but mark table as started
+        if (!inTable) inTable = true;
+        continue;
+      }
+      inTable = true;
+      tableRows.push(line);
+      continue;
+    } else if (inTable) {
+      html += renderTable(tableRows);
+      inTable = false;
+      tableRows = [];
+    }
+
+    // Headers
+    var hMatch = line.match(/^(#{1,4})\s+(.+)/);
+    if (hMatch) {
+      if (inList) { html += '</' + listType + '>'; inList = false; }
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+      var level = hMatch[1].length;
+      html += '<h' + level + '>' + inlineMarkdown(hMatch[2]) + '</h' + level + '>';
+      continue;
+    }
+
+    // Blockquote
+    if (line.match(/^>\s?(.*)$/)) {
+      if (inList) { html += '</' + listType + '>'; inList = false; }
+      var bqContent = line.replace(/^>\s?/, '');
+      if (!inBlockquote) { html += '<blockquote>'; inBlockquote = true; }
+      html += inlineMarkdown(bqContent) + '<br>';
+      continue;
+    } else if (inBlockquote) {
+      html += '</blockquote>';
+      inBlockquote = false;
+    }
+
+    // Unordered list
+    if (line.match(/^[\s]*[-*+]\s+(.+)/)) {
+      if (!inList || listType !== 'ul') {
+        if (inList) html += '</' + listType + '>';
+        html += '<ul>';
+        inList = true;
+        listType = 'ul';
+      }
+      html += '<li>' + inlineMarkdown(line.replace(/^[\s]*[-*+]\s+/, '')) + '</li>';
+      continue;
+    }
+
+    // Ordered list
+    if (line.match(/^[\s]*\d+\.\s+(.+)/)) {
+      if (!inList || listType !== 'ol') {
+        if (inList) html += '</' + listType + '>';
+        html += '<ol>';
+        inList = true;
+        listType = 'ol';
+      }
+      html += '<li>' + inlineMarkdown(line.replace(/^[\s]*\d+\.\s+/, '')) + '</li>';
+      continue;
+    }
+
+    // Close list if line doesn't match
+    if (inList && line.trim() === '') {
+      html += '</' + listType + '>';
+      inList = false;
+    }
+
+    // Empty line
+    if (line.trim() === '') {
+      continue;
+    }
+
+    // Regular paragraph
+    if (inList) { html += '</' + listType + '>'; inList = false; }
+    html += '<p>' + inlineMarkdown(line) + '</p>';
+  }
+
+  // Close any open elements
+  if (inList) html += '</' + listType + '>';
+  if (inTable) html += renderTable(tableRows);
+  if (inBlockquote) html += '</blockquote>';
+
+  return html;
+}
+
+function inlineMarkdown(text) {
+  var html = escapeHtml(text);
+  // Inline code (must be before bold/italic to avoid conflicts)
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bold + italic
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Strikethrough
+  html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  return html;
+}
+
+function renderTable(rows) {
+  if (rows.length === 0) return '';
+  var html = '<table>';
+  for (var i = 0; i < rows.length; i++) {
+    var cells = rows[i].split('|').filter(function(c, idx, arr) {
+      return idx > 0 && idx < arr.length - 1;
+    });
+    var tag = (i === 0) ? 'th' : 'td';
+    html += '<tr>';
+    for (var j = 0; j < cells.length; j++) {
+      html += '<' + tag + '>' + inlineMarkdown(cells[j].trim()) + '</' + tag + '>';
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+// ==================== AGENT MONITORING ====================
+
+function renderAgents(agents) {
+  var el = document.getElementById('agents-list');
+  var keys = Object.keys(agents);
+  if (!keys.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No agents registered</div>';
+    return;
+  }
+
+  var sleepCount = 0;
+  var html = '';
+  for (var i = 0; i < keys.length; i++) {
+    var name = keys[i];
+    var info = agents[name];
+    var color = getColor(name);
+    // Use server-provided status if available, fallback to client-side detection
+    var state = info.status || (info.alive ? 'active' : 'dead');
+    if (state === 'sleeping') sleepCount++;
+
+    var activityText = '';
+    if (state === 'dead') {
+      activityText = 'Process not running';
+    } else if (info.idle_seconds != null) {
+      if (info.idle_seconds < 5) activityText = 'Active just now';
+      else if (info.idle_seconds < 60) activityText = 'Active ' + info.idle_seconds + 's ago';
+      else activityText = 'Idle ' + Math.floor(info.idle_seconds / 60) + 'm ' + (info.idle_seconds % 60) + 's';
+    } else if (info.last_message) {
+      activityText = 'Last msg ' + timeAgo(info.last_message);
+    } else {
+      activityText = 'Registered ' + timeAgo(info.registered_at);
+    }
+
+    var stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+    var cardClass = 'agent-card' + (state !== 'active' ? ' ' + state : '');
+
+    var nudgeHtml = '';
+    if (state === 'sleeping' || (state !== 'dead' && !info.is_listening)) {
+      nudgeHtml = '<button class="nudge-btn" onclick="sendNudge(\'' + escapeHtml(name) + '\')">Send Nudge</button>';
+    }
+
+    // Listening status — simplified: skip for dead (already shown via badge)
+    var listenHtml = '';
+    if (state !== 'dead') {
+      if (info.is_listening) {
+        var sinceTxt = info.listening_since ? ' since ' + formatTime(info.listening_since) : '';
+        listenHtml = '<div class="listen-badge listening" title="Agent is waiting for messages — can receive dashboard injections"><span class="listen-dot on"></span>Listening' + sinceTxt + '</div>';
+      } else if (state === 'active') {
+        listenHtml = '<div class="listen-badge busy" title="Agent is working, not currently listening for messages"><span class="listen-dot off"></span>Busy</div>';
+      } else {
+        listenHtml = '<div class="listen-badge not-listening" title="Agent is not listening. Send a nudge or type \'listen\' in the terminal."><span class="listen-dot off"></span>Not Listening</div>';
+      }
+    }
+
+    html += '<div class="' + cardClass + '">' +
+      '<div class="agent-top">' +
+        '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>' +
+        '<div class="agent-info">' +
+          '<div class="agent-name" style="color:' + color + '">' +
+            escapeHtml(name) +
+            ' <span class="agent-badge ' + state + '">' + stateLabel + '</span>' +
+          '</div>' +
+          '<div class="agent-meta"><span>PID ' + info.pid + '</span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="agent-activity">' +
+        '<span class="agent-activity-icon ' + state + '"></span>' +
+        activityText +
+      '</div>' +
+      listenHtml +
+      nudgeHtml +
+    '</div>';
+  }
+  el.innerHTML = html;
+
+  // Update alert badge
+  var alertEl = document.getElementById('alert-count');
+  if (sleepCount > 0) {
+    alertEl.textContent = sleepCount;
+    alertEl.style.display = '';
+  } else {
+    alertEl.style.display = 'none';
+  }
+
+  // Update inject target dropdown
+  updateInjectTargets(keys);
+}
+
+function sendNudge(agentName) {
+  var body = JSON.stringify({ to: agentName, content: 'Hey ' + agentName + ', the user is waiting for you. Please check for new messages and continue your work.' });
+  fetch('/api/inject' + projectParam(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body
+  }).then(function(r) { return r.json(); }).then(function() {
+    poll();
+  }).catch(function(e) { console.error('Nudge failed:', e); });
+}
+
+// ==================== INJECT TARGETS ====================
+
+var lastAgentKeys = '';
+
+function updateInjectTargets(keys) {
+  var joined = keys.join(',');
+  if (joined === lastAgentKeys) return;
+  lastAgentKeys = joined;
+
+  var sel = document.getElementById('inject-target');
+  var current = sel.value;
+  sel.innerHTML = '<option value="">Select agent...</option>';
+  for (var i = 0; i < keys.length; i++) {
+    var opt = document.createElement('option');
+    opt.value = keys[i];
+    opt.textContent = keys[i];
+    sel.appendChild(opt);
+  }
+  // Broadcast option
+  if (keys.length > 1) {
+    var allOpt = document.createElement('option');
+    allOpt.value = '__all__';
+    allOpt.textContent = 'All agents';
+    sel.appendChild(allOpt);
+  }
+
+  if (current) sel.value = current;
+  updateSendBtn();
+}
+
+function updateSendBtn() {
+  var target = document.getElementById('inject-target').value;
+  var content = document.getElementById('inject-content').value.trim();
+  document.getElementById('inject-btn').disabled = !target || !content;
+}
+
+document.getElementById('inject-target').addEventListener('change', updateSendBtn);
+document.getElementById('inject-content').addEventListener('input', updateSendBtn);
+
+function projectParam() {
+  return activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+}
+
+function doInject() {
+  var target = document.getElementById('inject-target').value;
+  var content = document.getElementById('inject-content').value.trim();
+  if (!target || !content) return;
+
+  var body = JSON.stringify({ to: target, content: content });
+  fetch('/api/inject' + projectParam(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.success) {
+      document.getElementById('inject-content').value = '';
+      updateSendBtn();
+      poll();
+    }
+  }).catch(function(e) { console.error('Inject failed:', e); });
+}
+
+// ==================== THREADS ====================
+
+function renderThreads(messages) {
+  var threads = {};
+  for (var i = 0; i < messages.length; i++) {
+    var m = messages[i];
+    if (!m.thread_id) continue;
+    if (!threads[m.thread_id]) threads[m.thread_id] = { count: 0, preview: '', agents: {} };
+    threads[m.thread_id].count++;
+    threads[m.thread_id].agents[m.from] = true;
+    if (!threads[m.thread_id].preview) threads[m.thread_id].preview = m.content.substring(0, 50);
+  }
+
+  var el = document.getElementById('threads-list');
+  var clearEl = document.getElementById('filter-clear');
+  var ids = Object.keys(threads);
+
+  if (!ids.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No threads yet</div>';
+    clearEl.classList.remove('visible');
+    return;
+  }
+
+  clearEl.classList.toggle('visible', !!activeThread);
+
+  var html = '';
+  for (var j = 0; j < ids.length; j++) {
+    var tid = ids[j];
+    var t = threads[tid];
+    var active = activeThread === tid ? ' active' : '';
+    var agentList = Object.keys(t.agents).join(', ');
+    html += '<div class="thread-item' + active + '" onclick="filterThread(\'' + tid + '\')">' +
+      '<div class="thread-preview">' + escapeHtml(t.preview) + '</div>' +
+      '<div class="thread-meta">' + t.count + ' msgs &middot; ' + agentList + '</div>' +
+    '</div>';
+  }
+  el.innerHTML = html;
+}
+
+// ==================== MESSAGES ====================
+
+function renderMessages(messages) {
+  var el = document.getElementById('messages');
+
+  if (!messages.length) {
+    el.innerHTML = '<div class="empty-state">' +
+      '<div class="empty-icon">&#x1f4ac;</div>' +
+      '<div class="empty-text">No messages yet</div>' +
+      '<div class="empty-sub">Get two AI agents talking in minutes</div>' +
+      '<div class="onboard-steps">' +
+        '<div class="onboard-step"><span class="onboard-num">1</span><span>Open two terminals and run <code>claude</code> in each</span></div>' +
+        '<div class="onboard-step"><span class="onboard-num">2</span><span>Tell Terminal 1: <code>Register as A, say hello, then listen</code></span></div>' +
+        '<div class="onboard-step"><span class="onboard-num">3</span><span>Tell Terminal 2: <code>Register as B, then listen</code></span></div>' +
+        '<div class="onboard-step"><span class="onboard-num">4</span><span>Watch them talk here in real time!</span></div>' +
+      '</div>' +
+    '</div>';
+    return;
+  }
+
+  var filtered = messages;
+  if (activeThread) {
+    filtered = messages.filter(function(m) {
+      return m.thread_id === activeThread || m.id === activeThread;
+    });
+  }
+
+  // Search filter
+  if (searchQuery) {
+    filtered = filtered.filter(function(m) {
+      return m.content.toLowerCase().indexOf(searchQuery) !== -1 ||
+             m.from.toLowerCase().indexOf(searchQuery) !== -1 ||
+             m.to.toLowerCase().indexOf(searchQuery) !== -1;
+    });
+    document.getElementById('search-count').textContent = filtered.length + ' result' + (filtered.length !== 1 ? 's' : '');
+  } else {
+    document.getElementById('search-count').textContent = '';
+  }
+
+  var isNew = filtered.length > lastMessageCount;
+  // Track new messages while scrolled up
+  if (isNew && !autoScroll) {
+    newWhileScrolled += (filtered.length - lastMessageCount);
+    var countEl = document.getElementById('new-msg-count');
+    countEl.textContent = newWhileScrolled;
+    countEl.style.display = '';
+    document.getElementById('scroll-bottom').classList.add('visible');
+  }
+  var html = '';
+  for (var i = 0; i < filtered.length; i++) {
+    var m = filtered[i];
+    var color = getColor(m.from);
+    var newClass = (isNew && i >= lastMessageCount) ? ' message-new' : '';
+    var isSystem = m.system === true;
+
+    var badges = '';
+    if (m.acked) badges += '<span class="badge badge-ack">ACK</span>';
+    if (m.thread_id) badges += '<span class="badge badge-thread">Thread</span>';
+
+    if (isSystem) {
+      html += '<div class="message system-msg' + newClass + '">' +
+        '<div class="msg-body">' +
+          '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+        '</div></div>';
+    } else {
+      html += '<div class="message' + newClass + '">' +
+        '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
+        '<div class="msg-body">' +
+          '<div class="msg-header">' +
+            '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+            '<span class="msg-arrow">&rarr;</span>' +
+            '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
+            '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+            '<div class="msg-badges">' + badges + '</div>' +
+          '</div>' +
+          '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+        '</div></div>';
+    }
+  }
+  el.innerHTML = html;
+  lastMessageCount = filtered.length;
+
+  if (autoScroll && isNew) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+// ==================== FILTERS & CONTROLS ====================
+
+function filterThread(tid) {
+  activeThread = activeThread === tid ? null : tid;
+  lastMessageCount = 0;
+  renderThreads(cachedHistory);
+  renderMessages(cachedHistory);
+}
+
+function clearThreadFilter() {
+  activeThread = null;
+  lastMessageCount = 0;
+  renderThreads(cachedHistory);
+  renderMessages(cachedHistory);
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+
+var newWhileScrolled = 0;
+
+document.getElementById('messages').addEventListener('scroll', function() {
+  var atBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) < 50;
+  autoScroll = atBottom;
+  var scrollBtn = document.getElementById('scroll-bottom');
+  if (atBottom) {
+    scrollBtn.classList.remove('visible');
+    newWhileScrolled = 0;
+    document.getElementById('new-msg-count').style.display = 'none';
+  } else {
+    scrollBtn.classList.add('visible');
+  }
+});
+
+function scrollToBottom() {
+  var el = document.getElementById('messages');
+  el.scrollTop = el.scrollHeight;
+  autoScroll = true;
+  newWhileScrolled = 0;
+  document.getElementById('scroll-bottom').classList.remove('visible');
+  document.getElementById('new-msg-count').style.display = 'none';
+}
+
+// ==================== SEARCH ====================
+
+var searchQuery = '';
+
+function onSearch() {
+  searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
+  lastMessageCount = 0;
+  renderMessages(cachedHistory);
+}
+
+// ==================== EXPORT ====================
+
+function exportConversation() {
+  if (!cachedHistory.length) return;
+  var md = '# Let Them Talk — Conversation Export\n\n';
+  md += 'Exported: ' + new Date().toLocaleString() + '\n\n---\n\n';
+  for (var i = 0; i < cachedHistory.length; i++) {
+    var m = cachedHistory[i];
+    md += '**' + m.from + '** → ' + m.to + ' _(' + formatTime(m.timestamp) + ')_\n\n';
+    md += m.content + '\n\n---\n\n';
+  }
+  var blob = new Blob([md], { type: 'text/markdown' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'conversation-' + new Date().toISOString().slice(0, 10) + '.md';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ==================== AUTO-GROW TEXTAREA ====================
+
+var textarea = document.getElementById('inject-content');
+textarea.addEventListener('input', function() {
+  this.style.height = '34px';
+  var scrollH = this.scrollHeight;
+  this.style.height = Math.min(scrollH, 100) + 'px';
+});
+
+// ==================== POLLING ====================
+
+function poll() {
+  var pp = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
+  var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+  Promise.all([
+    fetch('/api/history?limit=500' + pp).then(function(r) { return r.json(); }),
+    fetch('/api/agents' + pq).then(function(r) { return r.json(); }),
+    fetch('/api/status' + pq).then(function(r) { return r.json(); }),
+  ]).then(function(results) {
+    cachedHistory = results[0];
+    cachedAgents = results[1];
+    var status = results[2];
+
+    document.getElementById('stat-messages').textContent = status.messageCount;
+    document.getElementById('stat-agents').textContent = status.agentCount;
+    document.getElementById('stat-sleeping').textContent = status.sleepingCount || 0;
+    document.getElementById('stat-threads').textContent = status.threadCount;
+
+    renderAgents(cachedAgents);
+    renderThreads(cachedHistory);
+    renderMessages(cachedHistory);
+  }).catch(function(e) {
+    console.error('Poll failed:', e);
+  });
+}
+
+function doReset() {
+  if (!confirm('Clear all messages, agents, and history?')) return;
+  fetch('/api/reset', { method: 'POST' }).then(function() {
+    lastMessageCount = 0;
+    activeThread = null;
+    cachedHistory = [];
+    cachedAgents = {};
+    poll();
+  }).catch(function(e) { console.error('Reset failed:', e); });
+}
+
+// ==================== PROJECT MANAGEMENT ====================
+
+function loadProjects() {
+  fetch('/api/projects').then(function(r) { return r.json(); }).then(function(projects) {
+    var sel = document.getElementById('project-select');
+    // Keep the first option (Default)
+    while (sel.options.length > 1) sel.remove(1);
+    for (var i = 0; i < projects.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = projects[i].path;
+      opt.textContent = projects[i].name;
+      sel.appendChild(opt);
+    }
+    if (activeProject) sel.value = activeProject;
+
+    // Show/hide remove button
+    document.getElementById('remove-project-btn').style.display = activeProject ? '' : 'none';
+  }).catch(function() {});
+}
+
+function switchProject() {
+  activeProject = document.getElementById('project-select').value;
+  lastMessageCount = 0;
+  document.getElementById('remove-project-btn').style.display = activeProject ? '' : 'none';
+  poll();
+}
+
+function showAddProject() {
+  var input = document.getElementById('project-path-input');
+  if (input.classList.contains('visible')) {
+    input.classList.remove('visible');
+  } else {
+    input.classList.add('visible');
+    input.focus();
+  }
+}
+
+function addProject() {
+  var input = document.getElementById('project-path-input');
+  var projectPath = input.value.trim();
+  if (!projectPath) return;
+
+  fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: projectPath })
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.success) {
+      input.value = '';
+      input.classList.remove('visible');
+      loadProjects();
+    } else {
+      alert(res.error || 'Failed to add project');
+    }
+  }).catch(function(e) { console.error('Add project failed:', e); });
+}
+
+function removeProject() {
+  if (!activeProject) return;
+  if (!confirm('Remove this project from the dashboard?')) return;
+
+  fetch('/api/projects', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: activeProject })
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.success) {
+      activeProject = '';
+      document.getElementById('project-select').value = '';
+      loadProjects();
+      poll();
+    }
+  }).catch(function(e) { console.error('Remove project failed:', e); });
+}
+
+// ==================== INIT ====================
+loadProjects();
+poll();
+setInterval(poll, POLL_INTERVAL);
+</script>
+
+</body>
+</html>

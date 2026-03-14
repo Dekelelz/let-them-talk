@@ -1,0 +1,5 @@
+node_modules/
+.agent-bridge/
+agent-bridge/data/
+agent-bridge/projects.json
+*.log

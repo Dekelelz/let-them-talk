@@ -1,0 +1,27 @@
+{
+  "name": "let-them-talk",
+  "version": "2.0.0",
+  "description": "Let Them Talk — MCP message broker for Claude Code inter-agent communication with web dashboard",
+  "main": "server.js",
+  "bin": {
+    "agent-bridge": "./cli.js",
+    "let-them-talk": "./cli.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dashboard": "node dashboard.js"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "agent",
+    "multi-agent",
+    "communication",
+    "message-broker"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
