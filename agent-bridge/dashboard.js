@@ -6,6 +6,7 @@ const path = require('path');
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
 const DEFAULT_DATA_DIR = process.env.AGENT_BRIDGE_DATA || path.join(process.cwd(), '.agent-bridge');
 const HTML_FILE = path.join(__dirname, 'dashboard.html');
+const LOGO_FILE = path.join(__dirname, 'logo.png');
 const PROJECTS_FILE = path.join(__dirname, 'projects.json');
 
 // --- Multi-project support ---
@@ -529,6 +530,19 @@ const server = http.createServer(async (req, res) => {
     if (projectParam && url.pathname.startsWith('/api/') && !validateProjectPath(projectParam)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Project path not registered. Add it via /api/projects first.' }));
+      return;
+    }
+
+    // Serve logo image
+    if (url.pathname === '/logo.png') {
+      if (fs.existsSync(LOGO_FILE)) {
+        const logo = fs.readFileSync(LOGO_FILE);
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
+        res.end(logo);
+      } else {
+        res.writeHead(404);
+        res.end('Logo not found');
+      }
       return;
     }
 
