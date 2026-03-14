@@ -2308,6 +2308,7 @@
     <button class="mobile-toggle" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
     <img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230d1117'/><path d='M20 30 Q20 20 30 20 H70 Q80 20 80 30 V55 Q80 65 70 65 H55 L40 80 V65 H30 Q20 65 20 55Z' fill='%2358a6ff'/><circle cx='38' cy='42' r='5' fill='%230d1117'/><circle cx='55' cy='42' r='5' fill='%230d1117'/></svg>" alt="" style="height:28px;margin-right:4px;vertical-align:middle">
     <div class="logo">Let Them Talk</div>
+    <span id="mobile-project-name" style="display:none;font-size:11px;color:var(--orange);font-weight:600;background:var(--orange-dim);padding:2px 8px;border-radius:10px"></span>
     <div class="header-stats">
       <div class="h-stat"><span class="h-stat-val" id="stat-messages">0</span> msgs</div>
       <div class="h-stat"><span class="h-stat-val" id="stat-agents">0</span> agents</div>
@@ -2471,7 +2472,7 @@
   </div>
 </div>
 <div class="app-footer">
-  <span>Let Them Talk v3.3.0</span>
+  <span>Let Them Talk v3.3.1</span>
 </div>
 <div class="profile-popup" id="profile-popup" onclick="event.stopPropagation()">
   <div class="profile-popup-header">
@@ -4168,7 +4169,24 @@ function loadProjects() {
       opt.textContent = projects[i].name;
       sel.appendChild(opt);
     }
-    if (activeProject) sel.value = activeProject;
+
+    // Auto-select: if only one project and nothing selected, use it
+    if (!activeProject && projects.length === 1) {
+      activeProject = projects[0].path;
+    }
+
+    if (activeProject) {
+      sel.value = activeProject;
+      document.getElementById('remove-project-btn').style.display = '';
+      // Update header project indicator for mobile
+      var indicator = document.getElementById('mobile-project-name');
+      if (indicator) {
+        var proj = projects.find(function(p) { return p.path === activeProject; });
+        indicator.textContent = proj ? proj.name : '';
+        indicator.style.display = proj ? '' : 'none';
+      }
+      poll(); // re-poll with correct project
+    }
 
     // Show/hide remove button
     document.getElementById('remove-project-btn').style.display = activeProject ? '' : 'none';
