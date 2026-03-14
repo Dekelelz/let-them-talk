@@ -544,8 +544,9 @@ function apiDiscover() {
   const checked = new Set();
   const existing = new Set(getProjects().map(p => p.path));
 
-  function scanDir(dir, depth) {
-    if (depth > 2 || checked.has(dir)) return;
+  function scanDir(dir, depth, maxDepth) {
+    maxDepth = maxDepth || 3;
+    if (depth > maxDepth || checked.has(dir)) return;
     checked.add(dir);
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -559,17 +560,26 @@ function apiDiscover() {
           if (!existing.has(projectPath)) {
             found.push({ name: path.basename(projectPath), path: projectPath, dataDir: fullPath });
           }
-        } else if (depth < 2) {
-          scanDir(fullPath, depth + 1);
+        } else if (depth < maxDepth) {
+          scanDir(fullPath, depth + 1, maxDepth);
         }
       }
     } catch {}
   }
 
-  // Scan from cwd, parent, and home
+  // Scan from cwd, parent, home, Desktop, and common project locations
   const cwd = process.cwd();
+  const home = process.env.HOME || process.env.USERPROFILE || '';
   scanDir(cwd, 0);
   scanDir(path.dirname(cwd), 1);
+  if (home) {
+    scanDir(home, 0);
+    scanDir(path.join(home, 'Desktop'), 0);
+    scanDir(path.join(home, 'Documents'), 0);
+    scanDir(path.join(home, 'Projects'), 0);
+    scanDir(path.join(home, 'Desktop', 'Claude Projects'), 0);
+    scanDir(path.join(home, 'Desktop', 'Projects'), 0);
+  }
 
   return found;
 }
@@ -741,12 +751,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Serve dashboard HTML (re-read in dev mode for hot reload)
+    // Serve dashboard HTML (always re-read for hot reload)
     if (url.pathname === '/' || url.pathname === '/index.html') {
-      const html = process.env.NODE_ENV === 'development'
-        ? fs.readFileSync(HTML_FILE, 'utf8')
-        : htmlContent;
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      const html = fs.readFileSync(HTML_FILE, 'utf8');
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
       res.end(html);
     }
     // Existing APIs (now with ?project= param support)
