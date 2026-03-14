@@ -95,6 +95,15 @@ function isPidAlive(pid) {
   }
 }
 
+const MAX_CONTENT_BYTES = 1000000; // 1 MB max message size
+
+function validateContentSize(content) {
+  if (Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES) {
+    return { error: 'Message content exceeds maximum size (1 MB)' };
+  }
+  return null;
+}
+
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
@@ -336,6 +345,9 @@ function toolSendMessage(content, to = null, reply_to = null) {
     return { error: 'Cannot send a message to yourself' };
   }
 
+  const sizeErr = validateContentSize(content);
+  if (sizeErr) return sizeErr;
+
   // Check if recipient is alive — warn if dead
   const recipientAlive = isPidAlive(agents[to].pid);
 
@@ -379,6 +391,9 @@ function toolBroadcast(content) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
+
+  const sizeErr = validateContentSize(content);
+  if (sizeErr) return sizeErr;
 
   const agents = getAgents();
   const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
@@ -582,6 +597,9 @@ function toolHandoff(to, context) {
     return { error: 'You must call register() first' };
   }
 
+  const sizeErr = validateContentSize(context);
+  if (sizeErr) return sizeErr;
+
   const agents = getAgents();
   if (!agents[to]) {
     return { error: `Agent "${to}" is not registered` };
@@ -618,10 +636,14 @@ function toolShareFile(filePath, to = null, summary = null) {
     return { error: 'You must call register() first' };
   }
 
-  // Resolve the file path
+  // Resolve the file path — restrict to project directory
   const resolved = path.resolve(filePath);
+  const allowedRoot = path.resolve(process.cwd());
+  if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+    return { error: 'File path must be within the project directory' };
+  }
   if (!fs.existsSync(resolved)) {
-    return { error: `File not found: ${resolved}` };
+    return { error: `File not found: ${path.basename(resolved)}` };
   }
 
   const stat = fs.statSync(resolved);
@@ -662,7 +684,7 @@ function toolShareFile(filePath, to = null, summary = null) {
     content,
     timestamp: new Date().toISOString(),
     type: 'file_share',
-    file: { name: fileName, path: resolved, size: stat.size },
+    file: { name: fileName, size: stat.size },
   };
 
   ensureDataDir();
@@ -800,6 +822,10 @@ function toolGetSummary(lastN = 20) {
 }
 
 function toolReset() {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
   // Auto-archive before clearing — never lose conversations
   if (fs.existsSync(HISTORY_FILE)) {
     const history = readJsonl(HISTORY_FILE);
