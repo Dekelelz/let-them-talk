@@ -1970,7 +1970,7 @@ async function main() {
   loadPlugins();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.0.0 running (' + (17 + loadedPlugins.length) + ' tools)');
+  console.error('Agent Bridge MCP server v3.2.0 running (' + (27 + loadedPlugins.length) + ' tools)');
 }
 
 main().catch(console.error);

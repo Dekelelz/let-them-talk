@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v3.0.0
+  Let Them Talk — Agent Bridge v3.2.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 
@@ -232,13 +232,9 @@ function reset() {
     console.log('  No data directory found. Nothing to reset.');
     return;
   }
-  const files = fs.readdirSync(targetDir);
-  let count = 0;
-  for (const f of files) {
-    fs.unlinkSync(path.join(targetDir, f));
-    count++;
-  }
-  console.log(`  Cleared ${count} file(s) from ${targetDir}`);
+  fs.rmSync(targetDir, { recursive: true, force: true });
+  fs.mkdirSync(targetDir, { recursive: true });
+  console.log(`  Cleared all data from ${targetDir}`);
 }
 
 function getTemplates() {
