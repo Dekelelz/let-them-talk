@@ -436,7 +436,6 @@ function toolListAgents() {
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     const profile = profiles[name] || {};
     result[name] = {
-      pid: info.pid,
       alive,
       registered_at: info.timestamp,
       last_activity: lastActivity,
@@ -568,6 +567,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
+  timeoutSeconds = Math.min(Math.max(1, timeoutSeconds || 300), 3600);
 
   setListening(true);
 
@@ -644,6 +644,12 @@ function toolCheckMessages(from = null) {
 function toolAckMessage(messageId) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
+  }
+
+  const history = readJsonl(getHistoryFile(currentBranch));
+  const msg = history.find(m => m.id === messageId);
+  if (msg && msg.to !== registeredName) {
+    return { error: 'Can only acknowledge messages addressed to you' };
   }
 
   const acks = getAcks();
@@ -773,6 +779,7 @@ async function toolListenCodex(from = null) {
 }
 
 function toolGetHistory(limit = 50, thread_id = null) {
+  limit = Math.min(Math.max(1, limit || 50), 500);
   let history = readJsonl(getHistoryFile(currentBranch));
   if (thread_id) {
     history = history.filter(m => m.thread_id === thread_id || m.id === thread_id);
@@ -840,17 +847,16 @@ function toolShareFile(filePath, to = null, summary = null) {
     return { error: 'You must call register() first' };
   }
 
-  // Resolve the file path — restrict to project directory
+  // Resolve the file path — restrict to project directory (follow symlinks)
   const resolved = path.resolve(filePath);
   const allowedRoot = path.resolve(process.cwd());
-  if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+  let realPath;
+  try { realPath = fs.realpathSync(resolved); } catch { return { error: 'File not found' }; }
+  if (!realPath.startsWith(allowedRoot + path.sep) && realPath !== allowedRoot) {
     return { error: 'File path must be within the project directory' };
   }
-  if (!fs.existsSync(resolved)) {
-    return { error: `File not found: ${path.basename(resolved)}` };
-  }
 
-  const stat = fs.statSync(resolved);
+  const stat = fs.statSync(realPath);
   if (stat.size > 100000) {
     return { error: `File too large (${Math.round(stat.size / 1024)}KB). Maximum 100KB for sharing.` };
   }
@@ -872,8 +878,8 @@ function toolShareFile(filePath, to = null, summary = null) {
     return { error: `Agent "${to}" is not registered` };
   }
 
-  const fileContent = fs.readFileSync(resolved, 'utf8');
-  const fileName = path.basename(resolved);
+  const fileContent = fs.readFileSync(realPath, 'utf8');
+  const fileName = path.basename(realPath);
 
   messageSeq++;
   const content = summary
@@ -1006,6 +1012,7 @@ function toolListTasks(status = null, assignee = null) {
 }
 
 function toolGetSummary(lastN = 20) {
+  lastN = Math.min(Math.max(1, lastN || 20), 500);
   const history = readJsonl(getHistoryFile(currentBranch));
   if (history.length === 0) {
     return { summary: 'No messages in conversation yet.', message_count: 0 };
@@ -1137,8 +1144,8 @@ function toolWorkspaceWrite(key, content) {
 }
 
 function toolWorkspaceRead(key, agent) {
+  if (!registeredName) return { error: 'You must call register() first' };
   const targetAgent = agent || registeredName;
-  if (!targetAgent) return { error: 'Specify agent or register first' };
 
   const ws = getWorkspace(targetAgent);
   if (key) {

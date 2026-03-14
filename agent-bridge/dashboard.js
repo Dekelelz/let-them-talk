@@ -262,7 +262,7 @@ function apiInjectMessage(body, query) {
   }
 
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  const fromName = body.from || 'Dashboard';
+  const fromName = 'Dashboard';
   const now = new Date().toISOString();
 
   // Broadcast to all agents
@@ -309,6 +309,16 @@ function apiAddProject(body) {
   if (!body.path) return { error: 'Missing "path" field' };
   const absPath = path.resolve(body.path);
   if (!fs.existsSync(absPath)) return { error: `Path does not exist: ${absPath}` };
+
+  // Restrict to paths under cwd or paths that look like project directories
+  const cwd = path.resolve(process.cwd());
+  if (!absPath.startsWith(cwd + path.sep) && absPath !== cwd) {
+    const hasProject = fs.existsSync(path.join(absPath, 'package.json')) ||
+                       fs.existsSync(path.join(absPath, '.git'));
+    if (!hasProject) {
+      return { error: 'Path must be a project directory (with package.json or .git)' };
+    }
+  }
 
   const projects = getProjects();
   const name = body.name || path.basename(absPath);
@@ -416,7 +426,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script>
 var COLORS=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f778ba','#79c0ff','#7ee787','#e3b341','#ffa198'];
 var colorMap={},ci=0;
-var data=${JSON.stringify(history)};
+var data=${JSON.stringify(history).replace(/<\//g, '<\\/')};
 function esc(t){var d=document.createElement('div');d.textContent=t;return d.innerHTML}
 function fmt(t){
 var h=esc(t);
@@ -603,6 +613,9 @@ function apiLaunchAgent(body) {
   if (!cli || !['claude', 'gemini', 'codex'].includes(cli)) {
     return { error: 'Invalid cli type. Must be: claude, gemini, or codex' };
   }
+  if (project_dir && !validateProjectPath(project_dir)) {
+    return { error: 'Project directory not registered. Add it via the dashboard first.' };
+  }
   const projectDir = project_dir || process.cwd();
   if (!fs.existsSync(projectDir)) {
     return { error: 'Project directory does not exist: ' + projectDir };
@@ -618,7 +631,7 @@ function apiLaunchAgent(body) {
 
   // Try to launch terminal on Windows
   if (process.platform === 'win32') {
-    spawn('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${projectDir}" && ${cliCmd}`], { cwd: projectDir, shell: false, detached: true, stdio: 'ignore' });
+    spawn('cmd', ['/c', 'start', 'cmd', '/k', cliCmd], { cwd: projectDir, shell: false, detached: true, stdio: 'ignore' });
     return { success: true, launched: true, cli, project_dir: projectDir, prompt: launchPrompt };
   }
 
@@ -675,6 +688,20 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  // CSRF protection: validate origin on mutating requests
+  if (req.method === 'POST' || req.method === 'DELETE') {
+    const origin = req.headers.origin || '';
+    const referer = req.headers.referer || '';
+    const source = origin || referer;
+    const isLocal = !source || source.includes('localhost:' + PORT) || source.includes('127.0.0.1:' + PORT);
+    const isLan = LAN_MODE && getLanIP() && source.includes(getLanIP() + ':' + PORT);
+    if (!isLocal && !isLan) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: invalid origin' }));
+      return;
+    }
   }
 
   try {
@@ -953,6 +980,11 @@ const server = http.createServer(async (req, res) => {
     }
     // Server-Sent Events endpoint for real-time updates
     else if (url.pathname === '/api/events' && req.method === 'GET') {
+      if (sseClients.size >= 100) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Too many SSE connections' }));
+        return;
+      }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
