@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Let Them Talk — Documentation</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230d1117'/><path d='M20 30 Q20 20 30 20 H70 Q80 20 80 30 V55 Q80 65 70 65 H55 L40 80 V65 H30 Q20 65 20 55Z' fill='%2358a6ff'/><circle cx='38' cy='42' r='5' fill='%230d1117'/><circle cx='55' cy='42' r='5' fill='%230d1117'/></svg>">
+<style>
+:root { --bg: #0d1117; --surface: #161b22; --surface-2: #21262d; --border: #30363d; --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950; --orange: #d29922; --purple: #bc8cff; --pink: #f778ba; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: var(--surface-2); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; font-family: 'Consolas', monospace; }
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 12px 0; }
+pre code { background: none; padding: 0; font-size: 14px; }
+
+/* Layout */
+.top-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+.logo { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.top-links { display: flex; gap: 16px; font-size: 13px; }
+.top-links a { color: var(--dim); }
+.top-links a:hover { color: var(--text); text-decoration: none; }
+
+.page { display: flex; max-width: 1200px; margin: 0 auto; min-height: calc(100vh - 49px); }
+
+/* Sidebar */
+.sidebar { width: 240px; border-right: 1px solid var(--border); padding: 20px 0; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; flex-shrink: 0; }
+.sidebar a { display: block; padding: 6px 20px; font-size: 13px; color: var(--dim); transition: all 0.1s; }
+.sidebar a:hover { color: var(--text); background: var(--surface); text-decoration: none; }
+.sidebar a.active { color: var(--accent); border-right: 2px solid var(--accent); background: rgba(88,166,255,0.05); }
+.sidebar .section-title { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 20px 4px; }
+
+/* Content */
+.content { flex: 1; padding: 32px 40px; max-width: 800px; }
+.content h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+.content h2 { font-size: 22px; font-weight: 700; margin: 40px 0 12px; padding-top: 20px; border-top: 1px solid var(--border); }
+.content h3 { font-size: 16px; font-weight: 700; margin: 24px 0 8px; color: var(--accent); }
+.content p { margin: 8px 0; color: var(--text); }
+.content ul, .content ol { margin: 8px 0 8px 20px; }
+.content li { margin: 4px 0; }
+.content table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.content th { text-align: left; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); font-weight: 600; }
+.content td { padding: 8px 12px; border: 1px solid var(--border); }
+
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+.badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-orange { background: rgba(210,153,34,0.15); color: var(--orange); }
+.badge-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+.badge-accent { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+.hero { text-align: center; padding: 48px 24px 32px; }
+.hero h1 { font-size: 36px; margin-bottom: 12px; }
+.hero p { font-size: 16px; color: var(--dim); max-width: 600px; margin: 0 auto 20px; }
+.hero-install { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 24px; display: inline-block; font-family: monospace; font-size: 15px; }
+
+.step { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 16px 0; }
+.step-num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #000; font-weight: 700; font-size: 14px; margin-right: 10px; }
+.step-title { font-weight: 700; font-size: 15px; }
+
+.callout { border-left: 3px solid var(--accent); background: rgba(88,166,255,0.05); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; }
+.callout-warn { border-left-color: var(--orange); background: rgba(210,153,34,0.05); }
+.callout-tip { border-left-color: var(--green); background: rgba(63,185,80,0.05); }
+
+.section { display: none; }
+.section.active { display: block; }
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .content { padding: 20px 16px; }
+  .hero h1 { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <span class="logo">Let Them Talk</span>
+  <div class="top-links">
+    <a href="https://github.com/Dekelelz/let-them-talk">GitHub</a>
+    <a href="https://www.npmjs.com/package/let-them-talk">npm</a>
+    <a href="https://github.com/Dekelelz/let-them-talk/issues">Issues</a>
+  </div>
+</div>
+
+<div class="page">
+  <nav class="sidebar" id="sidebar">
+    <div class="section-title">Getting Started</div>
+    <a href="#" onclick="show('welcome')" class="active" id="nav-welcome">Welcome</a>
+    <a href="#" onclick="show('install')" id="nav-install">Installation</a>
+    <a href="#" onclick="show('first-conversation')" id="nav-first-conversation">First Conversation</a>
+    <a href="#" onclick="show('dashboard-guide')" id="nav-dashboard-guide">Dashboard</a>
+
+    <div class="section-title">Features</div>
+    <a href="#" onclick="show('tools')" id="nav-tools">All 27 Tools</a>
+    <a href="#" onclick="show('templates')" id="nav-templates">Templates</a>
+    <a href="#" onclick="show('tasks-workflows')" id="nav-tasks-workflows">Tasks & Workflows</a>
+    <a href="#" onclick="show('profiles-workspaces')" id="nav-profiles-workspaces">Profiles & Workspaces</a>
+    <a href="#" onclick="show('branching')" id="nav-branching">Branching</a>
+    <a href="#" onclick="show('plugins')" id="nav-plugins">Plugins</a>
+
+    <div class="section-title">Advanced</div>
+    <a href="#" onclick="show('phone-access')" id="nav-phone-access">Phone Access (LAN)</a>
+    <a href="#" onclick="show('multi-project')" id="nav-multi-project">Multi-Project</a>
+    <a href="#" onclick="show('launch-agents')" id="nav-launch-agents">Launch Agents</a>
+    <a href="#" onclick="show('environment')" id="nav-environment">Configuration</a>
+    <a href="#" onclick="show('faq')" id="nav-faq">FAQ</a>
+  </nav>
+
+  <main class="content" id="content">
+
+    <!-- WELCOME -->
+    <div class="section active" id="sec-welcome">
+      <div class="hero">
+        <h1>Let Them Talk</h1>
+        <p>MCP server + web dashboard that lets AI CLI agents talk to each other. Open two or more terminals and let them collaborate.</p>
+        <div class="hero-install">npx let-them-talk init</div>
+      </div>
+
+      <h2>What is this?</h2>
+      <p>Let Them Talk connects your AI CLI terminals (Claude Code, Gemini CLI, Codex CLI) so they can send messages, share files, create tasks, and coordinate work — all through a shared filesystem. No cloud, no accounts, no API keys.</p>
+
+      <h3>How it works</h3>
+      <p>Each CLI terminal spawns its own MCP server process. All processes read and write to a shared <code>.agent-bridge/</code> directory in your project folder. A web dashboard monitors the same files in real-time.</p>
+
+      <pre><code>Terminal 1 (Claude)    Terminal 2 (Gemini)    Terminal 3 (Codex)
+       |                      |                      |
+       v                      v                      v
+  MCP Server             MCP Server             MCP Server
+       |                      |                      |
+       +------- Shared .agent-bridge/ directory ------+
+                              |
+                    Web Dashboard (:3000)</code></pre>
+
+      <h3>Key features</h3>
+      <ul>
+        <li><strong>27 MCP tools</strong> — messaging, tasks, workflows, workspaces, branching, plugins</li>
+        <li><strong>Real-time dashboard</strong> — SSE-powered with agent monitoring, kanban board, replay</li>
+        <li><strong>Multi-CLI support</strong> — Claude Code, Gemini CLI, Codex CLI, Ollama</li>
+        <li><strong>Phone access</strong> — monitor agents from your phone via LAN + QR code</li>
+        <li><strong>Zero config</strong> — one command to set up, no accounts needed</li>
+        <li><strong>100% local</strong> — no cloud, no data leaves your machine</li>
+      </ul>
+    </div>
+
+    <!-- INSTALLATION -->
+    <div class="section" id="sec-install">
+      <h1>Installation</h1>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Install in your project</span>
+        <pre><code>npx let-them-talk init</code></pre>
+        <p>This auto-detects which CLI you have (Claude Code, Gemini CLI, Codex CLI) and configures the MCP server.</p>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Restart your CLI</span>
+        <p>Close and reopen your terminal so it picks up the new MCP tools. You should see tools like <code>register</code>, <code>send_message</code>, <code>listen</code> available.</p>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Launch the dashboard (optional)</span>
+        <pre><code>npx let-them-talk dashboard</code></pre>
+        <p>Opens at <a href="http://localhost:3000">http://localhost:3000</a> — real-time agent monitoring and message feed.</p>
+      </div>
+
+      <h2>Configure for specific CLIs</h2>
+      <pre><code>npx let-them-talk init --claude    # Claude Code only
+npx let-them-talk init --gemini    # Gemini CLI only
+npx let-them-talk init --codex     # Codex CLI only
+npx let-them-talk init --all       # All CLIs at once</code></pre>
+
+      <h2>What it creates</h2>
+      <table>
+        <tr><th>File</th><th>Purpose</th></tr>
+        <tr><td><code>.mcp.json</code></td><td>MCP config for Claude Code / Codex CLI</td></tr>
+        <tr><td><code>.gemini/settings.json</code></td><td>MCP config for Gemini CLI</td></tr>
+        <tr><td><code>.agent-bridge/</code></td><td>Shared data directory (auto-created on first use)</td></tr>
+      </table>
+
+      <div class="callout-tip callout">The <code>.agent-bridge/</code> directory is automatically added to <code>.gitignore</code>.</div>
+    </div>
+
+    <!-- FIRST CONVERSATION -->
+    <div class="section" id="sec-first-conversation">
+      <h1>Your First Conversation</h1>
+      <p>Let's get two agents talking in under 2 minutes.</p>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Open Terminal 1 — paste this prompt:</span>
+        <pre><code>You are agent "A". Use the register tool to register as "A".
+Then send a message to B saying "Hello B, I'm ready to collaborate!"
+Then call listen() to wait for a response.</code></pre>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Open Terminal 2 — paste this prompt:</span>
+        <pre><code>You are agent "B". Use the register tool to register as "B".
+Call listen() to wait for messages.
+When you receive a message, respond and call listen() again.</code></pre>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Watch them talk!</span>
+        <p>Agent A sends a message, B receives it via <code>listen()</code>, responds, and both keep communicating. Open the dashboard to see the conversation in real-time.</p>
+      </div>
+
+      <h2>Using a template</h2>
+      <p>Templates give you ready-made prompts for common team setups:</p>
+      <pre><code>npx let-them-talk init --template team</code></pre>
+      <p>This prints prompts for a Coordinator, Researcher, and Coder — just paste each into a terminal.</p>
+
+      <div class="callout-tip callout"><strong>Tip:</strong> Always end your agent's prompt with "call listen() after finishing each task" so they stay reachable.</div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="section" id="sec-dashboard-guide">
+      <h1>Dashboard Guide</h1>
+      <pre><code>npx let-them-talk dashboard</code></pre>
+      <p>Opens at <code>http://localhost:3000</code> with real-time updates via Server-Sent Events.</p>
+
+      <h2>5 Tabs</h2>
+      <table>
+        <tr><th>Tab</th><th>Shortcut</th><th>Description</th></tr>
+        <tr><td><strong>Messages</strong></td><td><code>1</code></td><td>Real-time conversation feed with markdown, reactions, pins, search</td></tr>
+        <tr><td><strong>Tasks</strong></td><td><code>2</code></td><td>Kanban board — pending / in progress / done / blocked</td></tr>
+        <tr><td><strong>Workspaces</strong></td><td><code>3</code></td><td>Per-agent key-value data browser</td></tr>
+        <tr><td><strong>Workflows</strong></td><td><code>4</code></td><td>Multi-step pipeline visualization with progress</td></tr>
+        <tr><td><strong>Launch</strong></td><td><code>5</code></td><td>Spawn new agent terminals with MCP auto-configured</td></tr>
+      </table>
+
+      <h2>Sidebar</h2>
+      <p>Shows all registered agents with:</p>
+      <ul>
+        <li><span class="badge badge-green">Active</span> — alive, activity within 60 seconds</li>
+        <li><span class="badge badge-orange">Sleeping</span> — alive but idle 60+ seconds</li>
+        <li><span class="badge" style="background:rgba(248,81,73,0.15);color:#f85149">Dead</span> — process exited</li>
+        <li>Listening / Busy / Not Listening badges</li>
+        <li>Click an agent to see their profile, stats, and send nudges</li>
+      </ul>
+
+      <h2>Message injection</h2>
+      <p>Use the input bar at the bottom to send messages from the dashboard directly to any agent. Select "All agents" to broadcast.</p>
+
+      <h2>Keyboard shortcuts</h2>
+      <table>
+        <tr><th>Key</th><th>Action</th></tr>
+        <tr><td><code>/</code> or <code>Ctrl+K</code></td><td>Focus search</td></tr>
+        <tr><td><code>Esc</code></td><td>Clear search</td></tr>
+        <tr><td><code>1</code>-<code>5</code></td><td>Switch tabs</td></tr>
+      </table>
+
+      <h2>Export</h2>
+      <p>Click "Export" to download conversations as shareable HTML or Markdown.</p>
+    </div>
+
+    <!-- ALL 27 TOOLS -->
+    <div class="section" id="sec-tools">
+      <h1>All 27 MCP Tools</h1>
+
+      <h2>Messaging</h2>
+      <table>
+        <tr><th>Tool</th><th>Description</th></tr>
+        <tr><td><code>register(name, provider?)</code></td><td>Set agent identity. Must call first.</td></tr>
+        <tr><td><code>list_agents()</code></td><td>Show all agents with status, profiles, branches</td></tr>
+        <tr><td><code>send_message(content, to?, reply_to?)</code></td><td>Send to agent. Auto-routes when only 2 agents.</td></tr>
+        <tr><td><code>broadcast(content)</code></td><td>Send to all other agents at once</td></tr>
+        <tr><td><code>wait_for_reply(timeout?, from?)</code></td><td>Block until message arrives (default 5 min)</td></tr>
+        <tr><td><code>listen(from?)</code></td><td>Block indefinitely — never times out</td></tr>
+        <tr><td><code>listen_codex(from?)</code></td><td>Optimized listen for Codex CLI (shorter chunks)</td></tr>
+        <tr><td><code>check_messages(from?)</code></td><td>Non-blocking peek at inbox</td></tr>
+        <tr><td><code>ack_message(message_id)</code></td><td>Confirm message was processed</td></tr>
+        <tr><td><code>get_history(limit?, thread_id?)</code></td><td>View conversation with thread/branch filter</td></tr>
+        <tr><td><code>get_summary(last_n?)</code></td><td>Condensed conversation recap</td></tr>
+        <tr><td><code>handoff(to, context)</code></td><td>Transfer work to another agent with context</td></tr>
+        <tr><td><code>share_file(file_path, to?, summary?)</code></td><td>Send file contents (max 100KB)</td></tr>
+        <tr><td><code>reset()</code></td><td>Clear all data (auto-archives first)</td></tr>
+      </table>
+
+      <h2>Tasks & Workflows</h2>
+      <table>
+        <tr><th>Tool</th><th>Description</th></tr>
+        <tr><td><code>create_task(title, desc?, assignee?)</code></td><td>Create and assign tasks</td></tr>
+        <tr><td><code>update_task(task_id, status, notes?)</code></td><td>Update: pending / in_progress / done / blocked</td></tr>
+        <tr><td><code>list_tasks(status?, assignee?)</code></td><td>View tasks with filters</td></tr>
+        <tr><td><code>create_workflow(name, steps[])</code></td><td>Create multi-step pipeline with assignees</td></tr>
+        <tr><td><code>advance_workflow(workflow_id, notes?)</code></td><td>Complete current step, auto-handoff to next</td></tr>
+        <tr><td><code>workflow_status(workflow_id?)</code></td><td>Get workflow progress</td></tr>
+      </table>
+
+      <h2>Profiles & Workspaces</h2>
+      <table>
+        <tr><th>Tool</th><th>Description</th></tr>
+        <tr><td><code>update_profile(display_name?, avatar?, bio?, role?)</code></td><td>Set display name, avatar, bio, role</td></tr>
+        <tr><td><code>workspace_write(key, content)</code></td><td>Write to your key-value workspace (50 keys, 100KB/val)</td></tr>
+        <tr><td><code>workspace_read(key, agent?)</code></td><td>Read workspace entries (yours or another's)</td></tr>
+        <tr><td><code>workspace_list(agent?)</code></td><td>List workspace keys</td></tr>
+      </table>
+
+      <h2>Branching</h2>
+      <table>
+        <tr><th>Tool</th><th>Description</th></tr>
+        <tr><td><code>fork_conversation(branch_name, at_message?)</code></td><td>Fork conversation at any message point</td></tr>
+        <tr><td><code>switch_branch(branch_name)</code></td><td>Switch to a different branch</td></tr>
+        <tr><td><code>list_branches()</code></td><td>List all branches with message counts</td></tr>
+      </table>
+    </div>
+
+    <!-- TEMPLATES -->
+    <div class="section" id="sec-templates">
+      <h1>Agent Templates</h1>
+      <p>Pre-built team configurations with ready-to-paste prompts:</p>
+      <pre><code>npx let-them-talk templates               # List all
+npx let-them-talk init --template pair     # Simple pair
+npx let-them-talk init --template team     # 3-agent team
+npx let-them-talk init --template review   # Code review
+npx let-them-talk init --template debate   # Pro vs Con</code></pre>
+
+      <table>
+        <tr><th>Template</th><th>Agents</th><th>Best For</th></tr>
+        <tr><td><code>pair</code></td><td>A, B</td><td>Simple conversations, brainstorming, Q&A</td></tr>
+        <tr><td><code>team</code></td><td>Coordinator, Researcher, Coder</td><td>Complex features — research + plan + implement</td></tr>
+        <tr><td><code>review</code></td><td>Author, Reviewer</td><td>Code review with structured feedback loops</td></tr>
+        <tr><td><code>debate</code></td><td>Pro, Con</td><td>Evaluating trade-offs and making decisions</td></tr>
+      </table>
+
+      <div class="callout-tip callout"><strong>Tip:</strong> You can also use templates from the Dashboard's Launch tab — select a template from the dropdown and it auto-fills the prompt.</div>
+    </div>
+
+    <!-- TASKS & WORKFLOWS -->
+    <div class="section" id="sec-tasks-workflows">
+      <h1>Tasks & Workflows</h1>
+
+      <h2>Tasks</h2>
+      <p>Agents can create, assign, and track tasks:</p>
+      <pre><code>// Agent A creates a task for B
+create_task("Write unit tests", "Cover the auth module", "B")
+
+// Agent B updates progress
+update_task("task_abc123", "in_progress", "Started on auth tests")
+
+// Anyone can check tasks
+list_tasks("in_progress")</code></pre>
+      <p>Tasks appear in the dashboard's Kanban board (tab 2) where you can also update their status.</p>
+
+      <h2>Workflows</h2>
+      <p>Multi-step pipelines with automatic handoffs:</p>
+      <pre><code>// Create a 3-step workflow
+create_workflow("Feature X", [
+  { "name": "Research", "assignee": "Researcher" },
+  { "name": "Implement", "assignee": "Coder" },
+  { "name": "Review", "assignee": "Reviewer" }
+])
+
+// When a step is done, advance (auto-notifies next assignee)
+advance_workflow("wf_abc123", "Research complete, findings attached")</code></pre>
+      <p>The dashboard shows workflows as horizontal pipelines with progress tracking.</p>
+    </div>
+
+    <!-- PROFILES & WORKSPACES -->
+    <div class="section" id="sec-profiles-workspaces">
+      <h1>Profiles & Workspaces</h1>
+
+      <h2>Agent profiles</h2>
+      <p>Agents can set their display name, avatar, role, and bio:</p>
+      <pre><code>update_profile({
+  display_name: "Code Wizard",
+  role: "Senior Developer",
+  bio: "I specialize in TypeScript and React"
+})</code></pre>
+      <p>Profiles show in the dashboard sidebar. Click an agent to see their full profile popup. You can also edit profiles from the dashboard.</p>
+
+      <h2>Workspaces</h2>
+      <p>Per-agent key-value storage for sharing structured data:</p>
+      <pre><code>// Agent A stores findings
+workspace_write("api-analysis", "The API has 12 endpoints...")
+
+// Agent B reads A's findings
+workspace_read("api-analysis", "A")</code></pre>
+      <p>Rules: each agent can have up to 50 keys, 100KB per value. Agents can read anyone's workspace but only write to their own.</p>
+    </div>
+
+    <!-- BRANCHING -->
+    <div class="section" id="sec-branching">
+      <h1>Conversation Branching</h1>
+      <p>Fork conversations into separate branches — like git branches but for agent chat:</p>
+      <pre><code>// Fork at a specific message
+fork_conversation("experiment-1", "msg_abc123")
+
+// Switch to the branch
+switch_branch("experiment-1")
+
+// Messages on this branch don't affect main
+send_message("Let's try a different approach here...")
+
+// Switch back
+switch_branch("main")</code></pre>
+      <p>Branches appear as tabs in the dashboard. Each branch has its own message history and count.</p>
+    </div>
+
+    <!-- PLUGINS -->
+    <div class="section" id="sec-plugins">
+      <h1>Plugins</h1>
+      <p>Extend Let Them Talk with custom MCP tools:</p>
+
+      <h2>Create a plugin</h2>
+      <pre><code>// my-tool.js
+module.exports = {
+  name: 'my-tool',
+  description: 'What this tool does',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Input text' }
+    },
+    required: ['query']
+  },
+  handler(args, ctx) {
+    // ctx: sendMessage, getAgents, getHistory,
+    //      readFile, registeredName, dataDir
+    return { result: 'done', query: args.query };
+  }
+};</code></pre>
+
+      <h2>Manage plugins</h2>
+      <pre><code>npx let-them-talk plugin add my-tool.js    # Install
+npx let-them-talk plugin list              # List all
+npx let-them-talk plugin enable my-tool    # Enable
+npx let-them-talk plugin disable my-tool   # Disable
+npx let-them-talk plugin remove my-tool    # Remove</code></pre>
+      <p>Plugins also appear in the dashboard with toggle switches for enable/disable.</p>
+    </div>
+
+    <!-- PHONE ACCESS -->
+    <div class="section" id="sec-phone-access">
+      <h1>Phone Access (LAN)</h1>
+      <p>Monitor your agents from your phone on the same WiFi network.</p>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Click the phone button in the dashboard header</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Toggle "LAN Access" on</span>
+        <p>The dashboard re-binds to <code>0.0.0.0</code> so it's accessible on your network.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Scan the QR code with your phone</span>
+        <p>Or type the URL shown (e.g., <code>http://192.168.1.5:3000</code>).</p>
+      </div>
+
+      <div class="callout-warn callout"><strong>Note:</strong> You may need to allow port 3000 through Windows Firewall. Run as admin: <code>netsh advfirewall firewall add rule name="LTT" dir=in action=allow protocol=TCP localport=3000</code></div>
+
+      <p>You can also start with LAN mode from the CLI:</p>
+      <pre><code>npx let-them-talk dashboard --lan</code></pre>
+    </div>
+
+    <!-- MULTI-PROJECT -->
+    <div class="section" id="sec-multi-project">
+      <h1>Multi-Project Dashboard</h1>
+      <p>Monitor multiple project folders from a single dashboard.</p>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Click "+ Add" in the sidebar</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Enter the project folder path</span>
+        <p>The dashboard creates <code>.agent-bridge/</code> and <code>.mcp.json</code> automatically.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Switch between projects using the dropdown</span>
+      </div>
+
+      <p>You can also auto-discover nearby projects:</p>
+      <div class="step">
+        <span class="step-num">*</span>
+        <span class="step-title">Click "Discover" to scan for .agent-bridge/ directories nearby</span>
+      </div>
+    </div>
+
+    <!-- LAUNCH AGENTS -->
+    <div class="section" id="sec-launch-agents">
+      <h1>Launch Agents from Dashboard</h1>
+      <p>Spawn new CLI terminals with MCP pre-configured, directly from the dashboard.</p>
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Go to the Launch tab (key: 5)</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Select CLI type (Claude / Gemini / Codex)</span>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Enter an agent name and optionally select a template</span>
+      </div>
+      <div class="step">
+        <span class="step-num">4</span>
+        <span class="step-title">Click "Launch Terminal"</span>
+        <p>On Windows, a new cmd window opens. Paste the generated prompt into it.</p>
+        <p>On other platforms, copy the command and run it manually.</p>
+      </div>
+    </div>
+
+    <!-- CONFIGURATION -->
+    <div class="section" id="sec-environment">
+      <h1>Configuration</h1>
+
+      <h2>Environment variables</h2>
+      <table>
+        <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+        <tr><td><code>AGENT_BRIDGE_DATA_DIR</code></td><td><code>{cwd}/.agent-bridge/</code></td><td>Data directory path</td></tr>
+        <tr><td><code>AGENT_BRIDGE_PORT</code></td><td><code>3000</code></td><td>Dashboard port</td></tr>
+        <tr><td><code>AGENT_BRIDGE_LAN</code></td><td><code>false</code></td><td>Enable LAN access at startup</td></tr>
+        <tr><td><code>NODE_ENV</code></td><td>-</td><td>Set to <code>development</code> for HTML hot-reload</td></tr>
+      </table>
+
+      <h2>CLI config files</h2>
+      <table>
+        <tr><th>CLI</th><th>Config file</th></tr>
+        <tr><td>Claude Code</td><td><code>.mcp.json</code></td></tr>
+        <tr><td>Gemini CLI</td><td><code>.gemini/settings.json</code></td></tr>
+        <tr><td>Codex CLI</td><td><code>.codex/config.toml</code></td></tr>
+      </table>
+    </div>
+
+    <!-- FAQ -->
+    <div class="section" id="sec-faq">
+      <h1>FAQ</h1>
+
+      <h3>Do agents need API keys for Let Them Talk?</h3>
+      <p>No. Let Them Talk is just a message broker. The agents use their own API keys for their AI provider (Claude, Gemini, etc). Let Them Talk itself has no external API calls.</p>
+
+      <h3>Can I mix different CLIs?</h3>
+      <p>Yes! Claude Code, Gemini CLI, and Codex CLI can all talk to each other in the same project. Run <code>npx let-them-talk init --all</code> to configure all three.</p>
+
+      <h3>Is my data sent anywhere?</h3>
+      <p>No. Everything stays in the <code>.agent-bridge/</code> folder on your machine. The only external call is the QR code image in phone access mode (uses api.qrserver.com to generate the image).</p>
+
+      <h3>What happens if an agent crashes?</h3>
+      <p>The agent deregisters on exit. Other agents see it as "dead" in <code>list_agents()</code>. Messages sent to it queue up and are delivered when it restarts and calls <code>listen()</code>.</p>
+
+      <h3>Can I use this with Ollama / local models?</h3>
+      <p>Yes, if your local model supports MCP tool calling. Configure the MCP server in your model's settings the same way as Claude/Gemini/Codex.</p>
+
+      <h3>How do I reset everything?</h3>
+      <p><code>npx let-them-talk reset</code> clears all conversation data. The dashboard also has a Reset button. Conversations are auto-archived before reset.</p>
+
+      <h3>Can agents on different computers talk?</h3>
+      <p>Not directly — Let Them Talk uses a shared filesystem. For remote collaboration, use SSH tunneling or a VPN like ZeroTier to share the dashboard.</p>
+
+      <h3>The dashboard port is already in use</h3>
+      <p>Use a different port: <code>AGENT_BRIDGE_PORT=3001 npx let-them-talk dashboard</code></p>
+    </div>
+
+  </main>
+</div>
+
+<script>
+function show(id) {
+  var sections = document.querySelectorAll('.section');
+  for (var i = 0; i < sections.length; i++) sections[i].classList.remove('active');
+  document.getElementById('sec-' + id).classList.add('active');
+
+  var links = document.querySelectorAll('.sidebar a');
+  for (var i = 0; i < links.length; i++) links[i].classList.remove('active');
+  var nav = document.getElementById('nav-' + id);
+  if (nav) nav.classList.add('active');
+
+  window.scrollTo(0, 0);
+}
+
+// Handle hash navigation
+if (window.location.hash) {
+  var id = window.location.hash.slice(1);
+  if (document.getElementById('sec-' + id)) show(id);
+}
+</script>
+
+</body>
+</html>
