@@ -33,6 +33,56 @@
     --header-h: 56px;
   }
 
+  [data-theme="light"] {
+    --bg: #f6f8fa;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --surface-3: #e4e7eb;
+    --border: #d0d7de;
+    --border-light: #bbc0c7;
+    --text: #1f2328;
+    --text-dim: #57606a;
+    --text-muted: #8b949e;
+    --accent: #0969da;
+    --accent-dim: rgba(9, 105, 218, 0.1);
+    --green: #1a7f37;
+    --green-dim: rgba(26, 127, 55, 0.1);
+    --red: #cf222e;
+    --red-dim: rgba(207, 34, 46, 0.1);
+    --orange: #9a6700;
+    --orange-dim: rgba(154, 103, 0, 0.1);
+    --purple: #8250df;
+    --purple-dim: rgba(130, 80, 223, 0.1);
+    --yellow: #9a6700;
+  }
+
+  .theme-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: all 0.15s;
+    color: var(--text-dim);
+  }
+
+  .theme-toggle:hover { border-color: var(--border-light); color: var(--text); }
+
+  /* Keyboard shortcut hints */
+  .kbd-hint {
+    font-size: 9px;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-family: monospace;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     background: var(--bg);
@@ -1308,6 +1358,7 @@
     </div>
   </div>
   <div class="header-actions">
+    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light theme">&#x1f319;</button>
     <button class="sound-toggle" id="sound-toggle" onclick="toggleSound()" title="Toggle notification sound">&#x1f508;</button>
     <div class="connection"><span class="conn-dot"></span><span id="conn-label">Live</span><span class="conn-detail" id="conn-detail"></span></div>
     <div style="position:relative;display:inline-block">
@@ -1383,7 +1434,7 @@
       <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
     </div>
     <div class="search-bar" id="search-bar">
-      <input class="search-input" id="search-input" placeholder="Search messages..." oninput="onSearch()">
+      <input class="search-input" id="search-input" placeholder="Search messages...  ( / )" oninput="onSearch()">
       <span class="search-count" id="search-count"></span>
     </div>
     <div class="messages-area" id="messages"></div>
@@ -1943,7 +1994,7 @@ function renderMessages(messages) {
           '<div class="handoff-banner">&#x1f91d; Handoff: ' + escapeHtml(m.from) + ' &rarr; ' + escapeHtml(m.to) + '</div>' +
           '<div class="msg-header">' +
             '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
-            '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+            '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
@@ -1965,7 +2016,7 @@ function renderMessages(messages) {
             '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
             '<span class="msg-arrow">&rarr;</span>' +
             '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
-            '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+            '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
           '<div class="file-meta"><span class="file-icon">&#x1f4c4;</span>' + escapeHtml(fileName) + '<span class="file-size">' + fileSize + '</span></div>' +
@@ -1986,7 +2037,7 @@ function renderMessages(messages) {
             '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
             '<span class="msg-arrow">&rarr;</span>' +
             '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
-            '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
+            '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
@@ -2056,6 +2107,78 @@ function onSearch() {
   searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
   lastMessageCount = 0;
   renderMessages(cachedHistory);
+}
+
+// ==================== THEME ====================
+
+var currentTheme = localStorage.getItem('ltt-theme') || 'dark';
+
+function applyTheme(theme) {
+  currentTheme = theme;
+  if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.getElementById('theme-toggle').innerHTML = '&#x2600;&#xfe0f;';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.getElementById('theme-toggle').innerHTML = '&#x1f319;';
+  }
+  localStorage.setItem('ltt-theme', theme);
+}
+
+function toggleTheme() {
+  applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+}
+
+applyTheme(currentTheme);
+
+// ==================== KEYBOARD SHORTCUTS ====================
+
+document.addEventListener('keydown', function(e) {
+  // Don't intercept when typing in inputs
+  var tag = document.activeElement.tagName;
+  var inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+  // Escape — clear search and filters
+  if (e.key === 'Escape') {
+    document.getElementById('search-input').value = '';
+    searchQuery = '';
+    bookmarkFilter = false;
+    activeThread = null;
+    lastMessageCount = 0;
+    renderMessages(cachedHistory);
+    renderBookmarksSidebar();
+    renderThreads(cachedHistory);
+    document.getElementById('search-input').blur();
+    return;
+  }
+
+  if (inInput) return;
+
+  // / or Ctrl+K — focus search
+  if (e.key === '/' || (e.ctrlKey && e.key === 'k')) {
+    e.preventDefault();
+    document.getElementById('search-input').focus();
+    return;
+  }
+
+  // 1 — Messages tab
+  if (e.key === '1') { switchView('messages'); return; }
+  // 2 — Tasks tab
+  if (e.key === '2') { switchView('tasks'); return; }
+});
+
+// ==================== RELATIVE TIMESTAMPS ====================
+
+function relativeTime(ts) {
+  var secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (secs < 10) return 'just now';
+  if (secs < 60) return secs + 's ago';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  // Older than 24h — show date
+  return formatTime(ts);
 }
 
 // ==================== COPY TO CLIPBOARD ====================
