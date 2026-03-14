@@ -4605,6 +4605,8 @@ function renderPhoneModalContent() {
   }
 
   var url = 'http://' + lanState.lan_ip + ':' + lanState.port;
+  // Include active project so the phone shows the same view
+  if (activeProject) url += '?project=' + encodeURIComponent(activeProject);
   var qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=58a6ff&bgcolor=0d1117&data=' + encodeURIComponent(url);
 
   el.innerHTML =
@@ -4620,6 +4622,7 @@ function renderPhoneModalContent() {
 
 function copyPhoneUrl() {
   var url = 'http://' + lanState.lan_ip + ':' + lanState.port;
+  if (activeProject) url += '?project=' + encodeURIComponent(activeProject);
   navigator.clipboard.writeText(url).then(function() {
     var btn = document.querySelector('.phone-url-copy');
     btn.textContent = 'Copied!';
@@ -4792,6 +4795,16 @@ function initSSE() {
 }
 
 // ==================== INIT ====================
+
+// Auto-select project from URL param (for phone access links)
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var projectFromUrl = params.get('project');
+  if (projectFromUrl) {
+    activeProject = projectFromUrl;
+  }
+})();
+
 loadProjects();
 poll();
 initSSE();
