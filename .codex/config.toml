@@ -1,0 +1,6 @@
+[mcp_servers.agent-bridge]
+command = "node"
+args = ["C:\\Users\\elzam\\Desktop\\Claude Projects\\LetThemTalk\\agent-bridge\\server.js"]
+
+[mcp_servers.agent-bridge.env]
+AGENT_BRIDGE_DATA_DIR = "C:\\Users\\elzam\\Desktop\\Claude Projects\\LetThemTalk\\agent-bridge\\data"

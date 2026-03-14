@@ -103,25 +103,36 @@ function setupGemini(serverPath, cwd) {
   console.log('  [ok] Gemini CLI: .gemini/settings.json updated');
 }
 
-// Configure for Codex CLI (codex uses .mcp.json same as Claude)
+// Configure for Codex CLI (uses .codex/config.toml)
 function setupCodex(serverPath, cwd) {
-  const mcpConfigPath = path.join(cwd, '.mcp.json');
-  let mcpConfig = { mcpServers: {} };
-  if (fs.existsSync(mcpConfigPath)) {
-    try {
-      mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8'));
-      if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
-    } catch {}
+  const codexDir = path.join(cwd, '.codex');
+  const configPath = path.join(codexDir, 'config.toml');
+
+  if (!fs.existsSync(codexDir)) {
+    fs.mkdirSync(codexDir, { recursive: true });
   }
 
-  mcpConfig.mcpServers['agent-bridge'] = {
-    command: 'node',
-    args: [serverPath],
-    env: { AGENT_BRIDGE_DATA_DIR: dataDir(cwd) },
-  };
+  // Read existing config or start fresh
+  let config = '';
+  if (fs.existsSync(configPath)) {
+    config = fs.readFileSync(configPath, 'utf8');
+  }
 
-  fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + '\n');
-  console.log('  [ok] Codex CLI: .mcp.json updated');
+  // Only add if not already present
+  if (!config.includes('[mcp_servers.agent-bridge]')) {
+    const tomlBlock = `
+[mcp_servers.agent-bridge]
+command = "node"
+args = [${JSON.stringify(serverPath)}]
+
+[mcp_servers.agent-bridge.env]
+AGENT_BRIDGE_DATA_DIR = ${JSON.stringify(dataDir(cwd))}
+`;
+    config += tomlBlock;
+    fs.writeFileSync(configPath, config);
+  }
+
+  console.log('  [ok] Codex CLI: .codex/config.toml updated');
 }
 
 function init() {
