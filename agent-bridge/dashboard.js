@@ -134,6 +134,7 @@ function apiAgents(query) {
       status: !alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active',
       listening_since: info.listening_since || null,
       is_listening: !!(info.listening_since && alive),
+      provider: info.provider || 'unknown',
     };
   }
   return result;

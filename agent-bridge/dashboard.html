@@ -1972,6 +1972,15 @@ function renderTable(rows) {
 
 // ==================== AGENT MONITORING ====================
 
+var PROVIDER_COLORS = { claude: '#d97706', anthropic: '#d97706', openai: '#10b981', gemini: '#3b82f6', google: '#3b82f6' };
+
+function getProviderBadge(provider) {
+  if (!provider) return '';
+  var key = provider.toLowerCase();
+  var c = PROVIDER_COLORS[key] || 'var(--text-muted)';
+  return '<span style="color:' + c + ';font-size:9px;font-weight:600;margin-right:4px">' + escapeHtml(provider) + '</span>';
+}
+
 function renderAgents(agents) {
   var el = document.getElementById('agents-list');
   var keys = Object.keys(agents);
@@ -2032,7 +2041,7 @@ function renderAgents(agents) {
             escapeHtml(name) +
             ' <span class="agent-badge ' + state + '">' + stateLabel + '</span>' +
           '</div>' +
-          '<div class="agent-meta"><span>PID ' + info.pid + '</span></div>' +
+          '<div class="agent-meta"><span>' + getProviderBadge(info.provider) + 'PID ' + info.pid + '</span></div>' +
         '</div>' +
       '</div>' +
       '<div class="agent-activity">' +
@@ -2149,7 +2158,7 @@ function renderThreads(messages) {
   var ids = Object.keys(threads);
 
   if (!ids.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No threads yet</div>';
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No threads yet<br><span style="font-size:10px;opacity:0.7">Use reply_to when sending to create a thread</span></div>';
     clearEl.classList.remove('visible');
     return;
   }
@@ -2726,7 +2735,7 @@ function renderBookmarksSidebar() {
   var ids = Object.keys(bookmarks);
 
   if (!ids.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No bookmarks yet</div>';
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No bookmarks yet<br><span style="font-size:10px;opacity:0.7">Hover a message and click &#x2606; to bookmark</span></div>';
     countEl.style.display = 'none';
     clearEl.style.display = 'none';
     return;

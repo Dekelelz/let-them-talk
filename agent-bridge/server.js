@@ -233,7 +233,7 @@ function getUnconsumedMessages(agentName, fromFilter = null) {
 
 // --- Tool implementations ---
 
-function toolRegister(name) {
+function toolRegister(name, provider = null) {
   ensureDataDir();
   sanitizeName(name);
 
@@ -248,7 +248,7 @@ function toolRegister(name) {
   }
 
   const now = new Date().toISOString();
-  agents[name] = { pid: process.pid, timestamp: now, last_activity: now };
+  agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown' };
   saveAgents(agents);
   registeredName = name;
 
@@ -308,6 +308,7 @@ function toolListAgents() {
       status: !alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active',
       listening_since: info.listening_since || null,
       is_listening: !!(info.listening_since && alive),
+      provider: info.provider || 'unknown',
     };
   }
   return { agents: result };
@@ -882,6 +883,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'Agent name (1-20 alphanumeric/underscore/hyphen chars)',
             },
+            provider: {
+              type: 'string',
+              description: 'AI provider/CLI name (e.g. "Claude", "OpenAI", "Gemini"). Shown in dashboard.',
+            },
           },
           required: ['name'],
         },
@@ -1114,7 +1119,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     switch (name) {
       case 'register':
-        result = toolRegister(args.name);
+        result = toolRegister(args.name, args?.provider);
         break;
       case 'list_agents':
         result = toolListAgents();
