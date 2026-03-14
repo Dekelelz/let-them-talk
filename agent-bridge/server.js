@@ -126,9 +126,15 @@ function readNewMessages(fromOffset) {
 
 // Build a standard message delivery response with context
 function buildMessageResponse(msg, consumedIds) {
-  // Count remaining unconsumed messages after this one
-  const allUnconsumed = getUnconsumedMessages(registeredName);
-  const pendingCount = allUnconsumed.filter(m => m.id !== msg.id && !consumedIds.has(m.id)).length;
+  // Count remaining unconsumed messages — use lightweight read from current offset
+  // instead of full file scan to avoid performance issues in busy conversations
+  let pendingCount = 0;
+  try {
+    if (fs.existsSync(MESSAGES_FILE)) {
+      const { messages: tail } = readNewMessages(lastReadOffset);
+      pendingCount = tail.filter(m => m.to === registeredName && m.id !== msg.id && !consumedIds.has(m.id)).length;
+    }
+  } catch {}
 
   // Count online agents
   const agents = getAgents();
@@ -264,12 +270,16 @@ function toolSendMessage(content, to = null, reply_to = null) {
     }
   }
 
+  if (!agents[to]) {
+    return { error: `Agent "${to}" is not registered` };
+  }
+
   if (to === registeredName) {
     return { error: 'Cannot send a message to yourself' };
   }
 
   // Check if recipient is alive — warn if dead
-  const recipientAlive = agents[to] ? isPidAlive(agents[to].pid) : false;
+  const recipientAlive = isPidAlive(agents[to].pid);
 
   // Resolve threading
   let thread_id = null;
@@ -508,7 +518,46 @@ function toolGetHistory(limit = 50, thread_id = null) {
   };
 }
 
+function toolGetSummary(lastN = 20) {
+  const history = readJsonl(HISTORY_FILE);
+  if (history.length === 0) {
+    return { summary: 'No messages in conversation yet.', message_count: 0 };
+  }
+
+  const recent = history.slice(-lastN);
+  const agents = [...new Set(history.map(m => m.from))];
+  const threads = [...new Set(history.filter(m => m.thread_id).map(m => m.thread_id))];
+
+  // Build condensed summary
+  const lines = recent.map(m => {
+    const preview = m.content.length > 150 ? m.content.substring(0, 150) + '...' : m.content;
+    return `[${m.from} → ${m.to}]: ${preview}`;
+  });
+
+  return {
+    total_messages: history.length,
+    showing_last: recent.length,
+    agents_involved: agents,
+    thread_count: threads.length,
+    first_message: history[0].timestamp,
+    last_message: history[history.length - 1].timestamp,
+    summary: lines.join('\n'),
+  };
+}
+
 function toolReset() {
+  // Auto-archive before clearing — never lose conversations
+  if (fs.existsSync(HISTORY_FILE)) {
+    const history = readJsonl(HISTORY_FILE);
+    if (history.length > 0) {
+      const archiveDir = path.join(DATA_DIR, 'archives');
+      if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const archivePath = path.join(archiveDir, `conversation-${timestamp}.jsonl`);
+      fs.copyFileSync(HISTORY_FILE, archivePath);
+    }
+  }
+
   // Remove known fixed files
   for (const f of [MESSAGES_FILE, HISTORY_FILE, AGENTS_FILE, ACKS_FILE]) {
     if (fs.existsSync(f)) fs.unlinkSync(f);
@@ -524,14 +573,15 @@ function toolReset() {
   }
   registeredName = null;
   lastReadOffset = 0;
+  messageSeq = 0;
   if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-  return { success: true, message: 'All data cleared. Ready for a fresh session.' };
+  return { success: true, message: 'All data cleared. Conversation archived before reset.' };
 }
 
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '2.0.0' },
+  { name: 'agent-bridge', version: '2.1.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -671,8 +721,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'get_summary',
+        description: 'Get a condensed summary of the conversation so far. Useful when context is getting long and you need a quick recap of what was discussed.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            last_n: {
+              type: 'number',
+              description: 'Number of recent messages to summarize (default: 20)',
+            },
+          },
+        },
+      },
+      {
         name: 'reset',
-        description: 'Clear all data files (messages, history, agents, acks) and start fresh.',
+        description: 'Clear all data files and start fresh. Automatically archives the conversation before clearing.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -715,6 +778,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'get_history':
         result = toolGetHistory(args?.limit, args?.thread_id);
+        break;
+      case 'get_summary':
+        result = toolGetSummary(args?.last_n);
         break;
       case 'reset':
         result = toolReset();
@@ -763,7 +829,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v2.0.0 running');
+  console.error('Agent Bridge MCP server v2.1.0 running');
 }
 
 main().catch(console.error);

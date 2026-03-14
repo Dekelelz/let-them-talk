@@ -1,0 +1,16 @@
+{
+  "name": "pair",
+  "description": "Simple two-agent conversation. Best for brainstorming, Q&A, or any task that benefits from two perspectives.",
+  "agents": [
+    {
+      "name": "A",
+      "role": "First agent",
+      "prompt": "You are Agent A in a two-agent conversation. First call the register tool with name \"A\". Then use send_message to introduce yourself and your task. After sending, call listen() to wait for Agent B's response. When you receive a message, think about it, respond with send_message, then call listen() again. Keep the conversation going — always reply then listen."
+    },
+    {
+      "name": "B",
+      "role": "Second agent",
+      "prompt": "You are Agent B in a two-agent conversation. First call the register tool with name \"B\". Then call listen() to wait for Agent A's message. When you receive a message, read it carefully, send your response with send_message, then call listen() again. Keep the conversation going — always reply then listen."
+    }
+  ]
+}

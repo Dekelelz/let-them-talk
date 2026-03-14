@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v2.0.0
+  Let Them Talk — Agent Bridge v2.1.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 
@@ -18,6 +18,8 @@ function printUsage() {
     npx let-them-talk init --gemini     Configure for Gemini CLI
     npx let-them-talk init --codex      Configure for Codex CLI
     npx let-them-talk init --all        Configure for all supported CLIs
+    npx let-them-talk init --template T  Initialize with a team template (pair, team, review, debate)
+    npx let-them-talk templates         List available agent templates
     npx let-them-talk dashboard         Launch the web dashboard (http://localhost:3000)
     npx let-them-talk reset             Clear all conversation data
     npx let-them-talk help              Show this help message
@@ -181,10 +183,26 @@ function init() {
 
   console.log('');
   console.log('  Agent Bridge is ready! Restart your CLI to pick up the MCP tools.');
-  console.log('  Open two terminals and start a conversation between agents.');
   console.log('');
-  console.log('  Optional: Run "npx let-them-talk dashboard" to monitor conversations.');
-  console.log('');
+
+  // Show template if --template was provided
+  var templateFlag = null;
+  for (var i = 3; i < process.argv.length; i++) {
+    if (process.argv[i] === '--template' && process.argv[i + 1]) {
+      templateFlag = process.argv[i + 1];
+      break;
+    }
+  }
+
+  if (templateFlag) {
+    showTemplate(templateFlag);
+  } else {
+    console.log('  Open two terminals and start a conversation between agents.');
+    console.log('  Tip: Use "npx let-them-talk init --template pair" for ready-made prompts.');
+    console.log('');
+    console.log('  Optional: Run "npx let-them-talk dashboard" to monitor conversations.');
+    console.log('');
+  }
 }
 
 function reset() {
@@ -206,6 +224,60 @@ function reset() {
   console.log(`  Cleared ${count} file(s) from ${targetDir}`);
 }
 
+function getTemplates() {
+  const templatesDir = path.join(__dirname, 'templates');
+  if (!fs.existsSync(templatesDir)) return [];
+  return fs.readdirSync(templatesDir)
+    .filter(f => f.endsWith('.json'))
+    .map(f => {
+      try { return JSON.parse(fs.readFileSync(path.join(templatesDir, f), 'utf8')); }
+      catch { return null; }
+    })
+    .filter(Boolean);
+}
+
+function listTemplates() {
+  const templates = getTemplates();
+  console.log('');
+  console.log('  Available Agent Templates');
+  console.log('  ========================');
+  console.log('');
+  for (const t of templates) {
+    const agentNames = t.agents.map(a => a.name).join(', ');
+    console.log('  ' + t.name.padEnd(12) + ' ' + t.description);
+    console.log('  ' + ''.padEnd(12) + ' Agents: ' + agentNames);
+    console.log('');
+  }
+  console.log('  Usage: npx let-them-talk init --template <name>');
+  console.log('');
+}
+
+function showTemplate(templateName) {
+  const templates = getTemplates();
+  const template = templates.find(t => t.name === templateName);
+  if (!template) {
+    console.error('  Unknown template: ' + templateName);
+    console.error('  Available: ' + templates.map(t => t.name).join(', '));
+    process.exit(1);
+  }
+
+  console.log('');
+  console.log('  Template: ' + template.name);
+  console.log('  ' + template.description);
+  console.log('');
+  console.log('  Copy these prompts into each terminal:');
+  console.log('  ======================================');
+
+  for (var i = 0; i < template.agents.length; i++) {
+    var a = template.agents[i];
+    console.log('');
+    console.log('  --- Terminal ' + (i + 1) + ': ' + a.name + ' (' + a.role + ') ---');
+    console.log('');
+    console.log('  ' + a.prompt.replace(/\n/g, '\n  '));
+    console.log('');
+  }
+}
+
 function dashboard() {
   require('./dashboard.js');
 }
@@ -213,6 +285,9 @@ function dashboard() {
 switch (command) {
   case 'init':
     init();
+    break;
+  case 'templates':
+    listTemplates();
     break;
   case 'dashboard':
     dashboard();
