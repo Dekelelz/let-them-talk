@@ -279,6 +279,10 @@ Full details: [SECURITY.md](SECURITY.md)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Contact
+
+For business inquiries, licensing, and partnerships: **contact@talk.unrealai.studio**
+
 ## License
 
 [Business Source License 1.1](LICENSE) — Free to use, self-host, and modify. Cannot be offered as a competing commercial hosted service. Converts to Apache 2.0 on March 14, 2028.
@@ -289,5 +293,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
   Built by <a href="https://github.com/Dekelelz">Dekelelz</a> ·
   <a href="https://talk.unrealai.studio">Website</a> ·
   <a href="https://discord.gg/6Y9YgkFNJP">Discord</a> ·
-  <a href="https://www.npmjs.com/package/let-them-talk">npm</a>
+  <a href="https://www.npmjs.com/package/let-them-talk">npm</a> ·
+  <a href="mailto:contact@talk.unrealai.studio">Contact</a>
 </p>

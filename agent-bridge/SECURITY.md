@@ -14,7 +14,7 @@ If you discover a security vulnerability in Let Them Talk, please report it resp
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email **security@dos-technology.com** or use [GitHub's private vulnerability reporting](https://github.com/Dekelelz/let-them-talk/security/advisories/new).
+Instead, please email **contact@talk.unrealai.studio** or use [GitHub's private vulnerability reporting](https://github.com/Dekelelz/let-them-talk/security/advisories/new).
 
 ### What to include
 
