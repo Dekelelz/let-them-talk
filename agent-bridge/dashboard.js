@@ -690,8 +690,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // CSRF protection: validate origin on mutating requests
+  // CSRF + DNS rebinding protection: validate Host and Origin on mutating requests
   if (req.method === 'POST' || req.method === 'DELETE') {
+    // Check Host header to block DNS rebinding attacks
+    const host = (req.headers.host || '').replace(/:\d+$/, '');
+    const validHosts = ['localhost', '127.0.0.1'];
+    if (LAN_MODE && getLanIP()) validHosts.push(getLanIP());
+    if (!validHosts.includes(host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: invalid host' }));
+      return;
+    }
+    // Check Origin header to block cross-site requests
     const origin = req.headers.origin || '';
     const referer = req.headers.referer || '';
     const source = origin || referer;

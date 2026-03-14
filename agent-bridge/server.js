@@ -23,10 +23,26 @@ const PLUGINS_DIR = path.join(DATA_DIR, 'plugins');
 
 // In-memory state for this process
 let registeredName = null;
+let registeredToken = null; // auth token for re-registration
 let lastReadOffset = 0; // byte offset into messages.jsonl for efficient polling
 let heartbeatInterval = null; // heartbeat timer reference
 let messageSeq = 0; // monotonic sequence counter for message ordering
 let currentBranch = 'main'; // which branch this agent is on
+
+// Rate limiting — prevent broadcast storms and message flooding
+const rateLimitWindow = 60000; // 1 minute window
+const rateLimitMax = 30; // max 30 messages per minute per agent
+let rateLimitMessages = []; // timestamps of recent messages
+
+function checkRateLimit() {
+  const now = Date.now();
+  rateLimitMessages = rateLimitMessages.filter(t => now - t < rateLimitWindow);
+  if (rateLimitMessages.length >= rateLimitMax) {
+    return { error: `Rate limit exceeded: max ${rateLimitMax} messages per minute. Wait before sending more.` };
+  }
+  rateLimitMessages.push(now);
+  return null;
+}
 
 // --- Helpers ---
 
@@ -112,7 +128,13 @@ function validateContentSize(content) {
 }
 
 function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  try { return Date.now().toString(36) + require('crypto').randomBytes(6).toString('hex'); }
+  catch { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+}
+
+function generateToken() {
+  try { return require('crypto').randomBytes(16).toString('hex'); }
+  catch { return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); }
 }
 
 function sleep(ms) {
@@ -230,9 +252,11 @@ function autoCompact() {
       return false;
     });
 
-    // Rewrite messages.jsonl with only active messages
+    // Rewrite messages.jsonl atomically — write to temp file then rename
     const newContent = active.map(m => JSON.stringify(m)).join('\n') + (active.length ? '\n' : '');
-    fs.writeFileSync(msgFile, newContent);
+    const tmpFile = msgFile + '.tmp';
+    fs.writeFileSync(tmpFile, newContent);
+    fs.renameSync(tmpFile, msgFile);
     lastReadOffset = Buffer.byteLength(newContent, 'utf8');
 
     // Trim consumed ID files — keep only IDs still in active messages
@@ -366,7 +390,15 @@ function toolRegister(name, provider = null) {
 
   const agents = getAgents();
   if (agents[name] && agents[name].pid !== process.pid && isPidAlive(agents[name].pid)) {
-    return { error: `Agent "${name}" is already registered by a live process (PID ${agents[name].pid})` };
+    return { error: `Agent "${name}" is already registered by a live process. Choose a different name.` };
+  }
+
+  // If name was previously registered by a dead process, verify token to prevent impersonation
+  if (agents[name] && agents[name].token && !isPidAlive(agents[name].pid)) {
+    // Dead agent — only allow re-registration from the same process (same token)
+    if (registeredToken && registeredToken !== agents[name].token) {
+      return { error: `Agent "${name}" was previously registered by another process. Choose a different name.` };
+    }
   }
 
   // Clean up old registration if re-registering with a different name
@@ -375,9 +407,11 @@ function toolRegister(name, provider = null) {
   }
 
   const now = new Date().toISOString();
-  agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown', branch: currentBranch };
+  const token = (agents[name] && agents[name].token) || generateToken();
+  agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown', branch: currentBranch, token };
   saveAgents(agents);
   registeredName = name;
+  registeredToken = token;
 
   // Auto-create profile if not exists
   const profiles = getProfiles();
@@ -459,6 +493,9 @@ function toolSendMessage(content, to = null, reply_to = null) {
     return { error: 'You must call register() first' };
   }
 
+  const rateErr = checkRateLimit();
+  if (rateErr) return rateErr;
+
   const agents = getAgents();
   const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
 
@@ -530,6 +567,9 @@ function toolBroadcast(content) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
+
+  const rateErr = checkRateLimit();
+  if (rateErr) return rateErr;
 
   const sizeErr = validateContentSize(content);
   if (sizeErr) return sizeErr;
@@ -1909,13 +1949,16 @@ function loadPlugins() {
   const enabledNames = new Set(registry.filter(p => p.enabled !== false).map(p => p.name));
 
   try {
+    const vm = require('vm');
     const files = fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js'));
     for (const file of files) {
       try {
         const pluginPath = path.join(PLUGINS_DIR, file);
-        // Clear require cache so plugins can be reloaded
-        delete require.cache[require.resolve(pluginPath)];
-        const plugin = require(pluginPath);
+        const code = fs.readFileSync(pluginPath, 'utf8');
+        // Run plugin in a sandboxed VM context — no require, no process, no child_process
+        const sandbox = { module: { exports: {} }, exports: {}, console: { log: () => {}, error: () => {}, warn: () => {} } };
+        vm.runInNewContext(code, sandbox, { filename: file, timeout: 5000 });
+        const plugin = sandbox.module.exports;
         if (!plugin.name || !plugin.description || !plugin.handler) {
           console.error(`Plugin ${file}: missing name, description, or handler`);
           continue;
@@ -1927,7 +1970,7 @@ function loadPlugins() {
           inputSchema: plugin.inputSchema || { type: 'object', properties: {} },
           handler: plugin.handler,
         });
-        console.error(`Plugin loaded: ${plugin.name}`);
+        console.error(`Plugin loaded: ${plugin.name} (sandboxed)`);
       } catch (e) {
         console.error(`Plugin ${file} failed to load: ${e.message}`);
       }
@@ -1941,17 +1984,18 @@ function executePlugin(pluginName, args) {
 
   const context = {
     registeredName,
-    dataDir: DATA_DIR,
     sendMessage: (to, content) => toolSendMessage(content, to),
     getAgents: () => toolListAgents().agents,
     getHistory: (limit) => toolGetHistory(limit),
     readFile: (filePath) => {
       const resolved = path.resolve(filePath);
       const allowedRoot = path.resolve(process.cwd());
-      if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+      let realPath;
+      try { realPath = fs.realpathSync(resolved); } catch { throw new Error('File not found'); }
+      if (!realPath.startsWith(allowedRoot + path.sep) && realPath !== allowedRoot) {
         throw new Error('File path must be within the project directory');
       }
-      return fs.readFileSync(resolved, 'utf8');
+      return fs.readFileSync(realPath, 'utf8');
     },
   };
 

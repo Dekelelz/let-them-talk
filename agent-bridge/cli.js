@@ -331,24 +331,33 @@ function pluginCmd() {
       const absPath = path.resolve(filePath);
       if (!fs.existsSync(absPath)) { console.error('  File not found: ' + absPath); process.exit(1); }
 
-      // Validate plugin exports
+      // Validate plugin structure without executing it (no require — prevents RCE on install)
       try {
-        const plugin = require(absPath);
-        if (!plugin.name || !plugin.handler) { console.error('  Plugin must export name, description, and handler'); process.exit(1); }
+        const src = fs.readFileSync(absPath, 'utf8');
+        if (!src.includes('module.exports') || !src.includes('name') || !src.includes('handler')) {
+          console.error('  Plugin must export name, description, and handler (module.exports = { name, handler })');
+          process.exit(1);
+        }
+
+        // Extract plugin name from source using regex (no eval)
+        const nameMatch = src.match(/name\s*:\s*['"]([^'"]+)['"]/);
+        const descMatch = src.match(/description\s*:\s*['"]([^'"]+)['"]/);
+        const pluginName = nameMatch ? nameMatch[1] : path.basename(absPath, '.js');
+        const pluginDesc = descMatch ? descMatch[1] : '';
 
         if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
         const destFile = path.join(pluginsDir, path.basename(absPath));
         fs.copyFileSync(absPath, destFile);
 
         const reg = getRegistry();
-        if (!reg.find(p => p.name === plugin.name)) {
-          reg.push({ name: plugin.name, description: plugin.description || '', file: path.basename(absPath), enabled: true, added_at: new Date().toISOString() });
+        if (!reg.find(p => p.name === pluginName)) {
+          reg.push({ name: pluginName, description: pluginDesc, file: path.basename(absPath), enabled: true, added_at: new Date().toISOString() });
           saveRegistry(reg);
         }
-        console.log('  Plugin "' + plugin.name + '" installed successfully.');
-        console.log('  Restart CLI to load the new tool.');
+        console.log('  Plugin "' + pluginName + '" installed successfully.');
+        console.log('  Restart CLI to load the new tool (runs sandboxed).');
       } catch (e) {
-        console.error('  Failed to load plugin: ' + e.message);
+        console.error('  Failed to install plugin: ' + e.message);
         process.exit(1);
       }
       break;
@@ -362,8 +371,11 @@ function pluginCmd() {
       const newReg = reg.filter(p => p.name !== name);
       saveRegistry(newReg);
       if (plugin.file) {
-        const pluginFile = path.join(pluginsDir, plugin.file);
-        if (fs.existsSync(pluginFile)) fs.unlinkSync(pluginFile);
+        const pluginFile = path.resolve(pluginsDir, plugin.file);
+        // Prevent path traversal — only delete files inside pluginsDir
+        if (pluginFile.startsWith(path.resolve(pluginsDir) + path.sep) && fs.existsSync(pluginFile)) {
+          fs.unlinkSync(pluginFile);
+        }
       }
       console.log('  Plugin "' + name + '" removed.');
       break;
