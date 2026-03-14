@@ -6,7 +6,7 @@ const os = require('os');
 const { exec } = require('child_process');
 
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
-const LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
+let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
 
 function getLanIP() {
   const interfaces = os.networkInterfaces();
@@ -881,7 +881,24 @@ const server = http.createServer(async (req, res) => {
     // Server info (LAN mode detection for frontend)
     else if (url.pathname === '/api/server-info' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: LAN_MODE ? getLanIP() : null, port: PORT }));
+      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: getLanIP(), port: PORT }));
+    }
+    // Toggle LAN mode (re-bind server live)
+    else if (url.pathname === '/api/toggle-lan' && req.method === 'POST') {
+      const newMode = !LAN_MODE;
+      const lanIP = getLanIP();
+      // Send response before re-binding
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT }));
+      // Re-bind server
+      server.close(() => {
+        LAN_MODE = newMode;
+        server.listen(PORT, newMode ? '0.0.0.0' : '127.0.0.1', () => {
+          console.log(newMode
+            ? `  LAN mode enabled — http://${lanIP}:${PORT}`
+            : '  LAN mode disabled — localhost only');
+        });
+      });
     }
     // Templates API
     else if (url.pathname === '/api/templates' && req.method === 'GET') {

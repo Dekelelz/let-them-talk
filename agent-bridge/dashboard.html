@@ -1203,6 +1203,168 @@
     margin-left: 6px;
   }
 
+  /* ===== PHONE ACCESS MODAL ===== */
+  .phone-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: all 0.15s;
+    color: var(--text-dim);
+  }
+  .phone-btn:hover { border-color: var(--border-light); color: var(--text); }
+  .phone-btn.lan-active { border-color: var(--green); color: var(--green); }
+
+  .phone-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 500;
+    align-items: center;
+    justify-content: center;
+  }
+  .phone-modal-overlay.open { display: flex; }
+
+  .phone-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    width: 360px;
+    max-width: 90vw;
+    text-align: center;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    position: relative;
+  }
+
+  .phone-modal h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .phone-modal-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+  }
+
+  .phone-modal-close {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .phone-modal-close:hover { color: var(--text); background: var(--surface-2); }
+
+  .lan-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+  }
+
+  .lan-toggle-label {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .lan-toggle-switch {
+    width: 44px;
+    height: 24px;
+    background: var(--surface-3);
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.2s;
+  }
+  .lan-toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: all 0.2s;
+  }
+  .lan-toggle-switch.on { background: var(--green); }
+  .lan-toggle-switch.on::after { left: 23px; background: #fff; }
+
+  .phone-url-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+
+  .phone-url-text {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: monospace;
+    color: var(--accent);
+    word-break: break-all;
+    margin-bottom: 8px;
+  }
+
+  .phone-url-copy {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .phone-url-copy:hover { background: var(--accent); color: #fff; }
+
+  .phone-qr {
+    margin: 16px auto 8px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px;
+    display: inline-block;
+  }
+
+  .phone-qr img {
+    width: 180px;
+    height: 180px;
+    display: block;
+  }
+
+  .phone-qr-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  .phone-off-state {
+    padding: 20px 0;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .phone-off-state p { margin-bottom: 8px; }
+
   /* ===== TASKS KANBAN ===== */
   .tasks-area {
     flex: 1;
@@ -2158,6 +2320,7 @@
     <button class="notif-toggle" id="notif-toggle" onclick="toggleNotifications()" title="Browser notifications">&#x1f514;</button>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light theme">&#x1f319;</button>
     <button class="sound-toggle" id="sound-toggle" onclick="toggleSound()" title="Toggle notification sound">&#x1f508;</button>
+    <button class="phone-btn" id="phone-btn" onclick="openPhoneAccess()" title="Phone access (LAN)">&#x1F4F1;</button>
     <div class="connection"><span class="conn-dot"></span><span id="conn-label">Live</span><span class="conn-detail" id="conn-detail"></span></div>
     <button class="btn" onclick="enterReplay()" id="replay-header-btn" title="Replay conversation">Replay</button>
     <div style="position:relative;display:inline-block">
@@ -2168,6 +2331,20 @@
       </div>
     </div>
     <button class="btn btn-danger" onclick="doReset()">Reset</button>
+  </div>
+</div>
+
+<!-- PHONE ACCESS MODAL -->
+<div class="phone-modal-overlay" id="phone-modal-overlay" onclick="if(event.target===this)closePhoneModal()">
+  <div class="phone-modal">
+    <button class="phone-modal-close" onclick="closePhoneModal()">&times;</button>
+    <h3>Phone Access</h3>
+    <div class="phone-modal-sub">Monitor agents from your phone on the same WiFi</div>
+    <div class="lan-toggle-row">
+      <span class="lan-toggle-label">LAN Access</span>
+      <button class="lan-toggle-switch" id="lan-toggle" onclick="toggleLanMode()"></button>
+    </div>
+    <div id="phone-modal-content"></div>
   </div>
 </div>
 
@@ -4339,19 +4516,113 @@ function sendBrowserNotification(msg) {
 
 updateNotifBtn();
 
-// ==================== LAN MODE BADGE ====================
+// ==================== PHONE / LAN ACCESS ====================
 
-(function checkLanMode() {
-  fetch('/api/server-info').then(function(r) { return r.json(); }).then(function(info) {
-    if (info.lan_mode && info.lan_ip) {
+var lanState = { lan_mode: false, lan_ip: null, port: 3000 };
+
+function fetchLanState() {
+  return fetch('/api/server-info').then(function(r) { return r.json(); }).then(function(info) {
+    lanState = info;
+    updateLanUI();
+    return info;
+  });
+}
+
+function updateLanUI() {
+  // Update phone button indicator
+  var phoneBtn = document.getElementById('phone-btn');
+  phoneBtn.classList.toggle('lan-active', lanState.lan_mode);
+
+  // Update LAN badge in connection area
+  var existing = document.getElementById('lan-badge');
+  if (lanState.lan_mode && lanState.lan_ip) {
+    if (!existing) {
       var conn = document.querySelector('.connection');
       var badge = document.createElement('span');
       badge.className = 'lan-badge';
-      badge.textContent = 'LAN ' + info.lan_ip + ':' + info.port;
+      badge.id = 'lan-badge';
       conn.appendChild(badge);
+      existing = badge;
     }
-  }).catch(function() {});
-})();
+    existing.textContent = 'LAN ' + lanState.lan_ip + ':' + lanState.port;
+  } else if (existing) {
+    existing.remove();
+  }
+
+  // Update toggle switch
+  var toggle = document.getElementById('lan-toggle');
+  if (toggle) toggle.classList.toggle('on', lanState.lan_mode);
+}
+
+function openPhoneAccess() {
+  fetchLanState().then(function() {
+    renderPhoneModalContent();
+    document.getElementById('phone-modal-overlay').classList.add('open');
+  });
+}
+
+function closePhoneModal() {
+  document.getElementById('phone-modal-overlay').classList.remove('open');
+}
+
+function toggleLanMode() {
+  var toggle = document.getElementById('lan-toggle');
+  toggle.classList.add('on'); // optimistic
+  var content = document.getElementById('phone-modal-content');
+  content.innerHTML = '<div class="phone-off-state"><p>Switching...</p></div>';
+
+  fetch('/api/toggle-lan', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(info) {
+      lanState = info;
+      updateLanUI();
+      // Small delay to let server re-bind
+      setTimeout(function() { renderPhoneModalContent(); }, 500);
+    })
+    .catch(function() {
+      // Server is re-binding, retry after a moment
+      setTimeout(function() {
+        fetchLanState().then(function() { renderPhoneModalContent(); });
+      }, 1000);
+    });
+}
+
+function renderPhoneModalContent() {
+  var el = document.getElementById('phone-modal-content');
+  if (!lanState.lan_mode) {
+    el.innerHTML =
+      '<div class="phone-off-state">' +
+        '<p>LAN access is <strong>off</strong>. Toggle it on to access the dashboard from your phone.</p>' +
+        '<p style="font-size:11px;color:var(--text-muted)">This opens port ' + lanState.port + ' to your local network.</p>' +
+      '</div>';
+    return;
+  }
+
+  var url = 'http://' + lanState.lan_ip + ':' + lanState.port;
+  var qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=58a6ff&bgcolor=0d1117&data=' + encodeURIComponent(url);
+
+  el.innerHTML =
+    '<div class="phone-url-box">' +
+      '<div class="phone-url-text">' + escapeHtml(url) + '</div>' +
+      '<button class="phone-url-copy" onclick="copyPhoneUrl()">Copy URL</button>' +
+    '</div>' +
+    '<div class="phone-qr">' +
+      '<img src="' + qrUrl + '" alt="QR Code" onerror="this.parentElement.style.display=\'none\'">' +
+    '</div>' +
+    '<div class="phone-qr-hint">Scan with your phone camera on the same WiFi</div>';
+}
+
+function copyPhoneUrl() {
+  var url = 'http://' + lanState.lan_ip + ':' + lanState.port;
+  navigator.clipboard.writeText(url).then(function() {
+    var btn = document.querySelector('.phone-url-copy');
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy URL'; }, 1500);
+  });
+}
+
+// Init LAN state
+fetchLanState();
 
 // ==================== AGENT LAUNCHER ====================
 
