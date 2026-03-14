@@ -1668,6 +1668,10 @@
       <input class="search-input" id="search-input" placeholder="Search messages...  ( / )" oninput="onSearch()">
       <span class="search-count" id="search-count"></span>
     </div>
+    <div class="pinned-section" id="pinned-section">
+      <div class="pinned-header" onclick="togglePinnedSection()"><span>Pinned Messages</span><span class="pinned-toggle" id="pinned-toggle">Hide</span></div>
+      <div id="pinned-list"></div>
+    </div>
     <div class="messages-area" id="messages"></div>
     <div class="tasks-area" id="tasks-area"></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
@@ -2215,11 +2219,8 @@ function renderMessages(messages) {
       lastFrom = '';
       lastTo = '';
     } else if (m.type === 'handoff') {
-      var isBookmarked = !!bookmarks[m.id];
-      var starClass = isBookmarked ? ' active' : '';
-      var starChar = isBookmarked ? '&#x2605;' : '&#x2606;';
       html += '<div class="message handoff-msg' + newClass + '">' +
-        '<button class="bookmark-btn' + starClass + '" onclick="toggleBookmark(\'' + m.id + '\')" title="Bookmark">' + starChar + '</button>' +
+        buildMsgActions(m.id) +
         '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
         '<div class="msg-body">' +
           '<div class="handoff-banner">&#x1f91d; Handoff: ' + escapeHtml(m.from) + ' &rarr; ' + escapeHtml(m.to) + '</div>' +
@@ -2229,18 +2230,16 @@ function renderMessages(messages) {
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+          buildReactionsHtml(m.id) +
         '</div></div>';
       lastFrom = m.from;
       lastTo = m.to;
     } else if (m.type === 'file_share') {
-      var isBookmarked = !!bookmarks[m.id];
-      var starClass = isBookmarked ? ' active' : '';
-      var starChar = isBookmarked ? '&#x2605;' : '&#x2606;';
       var fileMeta = m.file || {};
       var fileName = fileMeta.name || 'file';
       var fileSize = fileMeta.size ? (fileMeta.size > 1024 ? Math.round(fileMeta.size / 1024) + ' KB' : fileMeta.size + ' B') : '';
       html += '<div class="message' + newClass + '">' +
-        '<button class="bookmark-btn' + starClass + '" onclick="toggleBookmark(\'' + m.id + '\')" title="Bookmark">' + starChar + '</button>' +
+        buildMsgActions(m.id) +
         '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
@@ -2252,16 +2251,13 @@ function renderMessages(messages) {
           '</div>' +
           '<div class="file-meta"><span class="file-icon">&#x1f4c4;</span>' + escapeHtml(fileName) + '<span class="file-size">' + fileSize + '</span></div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+          buildReactionsHtml(m.id) +
         '</div></div>';
       lastFrom = m.from;
       lastTo = m.to;
     } else {
-      var isBookmarked = !!bookmarks[m.id];
-      var starClass = isBookmarked ? ' active' : '';
-      var starChar = isBookmarked ? '&#x2605;' : '&#x2606;';
-
       html += '<div class="message' + newClass + groupClass + '">' +
-        '<button class="bookmark-btn' + starClass + '" onclick="toggleBookmark(\'' + m.id + '\')" title="Bookmark">' + starChar + '</button>' +
+        buildMsgActions(m.id) +
         '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
@@ -2272,6 +2268,7 @@ function renderMessages(messages) {
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
+          buildReactionsHtml(m.id) +
         '</div></div>';
       lastFrom = m.from;
       lastTo = m.to;
@@ -2339,6 +2336,115 @@ function onSearch() {
   lastMessageCount = 0;
   renderMessages(cachedHistory);
 }
+
+// ==================== REACTIONS ====================
+
+var REACTION_EMOJIS = ['\ud83d\udc4d', '\u2705', '\u2764\ufe0f', '\ud83e\udd14', '\ud83d\udd25'];
+var reactions = {};
+var pins = {};
+
+function loadReactions() {
+  try { var s = localStorage.getItem('ltt-reactions'); if (s) reactions = JSON.parse(s); } catch (e) {}
+  try { var p = localStorage.getItem('ltt-pins'); if (p) pins = JSON.parse(p); } catch (e) {}
+}
+
+function saveReactions() {
+  try { localStorage.setItem('ltt-reactions', JSON.stringify(reactions)); } catch (e) {}
+}
+
+function savePins() {
+  try { localStorage.setItem('ltt-pins', JSON.stringify(pins)); } catch (e) {}
+}
+
+function toggleReactPicker(msgId) {
+  var el = document.getElementById('react-' + msgId);
+  if (el) el.classList.toggle('open');
+}
+
+function addReaction(msgId, emoji) {
+  if (!reactions[msgId]) reactions[msgId] = {};
+  if (reactions[msgId][emoji]) {
+    delete reactions[msgId][emoji];
+    if (Object.keys(reactions[msgId]).length === 0) delete reactions[msgId];
+  } else {
+    reactions[msgId][emoji] = 1;
+  }
+  saveReactions();
+  // Close picker
+  var el = document.getElementById('react-' + msgId);
+  if (el) el.classList.remove('open');
+  renderMessages(cachedHistory);
+}
+
+function togglePin(msgId) {
+  if (pins[msgId]) { delete pins[msgId]; } else { pins[msgId] = true; }
+  savePins();
+  renderMessages(cachedHistory);
+  renderPinnedMessages();
+}
+
+function renderPinnedMessages() {
+  var section = document.getElementById('pinned-section');
+  var list = document.getElementById('pinned-list');
+  var pinIds = Object.keys(pins);
+  if (!pinIds.length) {
+    section.classList.remove('visible');
+    return;
+  }
+  section.classList.add('visible');
+  var html = '';
+  for (var i = 0; i < cachedHistory.length; i++) {
+    var m = cachedHistory[i];
+    if (!pins[m.id]) continue;
+    var color = getColor(m.from);
+    html += '<div class="message">' +
+      '<div class="msg-avatar" style="background:' + color + ';width:20px;height:20px;font-size:9px">' + initial(m.from) + '</div>' +
+      '<div class="msg-body">' +
+        '<div class="msg-header"><span class="msg-from" style="color:' + color + ';font-size:11px">' + escapeHtml(m.from) + '</span></div>' +
+        '<div class="msg-content">' + escapeHtml(m.content.substring(0, 120)) + (m.content.length > 120 ? '...' : '') + '</div>' +
+      '</div></div>';
+  }
+  list.innerHTML = html;
+}
+
+var pinnedExpanded = true;
+function togglePinnedSection() {
+  pinnedExpanded = !pinnedExpanded;
+  document.getElementById('pinned-list').style.display = pinnedExpanded ? '' : 'none';
+  document.getElementById('pinned-toggle').textContent = pinnedExpanded ? 'Hide' : 'Show';
+}
+
+function buildMsgActions(msgId) {
+  var isBookmarked = !!bookmarks[msgId];
+  var isPinned = !!pins[msgId];
+  var starChar = isBookmarked ? '\u2605' : '\u2606';
+  var pinChar = isPinned ? '\ud83d\udccc' : '\ud83d\udccc';
+  var starClass = isBookmarked ? ' active' : '';
+  var pinClass = isPinned ? ' active' : '';
+
+  return '<div class="msg-actions">' +
+    '<button class="msg-action-btn" onclick="toggleReactPicker(\'' + msgId + '\')" title="React">&#x1f600;</button>' +
+    '<button class="msg-action-btn' + pinClass + '" onclick="togglePin(\'' + msgId + '\')" title="Pin">\ud83d\udccc</button>' +
+    '<button class="msg-action-btn' + starClass + '" onclick="toggleBookmark(\'' + msgId + '\')" title="Bookmark">' + starChar + '</button>' +
+    '<div class="react-picker" id="react-' + msgId + '">' +
+      REACTION_EMOJIS.map(function(e) { return '<button class="react-emoji" onclick="addReaction(\'' + msgId + '\',\'' + e + '\')">' + e + '</button>'; }).join('') +
+    '</div>' +
+  '</div>';
+}
+
+function buildReactionsHtml(msgId) {
+  if (!reactions[msgId]) return '';
+  var emojis = Object.keys(reactions[msgId]);
+  if (!emojis.length) return '';
+  var html = '<div class="msg-reactions">';
+  for (var i = 0; i < emojis.length; i++) {
+    html += '<span class="reaction-chip" onclick="addReaction(\'' + msgId + '\',\'' + emojis[i] + '\')">' + emojis[i] + '</span>';
+  }
+  html += '</div>';
+  return html;
+}
+
+loadReactions();
 
 // ==================== THEME ====================
 
@@ -2773,6 +2879,7 @@ function poll() {
     renderAgentStats();
     renderThreads(cachedHistory);
     if (!replayActive) renderMessages(cachedHistory);
+    renderPinnedMessages();
     renderBookmarksSidebar();
     updateTypingIndicator(cachedAgents);
     if (activeView === 'tasks') fetchTasks();
