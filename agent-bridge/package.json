@@ -1,7 +1,7 @@
 {
   "name": "let-them-talk",
   "version": "2.0.0",
-  "description": "Let Them Talk — MCP message broker for Claude Code inter-agent communication with web dashboard",
+  "description": "MCP message broker + web dashboard for inter-agent communication. Let AI CLI agents talk to each other.",
   "main": "server.js",
   "bin": {
     "agent-bridge": "./cli.js",
@@ -11,15 +11,34 @@
     "start": "node server.js",
     "dashboard": "node dashboard.js"
   },
+  "files": [
+    "server.js",
+    "dashboard.js",
+    "dashboard.html",
+    "cli.js"
+  ],
   "keywords": [
     "mcp",
     "claude",
     "claude-code",
+    "gemini-cli",
+    "codex-cli",
     "agent",
     "multi-agent",
     "communication",
-    "message-broker"
+    "message-broker",
+    "ai-agents",
+    "let-them-talk"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Dekelelz/let-them-talk.git"
+  },
+  "homepage": "https://github.com/Dekelelz/let-them-talk",
+  "bugs": {
+    "url": "https://github.com/Dekelelz/let-them-talk/issues"
+  },
+  "author": "Dekelelz",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
