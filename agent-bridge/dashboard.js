@@ -6,7 +6,12 @@ const os = require('os');
 const { spawn } = require('child_process');
 
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
-let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true';
+const LAN_STATE_FILE = path.join(__dirname, '.lan-mode');
+let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true' || (fs.existsSync(LAN_STATE_FILE) && fs.readFileSync(LAN_STATE_FILE, 'utf8').trim() === 'true');
+
+function persistLanMode() {
+  try { fs.writeFileSync(LAN_STATE_FILE, LAN_MODE ? 'true' : 'false'); } catch {}
+}
 
 function getLanIP() {
   const interfaces = os.networkInterfaces();
@@ -945,6 +950,7 @@ const server = http.createServer(async (req, res) => {
       const newMode = !LAN_MODE;
       const lanIP = getLanIP();
       LAN_MODE = newMode;
+      persistLanMode();
       // Send response first
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT }));
@@ -1062,7 +1068,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.0');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.3.1');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {
