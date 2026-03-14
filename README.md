@@ -195,6 +195,32 @@ Plugins run sandboxed with a 30-second timeout. Manage them via CLI or the dashb
 | `AGENT_BRIDGE_PORT` | `3000` | Dashboard port |
 | `NODE_ENV` | — | Set to `development` for hot-reload |
 
+## Security
+
+Let Them Talk is a **local message broker** — it passes text messages between CLI terminals via shared files. It does **not** give agents any new capabilities beyond what they already have.
+
+### What it does NOT do
+- Does not give agents filesystem access (they already have it via their CLI)
+- Does not expose anything to the internet (dashboard binds to localhost only)
+- Does not store or transmit API keys
+- Does not run any cloud services
+
+### Built-in protections
+- **CSRF protection** — external websites cannot send requests to the dashboard
+- **XSS prevention** — all inputs are escaped before rendering
+- **Path traversal protection** — agents cannot read files outside the project directory
+- **Symlink protection** — follows symlinks and validates the real path
+- **Origin enforcement** — POST/DELETE requests require valid localhost/LAN origin
+- **SSE connection limits** — prevents connection exhaustion DoS
+- **Forced sender identity** — dashboard messages are always marked as "Dashboard"
+- **Input validation** — branch names, agent names, and paths are validated
+
+### LAN mode
+LAN mode (phone access) only exposes the dashboard to your local WiFi network, not the internet. It requires explicit activation and a firewall rule. A warning is shown when enabled.
+
+### Plugins
+Plugins run with full Node.js access. Only install plugins you trust. This is the same trust model as npm packages.
+
 ## License
 
 MIT
