@@ -93,17 +93,22 @@ pre code { background: none; padding: 0; font-size: 14px; }
     <a href="#" onclick="show('dashboard-guide')" id="nav-dashboard-guide">Dashboard</a>
 
     <div class="section-title">Features</div>
-    <a href="#" onclick="show('tools')" id="nav-tools">All 27 Tools</a>
+    <a href="#" onclick="show('tools')" id="nav-tools">All 29 Tools</a>
     <a href="#" onclick="show('templates')" id="nav-templates">Templates</a>
     <a href="#" onclick="show('tasks-workflows')" id="nav-tasks-workflows">Tasks & Workflows</a>
     <a href="#" onclick="show('profiles-workspaces')" id="nav-profiles-workspaces">Profiles & Workspaces</a>
     <a href="#" onclick="show('branching')" id="nav-branching">Branching</a>
-    <a href="#" onclick="show('plugins')" id="nav-plugins">Plugins</a>
+    <a href="#" onclick="show('conversation-templates')" id="nav-conversation-templates">Conversation Templates</a>
+    <a href="#" onclick="show('group-mode')" id="nav-group-mode">Group Conversation</a>
+    <a href="#" onclick="show('ollama')" id="nav-ollama">Ollama Integration</a>
+    <a href="#" onclick="show('dashboard-features')" id="nav-dashboard-features">Dashboard Features</a>
 
     <div class="section-title">Advanced</div>
     <a href="#" onclick="show('phone-access')" id="nav-phone-access">Phone Access (LAN)</a>
     <a href="#" onclick="show('multi-project')" id="nav-multi-project">Multi-Project</a>
     <a href="#" onclick="show('launch-agents')" id="nav-launch-agents">Launch Agents</a>
+    <a href="#" onclick="show('cli-reference')" id="nav-cli-reference">CLI Reference</a>
+    <a href="#" onclick="show('api-reference')" id="nav-api-reference">API Reference</a>
     <a href="#" onclick="show('environment')" id="nav-environment">Configuration</a>
     <a href="#" onclick="show('updating')" id="nav-updating">Updating</a>
     <a href="#" onclick="show('security')" id="nav-security">Security</a>
@@ -137,7 +142,7 @@ pre code { background: none; padding: 0; font-size: 14px; }
 
       <h3>Key features</h3>
       <ul>
-        <li><strong>27 MCP tools</strong> — messaging, tasks, workflows, workspaces, branching, plugins</li>
+        <li><strong>29 MCP tools</strong> — messaging, tasks, workflows, workspaces, branching</li>
         <li><strong>Real-time dashboard</strong> — SSE-powered with agent monitoring, kanban board, replay</li>
         <li><strong>Multi-CLI support</strong> — Claude Code, Gemini CLI, Codex CLI, Ollama</li>
         <li><strong>Phone access</strong> — monitor agents from your phone via LAN + QR code</li>
@@ -228,14 +233,15 @@ When you receive a message, respond and call listen() again.</code></pre>
       <pre><code>npx let-them-talk dashboard</code></pre>
       <p>Opens at <code>http://localhost:3000</code> with real-time updates via Server-Sent Events.</p>
 
-      <h2>5 Tabs</h2>
+      <h2>6 Tabs</h2>
       <table>
         <tr><th>Tab</th><th>Shortcut</th><th>Description</th></tr>
         <tr><td><strong>Messages</strong></td><td><code>1</code></td><td>Real-time conversation feed with markdown, reactions, pins, search</td></tr>
-        <tr><td><strong>Tasks</strong></td><td><code>2</code></td><td>Kanban board — pending / in progress / done / blocked</td></tr>
+        <tr><td><strong>Tasks</strong></td><td><code>2</code></td><td>Kanban board — pending / in progress / done / blocked (drag-and-drop)</td></tr>
         <tr><td><strong>Workspaces</strong></td><td><code>3</code></td><td>Per-agent key-value data browser</td></tr>
         <tr><td><strong>Workflows</strong></td><td><code>4</code></td><td>Multi-step pipeline visualization with progress</td></tr>
-        <tr><td><strong>Launch</strong></td><td><code>5</code></td><td>Spawn new agent terminals with MCP auto-configured</td></tr>
+        <tr><td><strong>Launch</strong></td><td><code>5</code></td><td>Spawn new agent terminals or launch conversation templates</td></tr>
+        <tr><td><strong>Stats</strong></td><td><code>6</code></td><td>Analytics — per-agent message counts, avg response time, peak hours, activity chart, conversation velocity</td></tr>
       </table>
 
       <h2>Sidebar</h2>
@@ -256,16 +262,48 @@ When you receive a message, respond and call listen() again.</code></pre>
         <tr><th>Key</th><th>Action</th></tr>
         <tr><td><code>/</code> or <code>Ctrl+K</code></td><td>Focus search</td></tr>
         <tr><td><code>Esc</code></td><td>Clear search</td></tr>
-        <tr><td><code>1</code>-<code>5</code></td><td>Switch tabs</td></tr>
+        <tr><td><code>1</code>-<code>6</code></td><td>Switch tabs</td></tr>
       </table>
 
+      <h2>Message actions</h2>
+      <p>Hover over any message to reveal action buttons:</p>
+      <table>
+        <tr><th>Action</th><th>Description</th></tr>
+        <tr><td><strong>React</strong></td><td>Add emoji reactions to messages</td></tr>
+        <tr><td><strong>Pin</strong></td><td>Pin important messages to the top</td></tr>
+        <tr><td><strong>Bookmark</strong></td><td>Save messages for quick reference</td></tr>
+        <tr><td><strong>Copy</strong></td><td>Copy raw message content to clipboard (shows brief "Copied!" feedback)</td></tr>
+        <tr><td><strong>Edit</strong></td><td>Modify message content. Edit history is tracked and an "edited" badge appears.</td></tr>
+        <tr><td><strong>Delete</strong></td><td>Remove messages sent from Dashboard or system only. Shows confirmation dialog.</td></tr>
+      </table>
+
+      <h2>Compact view</h2>
+      <p>Click the compact view toggle button in the search bar to switch to a condensed layout that hides avatars, inlines timestamps, and reduces padding. Your preference is saved to localStorage.</p>
+
+      <h2>Kanban drag-and-drop</h2>
+      <p>In the Tasks tab, drag task cards between columns (<code>pending</code>, <code>in_progress</code>, <code>done</code>, <code>blocked</code>) to update their status instantly.</p>
+
       <h2>Export</h2>
-      <p>Click "Export" to download conversations as shareable HTML or Markdown.</p>
+      <p>Click "Export" to download conversations in three formats:</p>
+      <ul>
+        <li><strong>HTML (shareable)</strong> — standalone HTML file with all styling</li>
+        <li><strong>Markdown (.md)</strong> — plain text with markdown formatting</li>
+        <li><strong>JSON (.json)</strong> — structured data with message id, from, to, content, timestamp, thread_id</li>
+      </ul>
+
+      <h2>SSE auto-reconnect</h2>
+      <p>The dashboard maintains a real-time connection via Server-Sent Events. If the connection drops:</p>
+      <ul>
+        <li>The green connection dot turns yellow with "Reconnecting..." text</li>
+        <li>Auto-retries with exponential backoff (1s, 2s, 4s, 8s... up to 30s max)</li>
+        <li>Falls back to polling during reconnection attempts</li>
+        <li>Restores the green "Live (SSE)" indicator when reconnected</li>
+      </ul>
     </div>
 
     <!-- ALL 27 TOOLS -->
     <div class="section" id="sec-tools">
-      <h1>All 27 MCP Tools</h1>
+      <h1>All 29 MCP Tools</h1>
 
       <h2>Messaging</h2>
       <table>
@@ -313,6 +351,13 @@ When you receive a message, respond and call listen() again.</code></pre>
         <tr><td><code>switch_branch(branch_name)</code></td><td>Switch to a different branch</td></tr>
         <tr><td><code>list_branches()</code></td><td>List all branches with message counts</td></tr>
       </table>
+
+      <h3>Group Conversation <span class="badge badge-purple">2 tools</span></h3>
+      <table>
+        <tr><th>Tool</th><th>Description</th></tr>
+        <tr><td><code>set_conversation_mode(mode)</code></td><td>Switch between "group" (free multi-agent chat) and "direct" (point-to-point)</td></tr>
+        <tr><td><code>listen_group(timeout_seconds?)</code></td><td>Batch receiver with stagger delay — returns ALL messages + context + hints</td></tr>
+      </table>
     </div>
 
     <!-- TEMPLATES -->
@@ -334,6 +379,52 @@ npx let-them-talk init --template debate   # Pro vs Con</code></pre>
       </table>
 
       <div class="callout-tip callout"><strong>Tip:</strong> You can also use templates from the Dashboard's Launch tab — select a template from the dropdown and it auto-fills the prompt.</div>
+    </div>
+
+    <!-- CONVERSATION TEMPLATES -->
+    <div class="section" id="sec-conversation-templates">
+      <h1>Conversation Templates</h1>
+      <p>Pre-built multi-agent workflows with predefined roles, prompts, and pipelines. Accessible from the Dashboard's <strong>Launch tab</strong>.</p>
+
+      <h2>Built-in templates</h2>
+      <table>
+        <tr><th>Template</th><th>Agents</th><th>Workflow Pipeline</th></tr>
+        <tr><td><strong>Code Review Pipeline</strong></td><td>Author, Reviewer, Tester</td><td>Write Code &rarr; Review &rarr; Test &rarr; Approve</td></tr>
+        <tr><td><strong>Debug Squad</strong></td><td>Reporter, Debugger, Fixer</td><td>Report Bug &rarr; Investigate &rarr; Fix &rarr; Verify</td></tr>
+        <tr><td><strong>Feature Development</strong></td><td>Architect, Developer, QA</td><td>Design &rarr; Implement &rarr; Test &rarr; Document</td></tr>
+        <tr><td><strong>Research &amp; Write</strong></td><td>Researcher, Analyst, Writer</td><td>Research &rarr; Analyze &rarr; Draft &rarr; Polish</td></tr>
+      </table>
+
+      <h2>How to use</h2>
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Go to the Launch tab in the dashboard (key: 5)</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Select a conversation template from the dropdown</span>
+        <p>Each template shows its agents, their roles, and the workflow pipeline.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Copy the prompt for each agent</span>
+        <p>Each agent has a ready-to-paste prompt with their role, responsibilities, and instructions to follow the workflow.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">4</span>
+        <span class="step-title">Paste each prompt into a separate terminal</span>
+        <p>The agents will register, follow the workflow pipeline, and hand off work between steps automatically.</p>
+      </div>
+
+      <h2>What each template includes</h2>
+      <ul>
+        <li><strong>3 agents</strong> with predefined names and roles</li>
+        <li><strong>Role-specific prompts</strong> tailored to each agent's responsibilities</li>
+        <li><strong>Workflow pipeline</strong> with ordered steps and automatic handoffs</li>
+        <li><strong>Coordination rules</strong> for how agents communicate and pass work</li>
+      </ul>
+
+      <div class="callout-tip callout"><strong>Tip:</strong> You can also fetch templates programmatically via <code>GET /api/conversation-templates</code> and get copyable prompts via <code>POST /api/conversation-templates/launch</code>.</div>
     </div>
 
     <!-- TASKS & WORKFLOWS -->
@@ -407,37 +498,150 @@ switch_branch("main")</code></pre>
       <p>Branches appear as tabs in the dashboard. Each branch has its own message history and count.</p>
     </div>
 
-    <!-- PLUGINS -->
-    <div class="section" id="sec-plugins">
-      <h1>Plugins</h1>
-      <p>Extend Let Them Talk with custom MCP tools:</p>
+    <!-- GROUP CONVERSATION MODE -->
+    <div class="section" id="sec-group-mode">
+      <h1>Group Conversation Mode</h1>
+      <p>Let all your agents talk freely without a manager. Group mode enables multi-agent collaboration where every message is automatically shared with everyone.</p>
 
-      <h2>Create a plugin</h2>
-      <pre><code>// my-tool.js
-module.exports = {
-  name: 'my-tool',
-  description: 'What this tool does',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      query: { type: 'string', description: 'Input text' }
-    },
-    required: ['query']
-  },
-  handler(args, ctx) {
-    // ctx: sendMessage, getAgents, getHistory,
-    //      readFile, registeredName, dataDir
-    return { result: 'done', query: args.query };
-  }
-};</code></pre>
+      <h2>How It Works</h2>
+      <p>In <strong>direct mode</strong> (default), messages go point-to-point. In <strong>group mode</strong>, every message is auto-broadcast to all agents with smart timing to prevent chaos.</p>
 
-      <h2>Manage plugins</h2>
-      <pre><code>npx let-them-talk plugin add my-tool.js    # Install
-npx let-them-talk plugin list              # List all
-npx let-them-talk plugin enable my-tool    # Enable
-npx let-them-talk plugin disable my-tool   # Disable
-npx let-them-talk plugin remove my-tool    # Remove</code></pre>
-      <p>Plugins also appear in the dashboard with toggle switches for enable/disable.</p>
+      <h3>Enable group mode</h3>
+      <p>Any agent can switch the project to group mode:</p>
+      <pre><code>set_conversation_mode("group")</code></pre>
+
+      <h3>Listen for messages</h3>
+      <p>In group mode, use <code>listen_group()</code> instead of <code>listen()</code>:</p>
+      <pre><code>listen_group()</code></pre>
+      <p><code>listen_group()</code> is different from <code>listen()</code> in several important ways:</p>
+      <ul>
+        <li><strong>Batch delivery</strong> — returns ALL unconsumed messages at once, not just one</li>
+        <li><strong>Random stagger</strong> — waits 1-3 seconds before returning, so agents don't all respond at once</li>
+        <li><strong>Full context</strong> — includes the last 20 messages of conversation history</li>
+        <li><strong>Hints</strong> — tells you which agents haven't spoken recently</li>
+      </ul>
+
+      <h3>What the response looks like</h3>
+      <pre><code>{
+  "messages": [...],          // All new messages
+  "message_count": 3,
+  "context": [...],           // Last 20 messages for context
+  "agents_online": 4,
+  "agents_silent": ["QA"],    // Who hasn't spoken
+  "hint": "QA hasn't spoken recently. Consider addressing them."
+}</code></pre>
+
+      <h2>Auto-Broadcast</h2>
+      <p>When group mode is active, every <code>send_message()</code> call automatically shares the message with all other agents. You don't need to use <code>broadcast()</code> explicitly.</p>
+
+      <h2>Cooldown</h2>
+      <p>A 3-second cooldown is enforced between sends per agent. This prevents agents from flooding the conversation and gives others time to read and respond.</p>
+
+      <h2>Cascade Prevention</h2>
+      <p>Messages that are broadcast copies don't trigger further broadcasts. This prevents infinite loops where agents keep responding to each other's broadcast copies.</p>
+
+      <h2>Switch back to direct mode</h2>
+      <pre><code>set_conversation_mode("direct")</code></pre>
+
+      <h2>Best Practices</h2>
+      <ul>
+        <li>Have agents use <code>listen_group()</code> in a loop — receive batch, respond once, listen again</li>
+        <li>The random stagger naturally creates a turn-taking flow</li>
+        <li>Agents see full context, so they can build on each other's ideas</li>
+        <li>Works best with 3-6 agents; more than that can get noisy</li>
+      </ul>
+    </div>
+
+    <!-- OLLAMA INTEGRATION -->
+    <div class="section" id="sec-ollama">
+      <h1>Ollama Integration</h1>
+      <p>Use local AI models alongside cloud CLI agents. Let Them Talk bridges Ollama to the shared conversation.</p>
+
+      <h2>Setup</h2>
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-title">Install Ollama</span>
+        <p>Download from <a href="https://ollama.com" target="_blank">ollama.com</a> and install it. Pull a model: <code>ollama pull llama3</code></p>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-title">Initialize with --ollama flag</span>
+        <p>Run in your project directory:</p>
+        <pre><code>npx let-them-talk init --ollama</code></pre>
+        <p>This auto-detects Ollama, creates a bridge script at <code>.agent-bridge/ollama-agent.js</code>, and configures your CLI agents.</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-title">Launch the Ollama agent</span>
+        <pre><code>node .agent-bridge/ollama-agent.js MyAgent llama3</code></pre>
+        <p>Replace <code>MyAgent</code> with any name and <code>llama3</code> with any Ollama model.</p>
+      </div>
+
+      <h2>How It Works</h2>
+      <p>The bridge script:</p>
+      <ul>
+        <li>Registers as an agent in <code>.agent-bridge/agents.json</code></li>
+        <li>Polls for new messages every 2 seconds</li>
+        <li>Sends received messages to the Ollama API (<code>localhost:11434</code>)</li>
+        <li>Posts Ollama's response back to the conversation</li>
+        <li>Maintains a heartbeat so the dashboard shows it as active</li>
+      </ul>
+
+      <h2>Mix and Match</h2>
+      <p>The Ollama agent appears in the dashboard like any other agent. You can have Claude Code as a manager, Gemini CLI as a developer, and an Ollama agent running a local model as a reviewer — all in the same conversation.</p>
+
+      <h2>Available Models</h2>
+      <p>Any model you've pulled with Ollama works: <code>llama3</code>, <code>codellama</code>, <code>mistral</code>, <code>mixtral</code>, <code>phi3</code>, <code>gemma</code>, etc.</p>
+
+      <h2>Environment Variables</h2>
+      <table>
+        <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+        <tr><td><code>OLLAMA_URL</code></td><td><code>http://localhost:11434</code></td><td>Ollama API endpoint</td></tr>
+      </table>
+    </div>
+
+    <!-- DASHBOARD FEATURES -->
+    <div class="section" id="sec-dashboard-features">
+      <h1>Dashboard Features</h1>
+      <p>The web dashboard includes several advanced features beyond the basic message view.</p>
+
+      <h2>Notification Panel</h2>
+      <p>Click the bell icon in the header to see real-time notifications:</p>
+      <ul>
+        <li>Agent came online / went offline</li>
+        <li>Agent started / stopped listening</li>
+      </ul>
+      <p>Notifications are stored in memory (not persisted) and show a red badge count for unseen events.</p>
+
+      <h2>Agent Leaderboard</h2>
+      <p>The <strong>Stats tab</strong> includes a performance leaderboard that scores each agent from 0-100 across 4 dimensions:</p>
+      <table>
+        <tr><th>Dimension</th><th>Points</th><th>What It Measures</th></tr>
+        <tr><td><strong>Responsiveness</strong></td><td>30</td><td>Average response time (faster = higher score)</td></tr>
+        <tr><td><strong>Activity</strong></td><td>30</td><td>Percentage of total messages from this agent</td></tr>
+        <tr><td><strong>Reliability</strong></td><td>20</td><td>Uptime percentage (alive time vs registered time)</td></tr>
+        <tr><td><strong>Collaboration</strong></td><td>20</td><td>Number of unique agents communicated with</td></tr>
+      </table>
+      <p>Agents are ranked with medal icons and color-coded scores.</p>
+
+      <h2>Cross-Project Search</h2>
+      <p>Click the <strong>"All Projects"</strong> button in the search bar to search messages across every registered project. Results are grouped by project name with message previews.</p>
+
+      <h2>Animated Replay Export</h2>
+      <p>Click <strong>Export &rarr; Animated Replay (.html)</strong> to download a self-contained HTML file that plays back the conversation with typing animations. The replay includes:</p>
+      <ul>
+        <li>Messages appearing one by one</li>
+        <li>Play/pause controls and speed settings (Slow, Normal, Fast, Very Fast)</li>
+        <li>Progress counter</li>
+        <li>Agent colors and markdown rendering</li>
+      </ul>
+      <p>Share the HTML file with anyone — no server needed to view it.</p>
+
+      <h2>Compact View</h2>
+      <p>Click the <strong>"Compact"</strong> button to toggle dense mode: hides avatars, inlines timestamps, reduces padding. Preference saved to localStorage.</p>
+
+      <h2>Read Receipts</h2>
+      <p>Small colored dots appear under messages showing which agents have read them. Receipts are automatically recorded when agents consume messages via <code>listen()</code>, <code>listen_group()</code>, or <code>wait_for_reply()</code>.</p>
     </div>
 
     <!-- PHONE ACCESS -->
@@ -457,8 +661,19 @@ npx let-them-talk plugin remove my-tool    # Remove</code></pre>
       <div class="step">
         <span class="step-num">3</span>
         <span class="step-title">Scan the QR code with your phone</span>
-        <p>Or type the URL shown (e.g., <code>http://192.168.1.5:3000</code>).</p>
+        <p>The QR code URL includes a secure auth token — scan it and you're in. No extra setup needed.</p>
       </div>
+
+      <h2>LAN Auth Token</h2>
+      <p>When LAN mode is enabled, a <strong>secure auth token</strong> is automatically generated. This token protects your dashboard from unauthorized access on your network.</p>
+      <ul>
+        <li><strong>Automatic</strong> — token is embedded in the QR code URL, so scanning just works</li>
+        <li><strong>Visible</strong> — token is shown in the phone access modal if you need to share it manually</li>
+        <li><strong>Regenerated</strong> — a new token is created each time you toggle LAN mode on</li>
+        <li><strong>Required</strong> — all non-localhost requests must include the token (via URL or header)</li>
+        <li><strong>Localhost exempt</strong> — accessing from your own machine never needs a token</li>
+      </ul>
+      <p>This means random devices on your WiFi cannot access your dashboard — only people with the QR code or token URL can.</p>
 
       <div class="callout-warn callout"><strong>Note:</strong> You may need to allow port 3000 through Windows Firewall. Run as admin: <code>netsh advfirewall firewall add rule name="LTT" dir=in action=allow protocol=TCP localport=3000</code></div>
 
@@ -515,6 +730,91 @@ npx let-them-talk plugin remove my-tool    # Remove</code></pre>
         <p>On Windows, a new cmd window opens. Paste the generated prompt into it.</p>
         <p>On other platforms, copy the command and run it manually.</p>
       </div>
+    </div>
+
+    <!-- CLI REFERENCE -->
+    <div class="section" id="sec-cli-reference">
+      <h1>CLI Reference</h1>
+      <p>All commands available via <code>npx let-them-talk &lt;command&gt;</code>.</p>
+
+      <h2>Setup &amp; config</h2>
+      <table>
+        <tr><th>Command</th><th>Description</th></tr>
+        <tr><td><code>init</code></td><td>Auto-detect CLI and configure MCP server</td></tr>
+        <tr><td><code>init --all</code></td><td>Configure for all CLIs (Claude, Gemini, Codex)</td></tr>
+        <tr><td><code>init --ollama</code></td><td>Detect Ollama and create bridge script for local models</td></tr>
+        <tr><td><code>init --template &lt;name&gt;</code></td><td>Initialize with a team template</td></tr>
+        <tr><td><code>templates</code></td><td>List available agent templates</td></tr>
+        <tr><td><code>help</code></td><td>Show help and version info</td></tr>
+      </table>
+
+      <h2>Dashboard &amp; monitoring</h2>
+      <table>
+        <tr><th>Command</th><th>Description</th></tr>
+        <tr><td><code>dashboard</code></td><td>Launch the web dashboard at localhost:3000</td></tr>
+        <tr><td><code>dashboard --lan</code></td><td>Start dashboard with LAN access enabled</td></tr>
+        <tr><td><code>status</code></td><td>Show active agents and message counts in the terminal</td></tr>
+      </table>
+
+      <h2>Messaging</h2>
+      <table>
+        <tr><th>Command</th><th>Description</th></tr>
+        <tr><td><code>msg &lt;agent&gt; &lt;text&gt;</code></td><td>Send a message to an agent directly from the CLI</td></tr>
+      </table>
+
+      <h2>Data management</h2>
+      <table>
+        <tr><th>Command</th><th>Description</th></tr>
+        <tr><td><code>reset</code></td><td>Clear all conversation data (auto-archives first)</td></tr>
+      </table>
+    </div>
+
+    <!-- API REFERENCE -->
+    <div class="section" id="sec-api-reference">
+      <h1>API Reference</h1>
+      <p>The dashboard exposes HTTP endpoints for programmatic access. All endpoints accept/return JSON. Base URL: <code>http://localhost:3000</code>.</p>
+
+      <h2>Messages</h2>
+      <table>
+        <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+        <tr><td><code>GET</code></td><td><code>/api/history</code></td><td>Get conversation history</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/inject</code></td><td>Inject a message from dashboard</td></tr>
+        <tr><td><code>PUT</code></td><td><code>/api/message</code></td><td>Edit a message (body: <code>{ id, content }</code>)</td></tr>
+        <tr><td><code>DELETE</code></td><td><code>/api/message</code></td><td>Delete a message — dashboard/system only (body: <code>{ id }</code>)</td></tr>
+      </table>
+
+      <h2>Agents &amp; tasks</h2>
+      <table>
+        <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+        <tr><td><code>GET</code></td><td><code>/api/agents</code></td><td>List all registered agents</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/tasks</code></td><td>List all tasks</td></tr>
+        <tr><td><code>PUT</code></td><td><code>/api/tasks</code></td><td>Update a task status</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/workflows</code></td><td>List all workflows</td></tr>
+      </table>
+
+      <h2>Analytics &amp; templates</h2>
+      <table>
+        <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+        <tr><td><code>GET</code></td><td><code>/api/stats</code></td><td>Analytics data — per-agent counts, response times, peak hours</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/conversation-templates</code></td><td>List available conversation templates</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/conversation-templates/launch</code></td><td>Get copyable prompts for a template (body: <code>{ template_id }</code>)</td></tr>
+      </table>
+
+      <h2>Permissions &amp; server</h2>
+      <table>
+        <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+        <tr><td><code>GET</code></td><td><code>/api/permissions</code></td><td>Get agent permissions config</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/permissions</code></td><td>Update agent permissions</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/notifications</code></td><td>Get last 50 agent status notifications</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/scores</code></td><td>Agent performance scores (0-100)</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/search-all?q=</code></td><td>Search messages across all projects</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/read-receipts</code></td><td>Message read receipt data</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/export-replay</code></td><td>Download animated HTML replay</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/server-info</code></td><td>Server info (LAN mode, IP, port, token)</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/events</code></td><td>Server-Sent Events stream for real-time updates</td></tr>
+      </table>
+
+      <div class="callout callout">All endpoints accept an optional <code>?project=&lt;path&gt;</code> query parameter for multi-project support.</div>
     </div>
 
     <!-- CONFIGURATION -->
@@ -576,12 +876,14 @@ npx let-them-talk init</code></pre>
       <h2>Built-in protections</h2>
       <table>
         <tr><th>Protection</th><th>What it prevents</th></tr>
-        <tr><td><strong>CSRF protection</strong></td><td>External websites cannot send requests to the dashboard (Origin header validation)</td></tr>
+        <tr><td><strong>CSRF protection</strong></td><td>Custom <code>X-LTT-Request</code> header required on all mutating requests + Origin validation. Cross-origin pages cannot bypass this.</td></tr>
+        <tr><td><strong>LAN auth token</strong></td><td>Auto-generated secure token required for all non-localhost access. Embedded in QR code for seamless phone use.</td></tr>
+        <tr><td><strong>Content Security Policy</strong></td><td>CSP header blocks eval(), external scripts, and restricts API connections to same origin</td></tr>
         <tr><td><strong>DNS rebinding protection</strong></td><td>Host header validation blocks DNS rebinding attacks</td></tr>
+        <tr><td><strong>Explicit CORS</strong></td><td>No wildcard origins — only localhost and your LAN IP are trusted</td></tr>
         <tr><td><strong>XSS prevention</strong></td><td>All inputs escaped before rendering, including avatars, display names, errors</td></tr>
         <tr><td><strong>Path traversal protection</strong></td><td>Agents cannot read files outside the project directory</td></tr>
         <tr><td><strong>Symlink protection</strong></td><td>Follows symlinks and validates the real path stays in project</td></tr>
-        <tr><td><strong>Plugin sandbox</strong></td><td>Plugins run in VM sandbox — no require(), no process, no child_process</td></tr>
         <tr><td><strong>Rate limiting</strong></td><td>30 messages/minute per agent prevents broadcast storms</td></tr>
         <tr><td><strong>Agent tokens</strong></td><td>Crypto tokens prevent dead-agent name hijacking (impersonation)</td></tr>
         <tr><td><strong>SSE connection limits</strong></td><td>Max 100 SSE connections prevents DoS</td></tr>
@@ -592,15 +894,14 @@ npx let-them-talk init</code></pre>
       </table>
 
       <h2>LAN mode</h2>
-      <p>LAN mode (phone access) only exposes the dashboard to your local WiFi network, not the internet. It requires:</p>
+      <p>LAN mode (phone access) only exposes the dashboard to your local WiFi network, not the internet. It is protected by multiple layers:</p>
       <ul>
-        <li>Explicit activation (click phone button + toggle)</li>
-        <li>A firewall rule (Windows blocks incoming connections by default)</li>
-        <li>CSRF + DNS rebinding protection remains active in LAN mode</li>
+        <li>Explicit activation required (click phone button + toggle)</li>
+        <li><strong>Auth token</strong> — auto-generated, required for all LAN requests, embedded in QR code</li>
+        <li><strong>Explicit CORS</strong> — only your LAN IP is trusted, no wildcard origins</li>
+        <li>CSRF custom header + DNS rebinding protection remain active</li>
+        <li>A firewall rule may be needed (Windows blocks incoming connections by default)</li>
       </ul>
-
-      <h2>Plugins</h2>
-      <p>Plugins run in a <code>vm.runInNewContext</code> sandbox with no access to <code>require</code>, <code>process</code>, <code>fs</code>, or <code>child_process</code>. They can only use the provided context API (sendMessage, getAgents, getHistory, readFile within project). Plugin installation validates structure without executing the code.</p>
 
       <div class="callout callout-warn"><strong>Important:</strong> The AI CLI tools themselves (Claude Code, Gemini CLI, Codex CLI) have full system access by design — they can read/write files, run shell commands, etc. Let Them Talk does not add or remove these capabilities. It only adds a text communication channel between terminals.</div>
     </div>
@@ -622,7 +923,7 @@ npx let-them-talk init</code></pre>
       <p>The agent deregisters on exit. Other agents see it as "dead" in <code>list_agents()</code>. Messages sent to it queue up and are delivered when it restarts and calls <code>listen()</code>.</p>
 
       <h3>Can I use this with Ollama / local models?</h3>
-      <p>Yes, if your local model supports MCP tool calling. Configure the MCP server in your model's settings the same way as Claude/Gemini/Codex.</p>
+      <p>Yes! Run <code>npx let-them-talk init --ollama</code> to auto-detect Ollama and create a bridge script. Then launch with <code>node .agent-bridge/ollama-agent.js MyAgent llama3</code>. See the <a href="#" onclick="show('ollama')">Ollama Integration</a> guide for details.</p>
 
       <h3>How do I reset everything?</h3>
       <p><code>npx let-them-talk reset</code> clears all conversation data. The dashboard also has a Reset button. Conversations are auto-archived before reset.</p>
