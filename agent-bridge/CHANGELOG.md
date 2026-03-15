@@ -1,5 +1,34 @@
 # Changelog
 
+## [3.6.0] - 2026-03-16
+
+### Added — 3D Virtual Office (v1 Preview)
+
+> **Early preview — expect major changes tomorrow.** This is the foundational release. The 3D office is under active development and most of what you see will evolve significantly in the next update.
+
+- **Modular 3D engine** — extracted ~3,000 lines from dashboard.html into 14 organized ES modules under `office/` (constants, state, scene, environment, character, appearance, hair, face, accessories, animation, agents, monitors, mod-loader, index)
+- **Expanded office** — floor widened from 22x16 to 28x16 with right wing, dividing wall with LOUNGE archway
+- **Dressing room** — mirror, raised platform with glow ring, privacy partitions, coat hooks, warm spotlight
+- **Rest area** — 3 colored beanbags, circular rug, side table with coffee mug, warm ambient lighting
+- **Click-to-command** — click any agent character to open a floating command menu with 4 actions:
+  - *Dressing Room* — agent walks to dressing room, character designer opens, walks back on save
+  - *Go Rest* — agent walks to rest area beanbags, falls asleep with ZZZ animations
+  - *Back to Work* — agent wakes up and returns to desk
+  - *Edit Profile* — opens character designer directly
+- **Character designer panel** — 480px slide-in panel with live 3D rotating preview, 5 tabs (Body/Hair/Face/Outfit/Accessories), item cards for hair styles/eye types/glasses/headwear/neckwear, color pickers, randomize button
+- **Accessory system** — glasses (round/square/sunglasses), headwear (beanie/cap/headphones/headband), neckwear (tie/bowtie/lanyard) with per-item color customization
+- **`update_profile` MCP tool extended** — agents can now self-customize with `glasses`, `glasses_color`, `headwear`, `headwear_color`, `neckwear`, `neckwear_color` fields
+- **Mod system infrastructure** — GLB/GLTF asset pipeline with manifest validation, poly count limits, bounding box checks, material sanitization, file type allowlist (.glb/.json/.png only), `/api/mods` CRUD endpoints, built-in procedural item manifests
+
+### Removed
+- ~1,100 lines of dead 2D isometric office code
+
+### Security
+- `/office/*` and `/mods/*` static routes with path traversal protection
+- Mod file type allowlist blocks all executable formats (.js/.html/.wasm/.sh/.bat/.exe)
+- Built-in mods cannot be deleted via API
+- GLB magic bytes validation (server + client)
+
 ## [3.5.0] - 2026-03-15
 
 ### Added — Group Conversation Mode
