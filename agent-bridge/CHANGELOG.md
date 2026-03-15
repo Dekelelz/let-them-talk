@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.4.1] - 2026-03-15
+
+### Added
+- **File-level mutex** — in-memory promise queue per file for serializing edit/delete operations
+- **Agent permissions enforcement** — `canSendTo()` checks in `send_message` and `broadcast`, `can_read` filtering in `get_history` and message delivery
+- **Read receipts** — auto-recorded when agents consume messages, visible as agent-initial dots under messages in dashboard
+
+### Security
+- HTTP 500 responses now return generic error instead of raw `err.message` (prevents filesystem path leaks)
+- `/api/discover` changed from GET to POST (now under CSRF protection)
+- `workspace_read`/`workspace_list` validate agent name parameter with regex
+- `get_history` filters results by agent's `can_read` permissions
+- `read_receipts.json` and `permissions.json` added to both MCP and dashboard reset cleanup
+- Dashboard workspace API regex aligned with server (`[a-zA-Z0-9_-]`)
+
+### Fixed
+- `toolWaitForReply` missing `markAsRead` calls (read receipts not recorded)
+- `toolBroadcast` bypassing permission checks entirely
+- `toolReset` not cleaning up `permissions.json` and `read_receipts.json`
+
 ## [3.4.0] - 2026-03-15
 
 ### Added — Dashboard Features

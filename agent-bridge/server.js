@@ -273,14 +273,61 @@ function autoCompact() {
   } catch {}
 }
 
+// --- Permissions helpers ---
+const PERMISSIONS_FILE = path.join(DATA_DIR, 'permissions.json');
+
+function getPermissions() {
+  if (!fs.existsSync(PERMISSIONS_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(PERMISSIONS_FILE, 'utf8')); } catch { return {}; }
+}
+
+function canSendTo(sender, recipient) {
+  const perms = getPermissions();
+  // If no permissions set, allow everything (backward compatible)
+  if (!perms[sender] && !perms[recipient]) return true;
+  // Check sender's write permissions
+  if (perms[sender] && perms[sender].can_write_to) {
+    const allowed = perms[sender].can_write_to;
+    if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(recipient)) return false;
+  }
+  // Check recipient's read permissions
+  if (perms[recipient] && perms[recipient].can_read) {
+    const allowed = perms[recipient].can_read;
+    if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(sender)) return false;
+  }
+  return true;
+}
+
+// --- Read receipts helpers ---
+const READ_RECEIPTS_FILE = path.join(DATA_DIR, 'read_receipts.json');
+
+function getReadReceipts() {
+  if (!fs.existsSync(READ_RECEIPTS_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(READ_RECEIPTS_FILE, 'utf8')); } catch { return {}; }
+}
+
+function markAsRead(agentName, messageId) {
+  ensureDataDir();
+  const receipts = getReadReceipts();
+  if (!receipts[messageId]) receipts[messageId] = {};
+  receipts[messageId][agentName] = new Date().toISOString();
+  fs.writeFileSync(READ_RECEIPTS_FILE, JSON.stringify(receipts, null, 2));
+}
+
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
 function getUnconsumedMessages(agentName, fromFilter = null) {
   const messages = readJsonl(getMessagesFile(currentBranch));
   const consumed = getConsumedIds(agentName);
+  const perms = getPermissions();
   return messages.filter(m => {
     if (m.to !== agentName) return false;
     if (consumed.has(m.id)) return false;
     if (fromFilter && m.from !== fromFilter && !m.system) return false;
+    // Permission check: skip messages from senders this agent can't read
+    if (perms[agentName] && perms[agentName].can_read) {
+      const allowed = perms[agentName].can_read;
+      if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(m.from) && !m.system) return false;
+    }
     return true;
   });
 }
@@ -520,6 +567,11 @@ function toolSendMessage(content, to = null, reply_to = null) {
     return { error: 'Cannot send a message to yourself' };
   }
 
+  // Permission check
+  if (!canSendTo(registeredName, to)) {
+    return { error: `Permission denied: you are not allowed to send messages to "${to}"` };
+  }
+
   const sizeErr = validateContentSize(content);
   if (sizeErr) return sizeErr;
 
@@ -583,7 +635,9 @@ function toolBroadcast(content) {
 
   ensureDataDir();
   const ids = [];
+  const skipped = [];
   for (const to of otherAgents) {
+    if (!canSendTo(registeredName, to)) { skipped.push(to); continue; }
     messageSeq++;
     const msg = {
       id: generateId(),
@@ -600,7 +654,9 @@ function toolBroadcast(content) {
   }
   touchActivity();
 
-  return { success: true, sent_to: ids, recipient_count: otherAgents.length };
+  const result = { success: true, sent_to: ids, recipient_count: ids.length };
+  if (skipped.length > 0) result.skipped = skipped;
+  return result;
 }
 
 async function toolWaitForReply(timeoutSeconds = 300, from = null) {
@@ -618,6 +674,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
     const consumed = getConsumedIds(registeredName);
     consumed.add(msg.id);
     saveConsumedIds(registeredName, consumed);
+    markAsRead(registeredName, msg.id);
     const _mf1 = getMessagesFile(currentBranch);
     if (fs.existsSync(_mf1)) {
       lastReadOffset = fs.statSync(_mf1).size;
@@ -647,6 +704,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
 
       consumed.add(msg.id);
       saveConsumedIds(registeredName, consumed);
+      markAsRead(registeredName, msg.id);
       touchActivity();
       setListening(false);
       return buildMessageResponse(msg, consumed);
@@ -718,6 +776,7 @@ async function toolListen(from = null) {
     const consumed = getConsumedIds(registeredName);
     consumed.add(msg.id);
     saveConsumedIds(registeredName, consumed);
+    markAsRead(registeredName, msg.id);
     const _mfL1 = getMessagesFile(currentBranch);
     if (fs.existsSync(_mfL1)) {
       lastReadOffset = fs.statSync(_mfL1).size;
@@ -750,6 +809,7 @@ async function toolListen(from = null) {
 
         consumed.add(msg.id);
         saveConsumedIds(registeredName, consumed);
+        markAsRead(registeredName, msg.id);
         touchActivity();
         setListening(false);
         return buildMessageResponse(msg, consumed);
@@ -776,6 +836,7 @@ async function toolListenCodex(from = null) {
     const consumed = getConsumedIds(registeredName);
     consumed.add(msg.id);
     saveConsumedIds(registeredName, consumed);
+    markAsRead(registeredName, msg.id);
     const _mfC1 = getMessagesFile(currentBranch);
     if (fs.existsSync(_mfC1)) {
       lastReadOffset = fs.statSync(_mfC1).size;
@@ -804,6 +865,7 @@ async function toolListenCodex(from = null) {
 
       consumed.add(msg.id);
       saveConsumedIds(registeredName, consumed);
+      markAsRead(registeredName, msg.id);
       touchActivity();
       setListening(false);
       return buildMessageResponse(msg, consumed);
@@ -823,6 +885,16 @@ function toolGetHistory(limit = 50, thread_id = null) {
   let history = readJsonl(getHistoryFile(currentBranch));
   if (thread_id) {
     history = history.filter(m => m.thread_id === thread_id || m.id === thread_id);
+  }
+  // Filter by permissions — only show messages involving this agent or permitted senders
+  if (registeredName) {
+    const perms = getPermissions();
+    if (perms[registeredName] && perms[registeredName].can_read) {
+      const allowed = perms[registeredName].can_read;
+      if (allowed !== '*' && Array.isArray(allowed)) {
+        history = history.filter(m => m.from === registeredName || m.to === registeredName || allowed.includes(m.from));
+      }
+    }
   }
   const recent = history.slice(-limit);
   const acks = getAcks();
@@ -1109,8 +1181,8 @@ function toolReset() {
       }
     }
   }
-  // Remove profiles, workflows, branches, plugins
-  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PLUGINS_FILE]) {
+  // Remove profiles, workflows, branches, plugins, permissions, read receipts
+  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PLUGINS_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE]) {
     if (fs.existsSync(f)) fs.unlinkSync(f);
   }
   // Remove workspaces dir
@@ -1186,6 +1258,9 @@ function toolWorkspaceWrite(key, content) {
 function toolWorkspaceRead(key, agent) {
   if (!registeredName) return { error: 'You must call register() first' };
   const targetAgent = agent || registeredName;
+  if (targetAgent !== registeredName && !/^[a-zA-Z0-9_-]{1,20}$/.test(targetAgent)) {
+    return { error: 'Invalid agent name' };
+  }
 
   const ws = getWorkspace(targetAgent);
   if (key) {
@@ -1203,6 +1278,7 @@ function toolWorkspaceRead(key, agent) {
 function toolWorkspaceList(agent) {
   const agents = getAgents();
   if (agent) {
+    if (!/^[a-zA-Z0-9_-]{1,20}$/.test(agent)) return { error: 'Invalid agent name' };
     const ws = getWorkspace(agent);
     return { agent, keys: Object.keys(ws).map(k => ({ key: k, size: ws[k].content.length, updated_at: ws[k].updated_at })) };
   }
@@ -2021,7 +2097,7 @@ async function main() {
   loadPlugins();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.4.0 running (' + (27 + loadedPlugins.length) + ' tools)');
+  console.error('Agent Bridge MCP server v3.4.1 running (' + (27 + loadedPlugins.length) + ' tools)');
 }
 
 main().catch(console.error);

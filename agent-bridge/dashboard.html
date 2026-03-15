@@ -850,6 +850,27 @@
 
   .msg-content a:hover { text-decoration: underline; }
 
+  /* ===== READ RECEIPTS ===== */
+  .read-receipts {
+    display: flex;
+    gap: 2px;
+    margin-top: 4px;
+    align-items: center;
+  }
+  .read-receipt-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--surface-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--text-dim);
+    cursor: default;
+  }
+
   /* ===== MESSAGE INPUT ===== */
   .msg-input-bar {
     border-top: 1px solid var(--border);
@@ -2821,7 +2842,7 @@
   </div>
 </div>
 <div class="app-footer">
-  <span>Let Them Talk v3.4.0</span>
+  <span>Let Them Talk v3.4.1</span>
 </div>
 <div class="profile-popup" id="profile-popup" onclick="event.stopPropagation()">
   <div class="profile-popup-header">
@@ -3448,6 +3469,7 @@ function renderMessages(messages) {
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
           buildReactionsHtml(m.id) +
+          buildReadReceipts(m.id) +
         '</div></div>';
       lastFrom = m.from;
       lastTo = m.to;
@@ -3469,6 +3491,7 @@ function renderMessages(messages) {
           '<div class="file-meta"><span class="file-icon">&#x1f4c4;</span>' + escapeHtml(fileName) + '<span class="file-size">' + fileSize + '</span></div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
           buildReactionsHtml(m.id) +
+          buildReadReceipts(m.id) +
         '</div></div>';
       lastFrom = m.from;
       lastTo = m.to;
@@ -3486,6 +3509,7 @@ function renderMessages(messages) {
           '</div>' +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
           buildReactionsHtml(m.id) +
+          buildReadReceipts(m.id) +
         '</div></div>';
       lastFrom = m.from;
       lastTo = m.to;
@@ -3580,6 +3604,33 @@ function onSearch() {
   searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
   lastMessageCount = 0;
   renderMessages(cachedHistory);
+}
+
+// ==================== READ RECEIPTS ====================
+
+var cachedReadReceipts = {};
+
+function fetchReadReceipts() {
+  var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+  fetch('/api/read-receipts' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    cachedReadReceipts = data || {};
+  }).catch(function() {});
+}
+
+function buildReadReceipts(msgId) {
+  var receipts = cachedReadReceipts[msgId];
+  if (!receipts) return '';
+  var agents = Object.keys(receipts);
+  if (!agents.length) return '';
+  var html = '<div class="read-receipts">';
+  for (var i = 0; i < agents.length; i++) {
+    var agent = agents[i];
+    var time = receipts[agent] ? new Date(receipts[agent]).toLocaleTimeString() : '';
+    var color = getColor(agent);
+    html += '<div class="read-receipt-dot" style="background:' + color + '" title="Read by ' + escapeHtml(agent) + (time ? ' at ' + time : '') + '">' + initial(agent) + '</div>';
+  }
+  html += '</div>';
+  return html;
 }
 
 // ==================== REACTIONS ====================
@@ -4774,6 +4825,7 @@ function poll() {
     if (activeView === 'workspaces') fetchWorkspaces();
     if (activeView === 'workflows') fetchWorkflows();
     if (activeView === 'stats') fetchStats();
+    fetchReadReceipts();
   }).catch(function(e) {
     console.error('Poll failed:', e);
     document.getElementById('conn-detail').textContent = ' ERR: ' + e.message;
@@ -4918,7 +4970,7 @@ function discoverProjects() {
   resultsEl.style.display = 'block';
   resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">Scanning...</div>';
 
-  fetch('/api/discover').then(function(r) { return r.json(); }).then(function(found) {
+  fetch('/api/discover', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(found) {
     if (!found.length) {
       resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">No new projects found (all discovered projects already added)</div>';
       setTimeout(function() { resultsEl.style.display = 'none'; }, 3000);

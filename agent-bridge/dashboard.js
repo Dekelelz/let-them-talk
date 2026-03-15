@@ -5,6 +5,15 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 
+// --- File-level mutex for serializing read-then-write operations ---
+const lockMap = new Map();
+function withFileLock(filePath, fn) {
+  const prev = lockMap.get(filePath) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  lockMap.set(filePath, next.then(() => {}, () => {}));
+  return next;
+}
+
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
 const LAN_STATE_FILE = path.join(__dirname, '.lan-mode');
 let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true' || (fs.existsSync(LAN_STATE_FILE) && fs.readFileSync(LAN_STATE_FILE, 'utf8').trim() === 'true');
@@ -299,7 +308,7 @@ function apiStats(query) {
 function apiReset(query) {
   const projectPath = query.get('project') || null;
   const dataDir = resolveDataDir(projectPath);
-  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'plugins.json'];
+  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'plugins.json', 'read_receipts.json', 'permissions.json'];
   for (const f of fixedFiles) {
     const p = path.join(dataDir, f);
     if (fs.existsSync(p)) fs.unlinkSync(p);
@@ -734,7 +743,7 @@ function apiLaunchAgent(body) {
 }
 
 // --- v3.4: Message Edit ---
-function apiEditMessage(body, query) {
+async function apiEditMessage(body, query) {
   const projectPath = query.get('project') || null;
   const { id, content } = body;
   if (!id || !content) return { error: 'Missing "id" and/or "content" fields' };
@@ -747,36 +756,17 @@ function apiEditMessage(body, query) {
   let found = false;
   const now = new Date().toISOString();
 
-  // Update in history.jsonl
-  if (fs.existsSync(historyFile)) {
-    const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n').filter(Boolean);
-    const updated = lines.map(line => {
-      try {
-        const msg = JSON.parse(line);
-        if (msg.id === id) {
-          found = true;
-          if (!msg.edit_history) msg.edit_history = [];
-          msg.edit_history.push({ content: msg.content, edited_at: now });
-          msg.content = content;
-          msg.edited = true;
-          msg.edited_at = now;
-          return JSON.stringify(msg);
-        }
-        return line;
-      } catch { return line; }
-    });
-    if (found) fs.writeFileSync(historyFile, updated.join('\n') + '\n');
-  }
-
-  // Also update in messages.jsonl (for agents that haven't consumed yet)
-  if (found && fs.existsSync(messagesFile)) {
-    const raw = fs.readFileSync(messagesFile, 'utf8').trim();
-    if (raw) {
-      const lines = raw.split('\n');
+  // Update in history.jsonl (locked)
+  await withFileLock(historyFile, () => {
+    if (fs.existsSync(historyFile)) {
+      const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n').filter(Boolean);
       const updated = lines.map(line => {
         try {
           const msg = JSON.parse(line);
           if (msg.id === id) {
+            found = true;
+            if (!msg.edit_history) msg.edit_history = [];
+            msg.edit_history.push({ content: msg.content, edited_at: now });
             msg.content = content;
             msg.edited = true;
             msg.edited_at = now;
@@ -785,8 +775,33 @@ function apiEditMessage(body, query) {
           return line;
         } catch { return line; }
       });
-      fs.writeFileSync(messagesFile, updated.join('\n') + '\n');
+      if (found) fs.writeFileSync(historyFile, updated.join('\n') + '\n');
     }
+  });
+
+  // Also update in messages.jsonl (locked independently)
+  if (found) {
+    await withFileLock(messagesFile, () => {
+      if (fs.existsSync(messagesFile)) {
+        const raw = fs.readFileSync(messagesFile, 'utf8').trim();
+        if (raw) {
+          const lines = raw.split('\n');
+          const updated = lines.map(line => {
+            try {
+              const msg = JSON.parse(line);
+              if (msg.id === id) {
+                msg.content = content;
+                msg.edited = true;
+                msg.edited_at = now;
+                return JSON.stringify(msg);
+              }
+              return line;
+            } catch { return line; }
+          });
+          fs.writeFileSync(messagesFile, updated.join('\n') + '\n');
+        }
+      }
+    });
   }
 
   if (!found) return { error: 'Message not found' };
@@ -794,7 +809,7 @@ function apiEditMessage(body, query) {
 }
 
 // --- v3.4: Message Delete ---
-function apiDeleteMessage(body, query) {
+async function apiDeleteMessage(body, query) {
   const projectPath = query.get('project') || null;
   const { id } = body;
   if (!id) return { error: 'Missing "id" field' };
@@ -806,16 +821,28 @@ function apiDeleteMessage(body, query) {
   let found = false;
   let msgFrom = null;
 
-  // Find the message first to check permissions
-  if (fs.existsSync(historyFile)) {
-    const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
-    for (const line of lines) {
-      try {
-        const msg = JSON.parse(line);
-        if (msg.id === id) { found = true; msgFrom = msg.from; break; }
-      } catch {}
+  // Find the message and remove from history.jsonl (locked)
+  await withFileLock(historyFile, () => {
+    if (fs.existsSync(historyFile)) {
+      const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
+      for (const line of lines) {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id === id) { found = true; msgFrom = msg.from; break; }
+        } catch {}
+      }
+
+      if (found) {
+        const allowed = ['Dashboard', 'dashboard', 'system', '__system__'];
+        if (allowed.includes(msgFrom)) {
+          const filtered = lines.filter(line => {
+            try { return JSON.parse(line).id !== id; } catch { return true; }
+          });
+          fs.writeFileSync(historyFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
+        }
+      }
     }
-  }
+  });
 
   if (!found) return { error: 'Message not found' };
 
@@ -825,23 +852,16 @@ function apiDeleteMessage(body, query) {
     return { error: 'Can only delete messages sent from Dashboard or system' };
   }
 
-  // Remove from history.jsonl
-  if (fs.existsSync(historyFile)) {
-    const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
-    const filtered = lines.filter(line => {
-      try { return JSON.parse(line).id !== id; } catch { return true; }
-    });
-    fs.writeFileSync(historyFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
-  }
-
-  // Remove from messages.jsonl
-  if (fs.existsSync(messagesFile)) {
-    const lines = fs.readFileSync(messagesFile, 'utf8').trim().split('\n');
-    const filtered = lines.filter(line => {
-      try { return JSON.parse(line).id !== id; } catch { return true; }
-    });
-    fs.writeFileSync(messagesFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
-  }
+  // Remove from messages.jsonl (locked independently)
+  await withFileLock(messagesFile, () => {
+    if (fs.existsSync(messagesFile)) {
+      const lines = fs.readFileSync(messagesFile, 'utf8').trim().split('\n');
+      const filtered = lines.filter(line => {
+        try { return JSON.parse(line).id !== id; } catch { return true; }
+      });
+      fs.writeFileSync(messagesFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
+    }
+  });
 
   return { success: true, id };
 }
@@ -1121,7 +1141,7 @@ const server = http.createServer(async (req, res) => {
       });
       res.end(html);
     }
-    else if (url.pathname === '/api/discover' && req.method === 'GET') {
+    else if (url.pathname === '/api/discover' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiDiscover()));
     }
@@ -1153,7 +1173,7 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/workspaces' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
       const agentParam = url.searchParams.get('agent');
-      if (agentParam && !/^[a-zA-Z0-9]{1,20}$/.test(agentParam)) {
+      if (agentParam && !/^[a-zA-Z0-9_-]{1,20}$/.test(agentParam)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid agent name' }));
         return;
@@ -1258,14 +1278,14 @@ const server = http.createServer(async (req, res) => {
     // --- v3.4: Message Edit ---
     else if (url.pathname === '/api/message' && req.method === 'PUT') {
       const body = await parseBody(req);
-      const result = apiEditMessage(body, url.searchParams);
+      const result = await apiEditMessage(body, url.searchParams);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
     // --- v3.4: Message Delete ---
     else if (url.pathname === '/api/message' && req.method === 'DELETE') {
       const body = await parseBody(req);
-      const result = apiDeleteMessage(body, url.searchParams);
+      const result = await apiDeleteMessage(body, url.searchParams);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
@@ -1291,6 +1311,12 @@ const server = http.createServer(async (req, res) => {
       const result = apiUpdatePermissions(body, url.searchParams);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
+    }
+    // --- v3.4: Read Receipts ---
+    else if (url.pathname === '/api/read-receipts' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(readJson(filePath('read_receipts.json', projectPath))));
     }
     // Server info (LAN mode detection for frontend)
     else if (url.pathname === '/api/server-info' && req.method === 'GET') {
@@ -1367,8 +1393,9 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Not found' }));
     }
   } catch (err) {
+    console.error('Server error:', err.message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: err.message }));
+    res.end(JSON.stringify({ error: 'Internal server error' }));
   }
 });
 
@@ -1420,7 +1447,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.0');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.1');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {
