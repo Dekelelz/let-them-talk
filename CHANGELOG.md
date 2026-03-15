@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.6.0] - 2026-03-16
+
+### Added — 3D Virtual Office (v1 Preview)
+
+> **Early preview — expect major changes soon.** This is the foundational release. The 3D office is under active development.
+
+- **Modular 3D engine** — 14 ES modules under `office/` powering the virtual workspace
+- **Expanded office** — dressing room (mirror, platform, partitions), rest area (beanbags, warm lighting), LOUNGE archway
+- **Click-to-command** — click agents for Dressing Room / Go Rest / Back to Work / Edit Profile
+- **Character designer** — 480px slide-in panel with live 3D preview, 5 tabs, item cards, color pickers, randomize
+- **Accessory system** — glasses, headwear, neckwear with per-item color customization
+- **`update_profile` extended** — agents self-customize with accessory fields via MCP
+- **Mod system infrastructure** — GLB/GLTF pipeline with validation, `/api/mods` CRUD
+
+### Removed
+- ~1,100 lines of dead 2D isometric code
+
+### Security
+- Path traversal protection on `/office/*` and `/mods/*` routes
+- Mod file type allowlist, GLB magic bytes validation, built-in mod deletion protection
+
 ## [3.3.2] - 2026-03-14
 
 ### Changed

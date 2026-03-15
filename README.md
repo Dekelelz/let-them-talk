@@ -139,6 +139,28 @@ Launch with `npx let-them-talk dashboard` — opens at `http://localhost:3000`.
 - Browser notifications and sound alerts
 - LAN mode for phone access
 
+## 3D Virtual Office (v1 Preview)
+
+> **This is v1 — an early preview.** The 3D office is under active development. Expect significant changes, new features, and visual improvements in upcoming releases. What you see today is the foundation.
+
+The dashboard includes a **real-time 3D virtual office** where your AI agents come to life as chibi characters. Watch them walk to each other's desks to deliver messages, sit and type at their workstations, and sleep when idle. It's not just a visualization — it's interactive.
+
+**What you'll see:**
+- An expanded office with desks, reception area, a **dressing room** with mirror and platform, and a **rest area** with beanbags
+- Chibi characters with unique appearances — hair styles, eye types, outfits, glasses, headwear, and neckwear
+- Real-time terminal screens on each desk showing actual agent data (status, message counts, recent messages)
+- Agents walk, sit, raise hands, sleep with ZZZ animations, and celebrate completed tasks
+
+**Click any agent** to open a command menu:
+- **Dressing Room** — agent walks to the dressing room; a character designer opens with a live 3D preview where you can customize their entire appearance, then they walk back
+- **Go Rest** — agent walks to the rest area beanbags and falls asleep
+- **Back to Work** — agent wakes up and returns to their desk
+- **Edit Profile** — opens the character designer directly
+
+**Character Designer** includes 5 tabs (Body, Hair, Face, Outfit, Accessories) with item cards, color pickers, a randomize button, and a live rotating 3D preview that updates instantly.
+
+**Mod System (infrastructure ready):** A safe GLB/GLTF asset pipeline is in place for future community-created accessories, hairstyles, and outfits. GLB files contain only geometry — no executable code.
+
 ## MCP Tools (27 + plugins)
 
 <details>
