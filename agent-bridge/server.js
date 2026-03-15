@@ -1994,7 +1994,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.4.3 running (27 tools)');
+  console.error('Agent Bridge MCP server v3.4.4 running (27 tools)');
 }
 
 main().catch(console.error);
