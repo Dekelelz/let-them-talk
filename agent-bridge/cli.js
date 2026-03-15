@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v3.4.2
+  Let Them Talk — Agent Bridge v3.4.3
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 
@@ -23,11 +23,6 @@ function printUsage() {
     npx let-them-talk dashboard         Launch the web dashboard (http://localhost:3000)
     npx let-them-talk dashboard --lan   Launch dashboard accessible on LAN (phone/tablet)
     npx let-them-talk reset             Clear all conversation data
-    npx let-them-talk plugin list       List installed plugins
-    npx let-them-talk plugin add <file> Install a plugin from a .js file
-    npx let-them-talk plugin remove <n> Remove a plugin by name
-    npx let-them-talk plugin enable <n> Enable a plugin
-    npx let-them-talk plugin disable <n> Disable a plugin
     npx let-them-talk msg <agent> <text> Send a message to an agent
     npx let-them-talk status             Show active agents and message count
     npx let-them-talk help               Show this help message
@@ -293,124 +288,6 @@ function showTemplate(templateName) {
   }
 }
 
-function pluginCmd() {
-  const subCmd = process.argv[3];
-  const dataDir = process.env.AGENT_BRIDGE_DATA_DIR || path.join(process.cwd(), '.agent-bridge');
-  const pluginsDir = path.join(dataDir, 'plugins');
-  const pluginsFile = path.join(dataDir, 'plugins.json');
-
-  function getRegistry() {
-    if (!fs.existsSync(pluginsFile)) return [];
-    try { return JSON.parse(fs.readFileSync(pluginsFile, 'utf8')); } catch { return []; }
-  }
-
-  function saveRegistry(reg) {
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(pluginsFile, JSON.stringify(reg, null, 2));
-  }
-
-  switch (subCmd) {
-    case 'list': {
-      const plugins = getRegistry();
-      if (!plugins.length) {
-        console.log('  No plugins installed.');
-        console.log('  Install with: npx let-them-talk plugin add <file.js>');
-        return;
-      }
-      console.log('');
-      console.log('  Installed Plugins');
-      console.log('  =================');
-      for (const p of plugins) {
-        const status = p.enabled !== false ? 'enabled' : 'disabled';
-        console.log('  ' + p.name.padEnd(20) + ' ' + status.padEnd(10) + ' ' + (p.description || ''));
-      }
-      console.log('');
-      break;
-    }
-    case 'add': {
-      const filePath = process.argv[4];
-      if (!filePath) { console.error('  Usage: npx let-them-talk plugin add <file.js>'); process.exit(1); }
-      const absPath = path.resolve(filePath);
-      if (!fs.existsSync(absPath)) { console.error('  File not found: ' + absPath); process.exit(1); }
-
-      // Validate plugin structure without executing it (no require — prevents RCE on install)
-      try {
-        const src = fs.readFileSync(absPath, 'utf8');
-        if (!src.includes('module.exports') || !src.includes('name') || !src.includes('handler')) {
-          console.error('  Plugin must export name, description, and handler (module.exports = { name, handler })');
-          process.exit(1);
-        }
-
-        // Extract plugin name from source using regex (no eval)
-        const nameMatch = src.match(/name\s*:\s*['"]([^'"]+)['"]/);
-        const descMatch = src.match(/description\s*:\s*['"]([^'"]+)['"]/);
-        const pluginName = nameMatch ? nameMatch[1] : path.basename(absPath, '.js');
-        const pluginDesc = descMatch ? descMatch[1] : '';
-
-        if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
-        const destFile = path.join(pluginsDir, path.basename(absPath));
-        fs.copyFileSync(absPath, destFile);
-
-        const reg = getRegistry();
-        if (!reg.find(p => p.name === pluginName)) {
-          reg.push({ name: pluginName, description: pluginDesc, file: path.basename(absPath), enabled: true, added_at: new Date().toISOString() });
-          saveRegistry(reg);
-        }
-        console.log('  Plugin "' + pluginName + '" installed successfully.');
-        console.log('  Restart CLI to load the new tool (runs sandboxed).');
-      } catch (e) {
-        console.error('  Failed to install plugin: ' + e.message);
-        process.exit(1);
-      }
-      break;
-    }
-    case 'remove': {
-      const name = process.argv[4];
-      if (!name) { console.error('  Usage: npx let-them-talk plugin remove <name>'); process.exit(1); }
-      const reg = getRegistry();
-      const plugin = reg.find(p => p.name === name);
-      if (!plugin) { console.error('  Plugin not found: ' + name); process.exit(1); }
-      const newReg = reg.filter(p => p.name !== name);
-      saveRegistry(newReg);
-      if (plugin.file) {
-        const pluginFile = path.resolve(pluginsDir, plugin.file);
-        // Prevent path traversal — only delete files inside pluginsDir
-        if (pluginFile.startsWith(path.resolve(pluginsDir) + path.sep) && fs.existsSync(pluginFile)) {
-          fs.unlinkSync(pluginFile);
-        }
-      }
-      console.log('  Plugin "' + name + '" removed.');
-      break;
-    }
-    case 'enable': {
-      const name = process.argv[4];
-      if (!name) { console.error('  Usage: npx let-them-talk plugin enable <name>'); process.exit(1); }
-      const reg = getRegistry();
-      const plugin = reg.find(p => p.name === name);
-      if (!plugin) { console.error('  Plugin not found: ' + name); process.exit(1); }
-      plugin.enabled = true;
-      saveRegistry(reg);
-      console.log('  Plugin "' + name + '" enabled.');
-      break;
-    }
-    case 'disable': {
-      const name = process.argv[4];
-      if (!name) { console.error('  Usage: npx let-them-talk plugin disable <name>'); process.exit(1); }
-      const reg = getRegistry();
-      const plugin = reg.find(p => p.name === name);
-      if (!plugin) { console.error('  Plugin not found: ' + name); process.exit(1); }
-      plugin.enabled = false;
-      saveRegistry(reg);
-      console.log('  Plugin "' + name + '" disabled.');
-      break;
-    }
-    default:
-      console.error('  Unknown plugin command: ' + (subCmd || ''));
-      console.error('  Available: list, add, remove, enable, disable');
-      process.exit(1);
-  }
-}
-
 function dashboard() {
   if (process.argv.includes('--lan')) {
     process.env.AGENT_BRIDGE_LAN = 'true';
@@ -532,7 +409,7 @@ switch (command) {
     break;
   case 'plugin':
   case 'plugins':
-    pluginCmd();
+    console.log('  Plugins have been removed in v3.4.3. CLI terminals have their own extension systems.');
     break;
   case 'help':
   case '--help':

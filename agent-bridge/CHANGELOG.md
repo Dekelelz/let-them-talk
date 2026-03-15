@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.4.3] - 2026-03-15
+
+### Removed — Plugin System
+- Removed the entire plugin system (`vm.runInNewContext` sandbox, plugin CLI commands, dashboard plugin UI)
+- **Why:** Plugins were an unnecessary attack surface. Node.js `vm` is not a security sandbox — plugins could escape and execute arbitrary OS commands. CLI terminals (Claude Code, Gemini, Codex) have their own extension systems, making our plugins redundant.
+- `npx let-them-talk plugin` now shows a deprecation notice
+- MCP tools reduced from 27 + plugins to 27 (all core tools remain)
+- ~200 lines of code removed from server.js, cli.js, dashboard.js, dashboard.html
+
 ## [3.4.2] - 2026-03-15
 
 ### Security — CSRF Protection

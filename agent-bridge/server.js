@@ -18,8 +18,7 @@ const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
 const WORKFLOWS_FILE = path.join(DATA_DIR, 'workflows.json');
 const WORKSPACES_DIR = path.join(DATA_DIR, 'workspaces');
 const BRANCHES_FILE = path.join(DATA_DIR, 'branches.json');
-const PLUGINS_FILE = path.join(DATA_DIR, 'plugins.json');
-const PLUGINS_DIR = path.join(DATA_DIR, 'plugins');
+// Plugins removed in v3.4.3 — unnecessary attack surface, CLIs have their own extension systems
 
 // In-memory state for this process
 let registeredName = null;
@@ -416,17 +415,6 @@ function getMessagesFile(branch) {
 function getHistoryFile(branch) {
   if (!branch || branch === 'main') return HISTORY_FILE;
   return path.join(DATA_DIR, `branch-${sanitizeName(branch)}-history.jsonl`);
-}
-
-// --- Plugin helpers ---
-
-function getPluginRegistry() {
-  if (!fs.existsSync(PLUGINS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf8')); } catch { return []; }
-}
-
-function savePluginRegistry(plugins) {
-  fs.writeFileSync(PLUGINS_FILE, JSON.stringify(plugins, null, 2));
 }
 
 // --- Tool implementations ---
@@ -1181,8 +1169,8 @@ function toolReset() {
       }
     }
   }
-  // Remove profiles, workflows, branches, plugins, permissions, read receipts
-  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PLUGINS_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE]) {
+  // Remove profiles, workflows, branches, permissions, read receipts
+  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE]) {
     if (fs.existsSync(f)) fs.unlinkSync(f);
   }
   // Remove workspaces dir
@@ -1497,11 +1485,6 @@ const server = new Server(
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const pluginTools = loadedPlugins.map(p => ({
-    name: 'plugin_' + p.name,
-    description: '[Plugin] ' + p.description,
-    inputSchema: p.inputSchema,
-  }));
   return {
     tools: [
       {
@@ -1875,7 +1858,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
-      ...pluginTools,
     ],
   };
 });
@@ -1969,12 +1951,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolListBranches();
         break;
       default:
-        // Check if it's a plugin tool
-        if (name.startsWith('plugin_')) {
-          const pluginName = name.substring(7);
-          result = await executePlugin(pluginName, args);
-          break;
-        }
         return {
           content: [{ type: 'text', text: `Unknown tool: ${name}` }],
           isError: true,
@@ -2014,90 +1990,11 @@ process.on('exit', () => {
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
-// --- Phase 5: Plugin system ---
-
-let loadedPlugins = []; // { name, description, inputSchema, handler }
-
-function loadPlugins() {
-  loadedPlugins = [];
-  if (!fs.existsSync(PLUGINS_DIR)) return;
-  const registry = getPluginRegistry();
-  const enabledNames = new Set(registry.filter(p => p.enabled !== false).map(p => p.name));
-
-  try {
-    const vm = require('vm');
-    const files = fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js'));
-    for (const file of files) {
-      try {
-        const pluginPath = path.join(PLUGINS_DIR, file);
-        const code = fs.readFileSync(pluginPath, 'utf8');
-        // Run plugin in a sandboxed VM context — no require, no process, no child_process
-        const sandbox = { module: { exports: {} }, exports: {}, console: { log: () => {}, error: () => {}, warn: () => {} } };
-        vm.runInNewContext(code, sandbox, { filename: file, timeout: 5000 });
-        const plugin = sandbox.module.exports;
-        if (!plugin.name || !plugin.description || !plugin.handler) {
-          console.error(`Plugin ${file}: missing name, description, or handler`);
-          continue;
-        }
-        if (!enabledNames.has(plugin.name) && enabledNames.size > 0) continue;
-        loadedPlugins.push({
-          name: plugin.name,
-          description: plugin.description,
-          inputSchema: plugin.inputSchema || { type: 'object', properties: {} },
-          handler: plugin.handler,
-        });
-        console.error(`Plugin loaded: ${plugin.name} (sandboxed)`);
-      } catch (e) {
-        console.error(`Plugin ${file} failed to load: ${e.message}`);
-      }
-    }
-  } catch {}
-}
-
-function executePlugin(pluginName, args) {
-  const plugin = loadedPlugins.find(p => p.name === pluginName);
-  if (!plugin) return { error: `Plugin "${pluginName}" not found` };
-
-  const context = {
-    registeredName,
-    sendMessage: (to, content) => toolSendMessage(content, to),
-    getAgents: () => toolListAgents().agents,
-    getHistory: (limit) => toolGetHistory(limit),
-    readFile: (filePath) => {
-      const resolved = path.resolve(filePath);
-      const allowedRoot = path.resolve(process.cwd());
-      let realPath;
-      try { realPath = fs.realpathSync(resolved); } catch { throw new Error('File not found'); }
-      if (!realPath.startsWith(allowedRoot + path.sep) && realPath !== allowedRoot) {
-        throw new Error('File path must be within the project directory');
-      }
-      return fs.readFileSync(realPath, 'utf8');
-    },
-  };
-
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve({ error: 'Plugin execution timed out (30s)' }), 30000);
-    try {
-      const result = plugin.handler(args, context);
-      if (result && typeof result.then === 'function') {
-        result.then(r => { clearTimeout(timeout); resolve(r); }).catch(e => { clearTimeout(timeout); resolve({ error: e.message }); });
-      } else {
-        clearTimeout(timeout);
-        resolve(result);
-      }
-    } catch (e) {
-      clearTimeout(timeout);
-      resolve({ error: e.message });
-    }
-  });
-}
-
 async function main() {
   ensureDataDir();
-  loadPlugins();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.4.2 running (' + (27 + loadedPlugins.length) + ' tools)');
+  console.error('Agent Bridge MCP server v3.4.3 running (27 tools)');
 }
 
 main().catch(console.error);

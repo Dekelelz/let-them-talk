@@ -2572,65 +2572,7 @@
   }
 
   /* ===== v3.0: PLUGINS SECTION ===== */
-  .plugin-card {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
-    margin-bottom: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .plugin-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .plugin-name {
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .plugin-desc {
-    font-size: 10px;
-    color: var(--text-muted);
-  }
-
-  .plugin-toggle {
-    background: var(--surface-3);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    width: 36px;
-    height: 20px;
-    cursor: pointer;
-    position: relative;
-    transition: all 0.2s;
-    flex-shrink: 0;
-  }
-
-  .plugin-toggle.on {
-    background: var(--green-dim);
-    border-color: var(--green);
-  }
-
-  .plugin-toggle::after {
-    content: '';
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--text-dim);
-    top: 2px;
-    left: 2px;
-    transition: all 0.2s;
-  }
-
-  .plugin-toggle.on::after {
-    left: 18px;
-    background: var(--green);
-  }
+  /* Plugins removed in v3.4.3 */
 
   /* ===== v3.0: AVATAR PICKER ===== */
   .avatar-option {
@@ -2758,12 +2700,6 @@
         <div id="activity-heatmap"></div>
       </div>
 
-      <!-- Plugins Section -->
-      <div class="sidebar-section">
-        <div class="sidebar-title"><span>Plugins</span></div>
-        <div id="plugins-list"></div>
-      </div>
-
       <!-- Bookmarks Section -->
       <div class="sidebar-section">
         <div class="sidebar-title">
@@ -2842,7 +2778,7 @@
   </div>
 </div>
 <div class="app-footer">
-  <span>Let Them Talk v3.4.2</span>
+  <span>Let Them Talk v3.4.3</span>
 </div>
 <div class="profile-popup" id="profile-popup" onclick="event.stopPropagation()">
   <div class="profile-popup-header">
@@ -4750,44 +4686,6 @@ function switchBranch(name) {
   poll();
 }
 
-// ==================== v3.0: PLUGINS ====================
-
-function fetchPlugins() {
-  var pq = projectParam();
-  lttFetch('/api/plugins' + pq).then(function(r) { return r.json(); }).then(function(data) {
-    renderPlugins(Array.isArray(data) ? data : []);
-  }).catch(function() {});
-}
-
-function renderPlugins(plugins) {
-  var el = document.getElementById('plugins-list');
-  if (!plugins.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No plugins installed</div>';
-    return;
-  }
-  var html = '';
-  for (var i = 0; i < plugins.length; i++) {
-    var p = plugins[i];
-    var onClass = p.enabled !== false ? ' on' : '';
-    html += '<div class="plugin-card">' +
-      '<div class="plugin-info">' +
-        '<div class="plugin-name">' + escapeHtml(p.name) + '</div>' +
-        '<div class="plugin-desc">' + escapeHtml(p.description || '') + '</div>' +
-      '</div>' +
-      '<div class="plugin-toggle' + onClass + '" onclick="togglePlugin(\'' + escapeHtml(p.name) + '\')"></div>' +
-    '</div>';
-  }
-  el.innerHTML = html;
-}
-
-function togglePlugin(name) {
-  lttFetch('/api/plugins' + projectParam(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'toggle', name: name })
-  }).then(function() { fetchPlugins(); }).catch(function() {});
-}
-
 // ==================== POLLING ====================
 
 function poll() {
@@ -4839,7 +4737,6 @@ function poll() {
     renderBookmarksSidebar();
     fetchActivity();
     fetchBranches();
-    fetchPlugins();
     updateTypingIndicator(cachedAgents);
     if (activeView === 'tasks') fetchTasks();
     if (activeView === 'workspaces') fetchWorkspaces();

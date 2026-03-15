@@ -328,7 +328,7 @@ function apiStats(query) {
 function apiReset(query) {
   const projectPath = query.get('project') || null;
   const dataDir = resolveDataDir(projectPath);
-  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'plugins.json', 'read_receipts.json', 'permissions.json'];
+  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'read_receipts.json', 'permissions.json'];
   for (const f of fixedFiles) {
     const p = path.join(dataDir, f);
     if (fs.existsSync(p)) fs.unlinkSync(p);
@@ -1300,27 +1300,6 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(branches));
     }
-    else if (url.pathname === '/api/plugins' && req.method === 'GET') {
-      const projectPath = url.searchParams.get('project') || null;
-      const pluginsFile = filePath('plugins.json', projectPath);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(fs.existsSync(pluginsFile) ? JSON.parse(fs.readFileSync(pluginsFile, 'utf8')) : []));
-    }
-    else if (url.pathname === '/api/plugins' && req.method === 'POST') {
-      const body = await parseBody(req);
-      const projectPath = url.searchParams.get('project') || null;
-      const pluginsFile = filePath('plugins.json', projectPath);
-      let plugins = [];
-      if (fs.existsSync(pluginsFile)) try { plugins = JSON.parse(fs.readFileSync(pluginsFile, 'utf8')); } catch {}
-      if (body.action === 'toggle' && body.name) {
-        const p = plugins.find(x => x.name === body.name);
-        if (!p) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Plugin not found' })); return; }
-        p.enabled = !p.enabled;
-        fs.writeFileSync(pluginsFile, JSON.stringify(plugins, null, 2));
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
-    }
     else if (url.pathname === '/api/projects' && req.method === 'DELETE') {
       const body = await parseBody(req);
       const result = apiRemoveProject(body);
@@ -1501,7 +1480,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.2');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.3');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {
