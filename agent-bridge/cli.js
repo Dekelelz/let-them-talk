@@ -88,6 +88,7 @@ function setupClaude(serverPath, cwd) {
   mcpConfig.mcpServers['agent-bridge'] = {
     command: 'node',
     args: [serverPath],
+    timeout: 300,
     env: { AGENT_BRIDGE_DATA_DIR: dataDir(cwd) },
   };
 
@@ -120,6 +121,8 @@ function setupGemini(serverPath, cwd) {
   settings.mcpServers['agent-bridge'] = {
     command: 'node',
     args: [serverPath],
+    timeout: 300,
+    trust: true,
     env: { AGENT_BRIDGE_DATA_DIR: dataDir(cwd) },
   };
 
@@ -148,6 +151,7 @@ function setupCodex(serverPath, cwd) {
 [mcp_servers.agent-bridge]
 command = "node"
 args = [${JSON.stringify(serverPath)}]
+timeout = 300
 
 [mcp_servers.agent-bridge.env]
 AGENT_BRIDGE_DATA_DIR = ${JSON.stringify(dataDir(cwd))}
@@ -339,18 +343,21 @@ function init() {
     }
   }
 
-  // Add .agent-bridge/ to .gitignore
+  // Add .agent-bridge/ and MCP config files to .gitignore
+  const gitignoreEntries = ['.agent-bridge/', '.mcp.json', '.codex/', '.gemini/'];
   if (fs.existsSync(gitignorePath)) {
-    const content = fs.readFileSync(gitignorePath, 'utf8');
-    if (!content.includes('.agent-bridge')) {
-      fs.appendFileSync(gitignorePath, '\n# Agent Bridge conversation data\n.agent-bridge/\n');
-      console.log('  [ok] .agent-bridge/ added to .gitignore');
+    let content = fs.readFileSync(gitignorePath, 'utf8');
+    const missing = gitignoreEntries.filter(e => !content.includes(e));
+    if (missing.length) {
+      content += '\n# Agent Bridge (auto-added by let-them-talk init)\n' + missing.join('\n') + '\n';
+      fs.writeFileSync(gitignorePath, content);
+      console.log('  [ok] Added to .gitignore: ' + missing.join(', '));
     } else {
-      console.log('  [ok] .agent-bridge/ already in .gitignore');
+      console.log('  [ok] .gitignore already configured');
     }
   } else {
-    fs.writeFileSync(gitignorePath, '# Agent Bridge conversation data\n.agent-bridge/\n');
-    console.log('  [ok] .gitignore created with .agent-bridge/');
+    fs.writeFileSync(gitignorePath, '# Agent Bridge (auto-added by let-them-talk init)\n' + gitignoreEntries.join('\n') + '\n');
+    console.log('  [ok] .gitignore created');
   }
 
   console.log('');

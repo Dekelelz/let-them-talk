@@ -1,0 +1,122 @@
+[
+  {
+    "id": "builtin-glasses-round",
+    "name": "Round Glasses",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "glasses",
+    "tags": ["classic", "glasses"],
+    "colorable": true,
+    "default_color": "#555555",
+    "asset": { "format": "procedural", "procedural_id": "round" }
+  },
+  {
+    "id": "builtin-glasses-square",
+    "name": "Square Glasses",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "glasses",
+    "tags": ["modern", "glasses"],
+    "colorable": true,
+    "default_color": "#555555",
+    "asset": { "format": "procedural", "procedural_id": "square" }
+  },
+  {
+    "id": "builtin-glasses-sunglasses",
+    "name": "Sunglasses",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "glasses",
+    "tags": ["cool", "sunglasses"],
+    "colorable": true,
+    "default_color": "#111111",
+    "asset": { "format": "procedural", "procedural_id": "sunglasses" }
+  },
+  {
+    "id": "builtin-headwear-beanie",
+    "name": "Beanie",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "headwear",
+    "tags": ["casual", "hat"],
+    "colorable": true,
+    "default_color": "#333333",
+    "asset": { "format": "procedural", "procedural_id": "beanie" }
+  },
+  {
+    "id": "builtin-headwear-cap",
+    "name": "Baseball Cap",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "headwear",
+    "tags": ["casual", "cap"],
+    "colorable": true,
+    "default_color": "#333333",
+    "asset": { "format": "procedural", "procedural_id": "cap" }
+  },
+  {
+    "id": "builtin-headwear-headphones",
+    "name": "Headphones",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "headwear",
+    "tags": ["tech", "audio"],
+    "colorable": false,
+    "default_color": "#2a2a2a",
+    "asset": { "format": "procedural", "procedural_id": "headphones" }
+  },
+  {
+    "id": "builtin-headwear-headband",
+    "name": "Headband",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "headwear",
+    "tags": ["sporty"],
+    "colorable": true,
+    "default_color": "#333333",
+    "asset": { "format": "procedural", "procedural_id": "headband" }
+  },
+  {
+    "id": "builtin-neckwear-tie",
+    "name": "Tie",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "neckwear",
+    "tags": ["formal"],
+    "colorable": true,
+    "default_color": "#c0392b",
+    "asset": { "format": "procedural", "procedural_id": "tie" }
+  },
+  {
+    "id": "builtin-neckwear-bowtie",
+    "name": "Bow Tie",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "neckwear",
+    "tags": ["formal", "fancy"],
+    "colorable": true,
+    "default_color": "#c0392b",
+    "asset": { "format": "procedural", "procedural_id": "bowtie" }
+  },
+  {
+    "id": "builtin-neckwear-lanyard",
+    "name": "Lanyard & Badge",
+    "version": "1.0.0",
+    "author": "built-in",
+    "type": "accessory",
+    "category": "neckwear",
+    "tags": ["professional", "badge"],
+    "colorable": true,
+    "default_color": "#1a5276",
+    "asset": { "format": "procedural", "procedural_id": "lanyard" }
+  }
+]

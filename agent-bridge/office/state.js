@@ -1,0 +1,25 @@
+// Shared mutable state for the 3D office system.
+// All modules import S and read/write through it.
+export const S = {
+  scene: null,
+  camera: null,
+  renderer: null,
+  cssRenderer: null,
+  controls: null,
+  container: null,
+  running: false,
+  animationId: null,
+  clock: null,
+  agents3d: {},
+  lastProcessedMsg: 0,
+  currentEnv: 'modern',
+  furnitureGroup: null,
+  deskMeshes: [],
+  syncInterval: null,
+  resizeObserver: null,
+  cachedTasks: [],
+  conversationVelocity: 0,
+  monitorCanvases: {},
+  fpsCounter: 0,
+  fpsTime: 0,
+};

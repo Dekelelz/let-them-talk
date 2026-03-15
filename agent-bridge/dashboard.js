@@ -234,6 +234,7 @@ function apiAgents(query) {
       avatar: profile.avatar || getDefaultAvatar(name),
       role: profile.role || '',
       bio: profile.bio || '',
+      appearance: profile.appearance || {},
     };
   }
   return result;
@@ -1361,12 +1362,73 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Serve static library files from node_modules (Three.js etc.)
+    if (url.pathname.startsWith('/lib/')) {
+      const libPath = url.pathname.replace('/lib/', '');
+      // Sanitize: prevent path traversal
+      if (libPath.includes('..') || libPath.includes('\\')) {
+        res.writeHead(400); res.end('Bad path'); return;
+      }
+      const filePath = path.join(__dirname, '..', 'node_modules', libPath);
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const mimeTypes = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.json': 'application/json', '.wasm': 'application/wasm' };
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=604800' });
+        res.end(fs.readFileSync(filePath));
+      } else {
+        res.writeHead(404); res.end('Not found');
+      }
+      return;
+    }
+
+    // Serve 3D office modules from agent-bridge/office/
+    if (url.pathname.startsWith('/office/')) {
+      const officePath = url.pathname.replace('/office/', '');
+      if (officePath.includes('..') || officePath.includes('\\')) {
+        res.writeHead(400); res.end('Bad path'); return;
+      }
+      const filePath = path.join(__dirname, 'office', officePath);
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const mimeTypes = { '.js': 'application/javascript', '.json': 'application/json' };
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
+        res.end(fs.readFileSync(filePath));
+      } else {
+        res.writeHead(404); res.end('Not found');
+      }
+      return;
+    }
+
+    // Serve mod assets from agent-bridge/mods/
+    if (url.pathname.startsWith('/mods/')) {
+      const modPath = url.pathname.replace('/mods/', '');
+      if (modPath.includes('..') || modPath.includes('\\')) {
+        res.writeHead(400); res.end('Bad path'); return;
+      }
+      const filePath = path.join(__dirname, 'mods', modPath);
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const allowedMime = { '.json': 'application/json', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.png': 'image/png' };
+        const contentType = allowedMime[ext];
+        if (!contentType) {
+          res.writeHead(403); res.end('File type not allowed'); return;
+        }
+        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400' });
+        res.end(fs.readFileSync(filePath));
+      } else {
+        res.writeHead(404); res.end('Not found');
+      }
+      return;
+    }
+
     // Serve dashboard HTML (always re-read for hot reload)
     if (url.pathname === '/' || url.pathname === '/index.html') {
       const html = fs.readFileSync(HTML_FILE, 'utf8');
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'",
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'",
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
@@ -1458,6 +1520,24 @@ const server = http.createServer(async (req, res) => {
       }
       if (body.bio !== undefined) profiles[body.agent].bio = (body.bio || '').substring(0, 200);
       if (body.role !== undefined) profiles[body.agent].role = (body.role || '').substring(0, 30);
+      if (body.appearance !== undefined && typeof body.appearance === 'object') {
+        const validKeys = ['head_color', 'hair_style', 'hair_color', 'eye_style', 'mouth_style', 'shirt_color', 'pants_color', 'shoe_color', 'glasses', 'glasses_color', 'headwear', 'headwear_color', 'neckwear', 'neckwear_color'];
+        const enumValidation = {
+          hair_style: ['none', 'short', 'spiky', 'long', 'ponytail', 'bob'],
+          eye_style: ['dots', 'anime', 'glasses', 'sleepy'],
+          mouth_style: ['smile', 'neutral', 'open'],
+          glasses: ['none', 'round', 'square', 'sunglasses'],
+          headwear: ['none', 'beanie', 'cap', 'headphones', 'headband'],
+          neckwear: ['none', 'tie', 'bowtie', 'lanyard'],
+        };
+        const cleaned = {};
+        for (const [k, v] of Object.entries(body.appearance)) {
+          if (!validKeys.includes(k) || typeof v !== 'string' || v.length > 20) continue;
+          if (enumValidation[k] && !enumValidation[k].includes(v)) continue;
+          cleaned[k] = v;
+        }
+        profiles[body.agent].appearance = Object.assign(profiles[body.agent].appearance || {}, cleaned);
+      }
       profiles[body.agent].updated_at = new Date().toISOString();
       fs.writeFileSync(profilesFile, JSON.stringify(profiles, null, 2));
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1686,6 +1766,127 @@ const server = http.createServer(async (req, res) => {
       res.write(`data: connected\n\n`);
       sseClients.add(res);
       req.on('close', () => sseClients.delete(res));
+    }
+    // --- Mod system API ---
+    else if (url.pathname === '/api/mods' && req.method === 'GET') {
+      const registryFile = path.join(__dirname, 'mods', 'registry.json');
+      const registry = fs.existsSync(registryFile) ? JSON.parse(fs.readFileSync(registryFile, 'utf8')) : { version: 1, mods: {} };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(registry));
+    }
+    else if (url.pathname === '/api/mods' && req.method === 'POST') {
+      const body = await parseBody(req);
+      if (!body.manifest) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing manifest' }));
+        return;
+      }
+      const manifest = body.manifest;
+      // Validate manifest
+      const requiredFields = ['id', 'name', 'version', 'author', 'type', 'category'];
+      const validTypes = ['accessory', 'hairstyle', 'outfit', 'character', 'environment'];
+      const idPattern = /^[a-z0-9_-]{1,40}$/;
+      const errors = [];
+      for (const f of requiredFields) { if (!manifest[f]) errors.push('Missing: ' + f); }
+      if (manifest.id && !idPattern.test(manifest.id)) errors.push('Invalid id format');
+      if (manifest.type && !validTypes.includes(manifest.type)) errors.push('Invalid type');
+      if (!manifest.asset || !manifest.asset.format) errors.push('Missing asset definition');
+      if (manifest.asset && !['glb', 'gltf', 'procedural'].includes(manifest.asset.format)) errors.push('Invalid asset format');
+      if (errors.length > 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Validation failed', errors }));
+        return;
+      }
+      // Check for file if GLB mod (must be uploaded separately)
+      if (manifest.asset.format === 'glb' || manifest.asset.format === 'gltf') {
+        const modDir = path.join(__dirname, 'mods', manifest.id);
+        if (!fs.existsSync(modDir)) fs.mkdirSync(modDir, { recursive: true });
+        // If glbData is provided as base64, write it
+        if (body.glbData) {
+          const allowedExts = ['.glb', '.gltf', '.json', '.png'];
+          const assetFile = manifest.asset.file || (manifest.id + '.glb');
+          const ext = path.extname(assetFile);
+          if (!allowedExts.includes(ext)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'File type not allowed: ' + ext }));
+            return;
+          }
+          // Size check
+          const typeLimits = { accessory: 200*1024, hairstyle: 300*1024, outfit: 500*1024, character: 1024*1024, environment: 2*1024*1024 };
+          const maxSize = typeLimits[manifest.type] || 200*1024;
+          const buf = Buffer.from(body.glbData, 'base64');
+          if (buf.length > maxSize) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'File too large: ' + (buf.length/1024).toFixed(0) + 'KB > ' + (maxSize/1024) + 'KB limit' }));
+            return;
+          }
+          // GLB magic bytes check
+          if (ext === '.glb' && buf.length >= 4) {
+            const magic = buf.readUInt32LE(0);
+            if (magic !== 0x46546C67) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid GLB file (bad magic bytes)' }));
+              return;
+            }
+          }
+          fs.writeFileSync(path.join(modDir, assetFile), buf);
+          manifest.asset.file = assetFile;
+        }
+        // Write manifest
+        fs.writeFileSync(path.join(modDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+      }
+      // Add to registry
+      await withFileLock(path.join(__dirname, 'mods', 'registry.json'), () => {
+        const registryFile = path.join(__dirname, 'mods', 'registry.json');
+        const registry = fs.existsSync(registryFile) ? JSON.parse(fs.readFileSync(registryFile, 'utf8')) : { version: 1, mods: {} };
+        if (registry.mods[manifest.id]) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Mod ID already exists: ' + manifest.id }));
+          return;
+        }
+        registry.mods[manifest.id] = manifest;
+        fs.writeFileSync(registryFile, JSON.stringify(registry, null, 2));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, id: manifest.id }));
+      });
+    }
+    else if (url.pathname === '/api/mods' && req.method === 'DELETE') {
+      const body = await parseBody(req);
+      if (!body.id) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing mod id' }));
+        return;
+      }
+      const modId = body.id;
+      if (!/^[a-z0-9_-]{1,40}$/.test(modId)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid mod id' }));
+        return;
+      }
+      // Don't allow deleting built-in mods
+      if (modId.startsWith('builtin-')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Cannot delete built-in mods' }));
+        return;
+      }
+      await withFileLock(path.join(__dirname, 'mods', 'registry.json'), () => {
+        const registryFile = path.join(__dirname, 'mods', 'registry.json');
+        const registry = fs.existsSync(registryFile) ? JSON.parse(fs.readFileSync(registryFile, 'utf8')) : { version: 1, mods: {} };
+        if (!registry.mods[modId]) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Mod not found: ' + modId }));
+          return;
+        }
+        delete registry.mods[modId];
+        fs.writeFileSync(registryFile, JSON.stringify(registry, null, 2));
+        // Clean up mod directory if it exists
+        const modDir = path.join(__dirname, 'mods', modId);
+        if (fs.existsSync(modDir)) {
+          try { fs.rmSync(modDir, { recursive: true }); } catch (e) { /* best effort */ }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      });
     }
     else {
       res.writeHead(404, { 'Content-Type': 'application/json' });

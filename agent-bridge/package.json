@@ -19,6 +19,8 @@
     "server.js",
     "dashboard.js",
     "dashboard.html",
+    "office/",
+    "mods/",
     "cli.js",
     "templates/",
     "conversation-templates/",

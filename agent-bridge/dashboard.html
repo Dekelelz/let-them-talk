@@ -8,6 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "/lib/three/build/three.module.js",
+    "three/addons/": "/lib/three/examples/jsm/"
+  }
+}
+</script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -2315,6 +2323,289 @@
   }
   .stats-area.visible { display: block; }
 
+  /* ===== VIRTUAL OFFICE ===== */
+  .office-area {
+    flex: 1;
+    overflow: hidden;
+    display: none;
+    position: relative;
+    background: var(--bg);
+  }
+  .office-area.visible { display: flex; flex-direction: column; }
+  .office-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .office-toolbar select {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    outline: none;
+    cursor: pointer;
+  }
+  .office-toolbar label {
+    color: var(--text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .office-canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .office-canvas-wrap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .office-legend {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 10px;
+    color: var(--text-muted);
+    pointer-events: none;
+    opacity: 0.85;
+  }
+  .office-legend span { margin-right: 10px; }
+  .office-legend .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+
+  /* 3D Office mode toggle */
+  .office-mode-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-right: 12px;
+  }
+  .office-mode-btn {
+    background: var(--surface-2);
+    border: none;
+    color: var(--text-muted);
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .office-mode-btn:hover { color: var(--text-dim); background: var(--surface-3); }
+  .office-mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .office-mode-btn + .office-mode-btn {
+    border-left: 1px solid var(--border);
+  }
+
+  /* 3D container */
+  #office-3d-container {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+  }
+  #office-3d-container canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* 3D speech bubbles */
+  .office3d-bubble {
+    background: rgba(255,255,255,0.95);
+    color: #1a1a2e;
+    padding: 6px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-family: Inter, sans-serif;
+    max-width: 200px;
+    word-wrap: break-word;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    pointer-events: none;
+    transition: opacity 0.5s;
+    position: relative;
+  }
+  .office3d-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid rgba(255,255,255,0.95);
+  }
+
+  /* 3D name labels */
+  .office3d-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0,0,0,0.7);
+    padding: 2px 8px;
+    border-radius: 10px;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .office3d-label-name {
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: Inter, sans-serif;
+  }
+  .office3d-label-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4ade80;
+    flex-shrink: 0;
+  }
+
+  [data-theme="light"] .office3d-bubble {
+    background: rgba(255,255,255,0.98);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
+  [data-theme="light"] .office3d-bubble::after {
+    border-top-color: rgba(255,255,255,0.98);
+  }
+
+  /* 3D ZZZ sleeping indicators */
+  .office3d-zzz {
+    color: #facc15;
+    font-weight: 800;
+    font-family: Inter, sans-serif;
+    pointer-events: none;
+    text-shadow: 0 0 4px rgba(250, 204, 21, 0.5);
+    opacity: 0;
+    transition: none;
+  }
+
+  /* 3D task indicator */
+  .office3d-task-indicator {
+    pointer-events: none;
+    font-size: 12px;
+    font-family: Inter, sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .office3d-task-indicator.working {
+    background: rgba(108, 138, 255, 0.85);
+    color: #fff;
+  }
+  .office3d-task-indicator.done {
+    background: rgba(52, 211, 153, 0.85);
+    color: #fff;
+  }
+  .office3d-task-indicator.blocked {
+    background: rgba(248, 113, 113, 0.85);
+    color: #fff;
+  }
+
+  /* 3D typing dots */
+  .office3d-typing {
+    pointer-events: none;
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    padding: 2px 6px;
+  }
+  .office3d-typing-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent, #6c8aff);
+    animation: office3d-typing-bounce 1.2s ease-in-out infinite;
+  }
+  .office3d-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .office3d-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes office3d-typing-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  /* Agent command menu (floating above clicked agent) */
+  .office3d-cmd-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    background: rgba(15, 19, 24, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 6px;
+    backdrop-filter: blur(8px);
+    pointer-events: auto;
+    min-width: 140px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    animation: office3d-cmd-pop 0.15s ease-out;
+  }
+  @keyframes office3d-cmd-pop {
+    from { transform: scale(0.85) translateY(6px); opacity: 0; }
+    to { transform: scale(1) translateY(0); opacity: 1; }
+  }
+  .office3d-cmd-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #e0e4ea;
+    font-size: 11px;
+    font-family: Inter, sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+    pointer-events: auto;
+  }
+  .office3d-cmd-btn:hover {
+    background: rgba(108, 138, 255, 0.18);
+    color: #fff;
+  }
+  .office3d-cmd-btn.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+  .office3d-cmd-icon {
+    font-size: 13px;
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .office3d-cmd-menu .office3d-cmd-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.06);
+    margin: 2px 4px;
+  }
+
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -2588,6 +2879,185 @@
 
   .avatar-option:hover { border-color: var(--accent); transform: scale(1.1); }
   .avatar-option.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+
+  /* ===== CHARACTER DESIGNER PANEL ===== */
+  .char-designer {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 480px;
+    max-width: 100vw;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 410;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+  }
+  .char-designer.open { transform: translateX(0); }
+  .char-designer-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 409;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  .char-designer-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  .cd-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .cd-header h3 { font-size: 15px; font-weight: 700; margin: 0; }
+  .cd-close {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 20px; cursor: pointer; padding: 2px 6px; border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .cd-close:hover { color: var(--text); background: var(--surface-2); }
+
+  .cd-body {
+    flex: 1; overflow-y: auto; padding: 0;
+  }
+
+  .cd-preview {
+    width: 100%;
+    height: 250px;
+    background: #12151c;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+    cursor: grab;
+  }
+  .cd-preview:active { cursor: grabbing; }
+  .cd-preview canvas { display: block; width: 100% !important; height: 100% !important; }
+
+  .cd-info-section {
+    padding: 14px 18px;
+    display: flex; flex-direction: column; gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cd-info-section .cd-avatar-row {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+  }
+  .cd-info-section .cd-avatar-row .avatar-option { width: 36px; height: 36px; }
+  .cd-avatar-grid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 6px;
+  }
+  .cd-avatar-upload-row {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .cd-avatar-upload-row .btn { font-size: 10px; flex: 0 0 auto; padding: 4px 10px; }
+  .cd-avatar-upload-row input[type="text"] {
+    flex: 1; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 8px; font-size: 10px; outline: none;
+  }
+
+  .cd-field { display: flex; flex-direction: column; gap: 3px; }
+  .cd-field label {
+    font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .cd-field input[type="text"], .cd-field textarea {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; font-family: inherit; outline: none;
+    resize: none;
+  }
+  .cd-field input[type="text"]:focus, .cd-field textarea:focus {
+    border-color: var(--accent);
+  }
+
+  .cd-tabs {
+    display: flex;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--border);
+    gap: 0;
+    flex-shrink: 0;
+    overflow-x: auto;
+  }
+  .cd-tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--text-dim); padding: 10px 12px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    font-family: inherit;
+  }
+  .cd-tab:hover { color: var(--text); background: var(--surface-2); }
+  .cd-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .cd-tab-content {
+    padding: 14px 18px;
+    display: none;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .cd-tab-content.active { display: flex; }
+
+  .cd-subsection-label {
+    font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+
+  .cd-item-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .cd-item-card {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 4px;
+    background: var(--surface-2);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 11px; color: var(--text-dim);
+    text-align: center;
+    min-height: 56px;
+  }
+  .cd-item-card:hover { border-color: var(--border-light); color: var(--text); background: var(--surface-3); }
+  .cd-item-card.active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--text);
+    box-shadow: 0 0 0 1px var(--accent-glow);
+  }
+  .cd-item-card .cd-card-icon { font-size: 18px; line-height: 1; }
+  .cd-item-card .cd-card-label { font-size: 10px; font-weight: 500; }
+
+  .cd-color-row {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .cd-color-row label {
+    font-size: 11px; color: var(--text-dim); min-width: 70px;
+  }
+  .cd-color-row input[type="color"] {
+    width: 40px; height: 28px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface-2);
+    cursor: pointer; padding: 2px;
+  }
+  .cd-color-row .cd-color-hex {
+    font-size: 11px; color: var(--text-muted); font-family: monospace;
+  }
+
+  .cd-footer {
+    display: flex; gap: 10px; padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .cd-footer .btn { flex: 1; padding: 8px; text-align: center; font-size: 13px; }
+
+  @media (max-width: 520px) {
+    .char-designer { width: 100vw; }
+  }
 </style>
 </head>
 <body>
@@ -2746,6 +3216,7 @@
       <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
       <div class="view-tab" id="tab-workspaces" onclick="switchView('workspaces')">Workspaces</div>
       <div class="view-tab" id="tab-workflows" onclick="switchView('workflows')">Workflows</div>
+      <div class="view-tab" id="tab-office" onclick="switchView('office')">Office</div>
       <div class="view-tab" id="tab-launch" onclick="switchView('launch')">Launch</div>
       <div class="view-tab" id="tab-stats" onclick="switchView('stats')">Stats</div>
     </div>
@@ -2764,6 +3235,25 @@
     <div class="tasks-area" id="tasks-area"></div>
     <div class="workspaces-area" id="workspaces-area"></div>
     <div class="workflows-area" id="workflows-area"></div>
+    <div class="office-area" id="office-area">
+      <div class="office-toolbar">
+        <label>Environment:</label>
+        <select id="office-env-select" onchange="officeSetEnvironment(this.value)">
+          <option value="modern">Modern Office</option>
+          <option value="startup">Startup Garage</option>
+        </select>
+        <div style="flex:1"></div>
+        <span style="color:var(--text-dim);font-size:10px" id="office-fps"></span>
+      </div>
+      <div class="office-canvas-wrap">
+        <div id="office-3d-container"></div>
+        <div class="office-legend">
+          <span><span class="dot" style="background:#4ade80"></span>Active</span>
+          <span><span class="dot" style="background:#facc15"></span>Sleeping</span>
+          <span><span class="dot" style="background:#f87171"></span>Offline</span>
+        </div>
+      </div>
+    </div>
     <div class="launch-area" id="launch-area"></div>
     <div class="stats-area" id="stats-area"></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
@@ -2803,37 +3293,254 @@
   <button class="btn btn-primary" style="width:100%;margin-top:10px" id="pp-edit-btn" onclick="openProfileEditor()">Edit Profile</button>
 </div>
 
-<!-- Profile Editor Modal -->
-<div id="profile-editor-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:400;display:none;align-items:center;justify-content:center" onclick="closeProfileEditor()">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;width:380px;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.5)" onclick="event.stopPropagation()">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <span style="font-weight:700;font-size:15px">Edit Profile</span>
-      <button style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer" onclick="closeProfileEditor()">&times;</button>
-    </div>
-    <div style="margin-bottom:12px">
-      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px">Avatar</label>
-      <div id="avatar-picker" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:8px"></div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <label class="btn" style="cursor:pointer;font-size:11px;flex:1;text-align:center">
-          Upload Image
-          <input type="file" accept="image/*" style="display:none" onchange="handleAvatarUpload(this)">
-        </label>
-        <input id="pe-avatar-url" placeholder="Or paste image URL..." style="flex:2;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;outline:none">
+<!-- Character Designer Panel -->
+<div class="char-designer-backdrop" id="cd-backdrop" onclick="closeProfileEditor()"></div>
+<div class="char-designer" id="char-designer">
+  <div class="cd-header">
+    <h3>Character Designer</h3>
+    <button class="cd-close" onclick="closeProfileEditor()">&times;</button>
+  </div>
+  <div class="cd-body">
+    <!-- 3D Preview -->
+    <div class="cd-preview" id="cd-preview-container"></div>
+
+    <!-- Info Section: Avatar + Name/Role/Bio -->
+    <div class="cd-info-section">
+      <div class="cd-field">
+        <label>Avatar</label>
+        <div class="cd-avatar-grid" id="avatar-picker"></div>
+        <div class="cd-avatar-upload-row">
+          <label class="btn" style="cursor:pointer">
+            Upload
+            <input type="file" accept="image/*" style="display:none" onchange="handleAvatarUpload(this)">
+          </label>
+          <input type="text" id="pe-avatar-url" placeholder="Or paste image URL...">
+        </div>
+      </div>
+      <div class="cd-field">
+        <label>Display Name</label>
+        <input type="text" id="pe-display-name" maxlength="30">
+      </div>
+      <div style="display:flex;gap:8px">
+        <div class="cd-field" style="flex:1">
+          <label>Role</label>
+          <input type="text" id="pe-role" maxlength="30" placeholder="e.g. Architect, Coder">
+        </div>
+      </div>
+      <div class="cd-field">
+        <label>Bio</label>
+        <textarea id="pe-bio" maxlength="200" rows="2" placeholder="Short description..."></textarea>
       </div>
     </div>
-    <div style="margin-bottom:10px">
-      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Display Name</label>
-      <input id="pe-display-name" maxlength="30" style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;outline:none">
+
+    <!-- Tabs -->
+    <div class="cd-tabs">
+      <button class="cd-tab active" onclick="cdSwitchTab('body', this)">Body</button>
+      <button class="cd-tab" onclick="cdSwitchTab('hair', this)">Hair</button>
+      <button class="cd-tab" onclick="cdSwitchTab('face', this)">Face</button>
+      <button class="cd-tab" onclick="cdSwitchTab('outfit', this)">Outfit</button>
+      <button class="cd-tab" onclick="cdSwitchTab('accessories', this)">Acc.</button>
     </div>
-    <div style="margin-bottom:10px">
-      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Role</label>
-      <input id="pe-role" maxlength="30" placeholder="e.g. Architect, Reviewer, Coder" style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;outline:none">
+
+    <!-- Tab: Body -->
+    <div class="cd-tab-content active" id="cd-tab-body">
+      <div class="cd-color-row">
+        <label>Skin color</label>
+        <input type="color" id="pe-head-color" value="#FFD5B8" onchange="cdOnChange()">
+        <span class="cd-color-hex" id="cd-skin-hex">#FFD5B8</span>
+      </div>
     </div>
-    <div style="margin-bottom:14px">
-      <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Bio</label>
-      <textarea id="pe-bio" maxlength="200" rows="2" placeholder="Short description..." style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:inherit;outline:none;resize:none"></textarea>
+
+    <!-- Tab: Hair -->
+    <div class="cd-tab-content" id="cd-tab-hair">
+      <div>
+        <div class="cd-subsection-label">Style</div>
+        <div class="cd-item-grid" id="cd-hair-styles">
+          <div class="cd-item-card" data-value="none" onclick="cdPickHairStyle(this)">
+            <span class="cd-card-icon">&#x1f6ab;</span>
+            <span class="cd-card-label">None</span>
+          </div>
+          <div class="cd-item-card" data-value="short" onclick="cdPickHairStyle(this)">
+            <span class="cd-card-icon">&#x2702;</span>
+            <span class="cd-card-label">Short</span>
+          </div>
+          <div class="cd-item-card" data-value="spiky" onclick="cdPickHairStyle(this)">
+            <span class="cd-card-icon">&#x26a1;</span>
+            <span class="cd-card-label">Spiky</span>
+          </div>
+          <div class="cd-item-card" data-value="long" onclick="cdPickHairStyle(this)">
+            <span class="cd-card-icon">&#x1f9d1;</span>
+            <span class="cd-card-label">Long</span>
+          </div>
+          <div class="cd-item-card" data-value="ponytail" onclick="cdPickHairStyle(this)">
+            <span class="cd-card-icon">&#x1f3c3;</span>
+            <span class="cd-card-label">Ponytail</span>
+          </div>
+          <div class="cd-item-card" data-value="bob" onclick="cdPickHairStyle(this)">
+            <span class="cd-card-icon">&#x1f487;</span>
+            <span class="cd-card-label">Bob</span>
+          </div>
+        </div>
+      </div>
+      <div class="cd-color-row">
+        <label>Hair color</label>
+        <input type="color" id="pe-hair-color" value="#4A3728" onchange="cdOnChange()">
+        <span class="cd-color-hex" id="cd-hair-hex">#4A3728</span>
+      </div>
     </div>
-    <button class="btn btn-primary" style="width:100%;padding:8px" onclick="saveProfile()">Save Profile</button>
+
+    <!-- Tab: Face -->
+    <div class="cd-tab-content" id="cd-tab-face">
+      <div>
+        <div class="cd-subsection-label">Eyes</div>
+        <div class="cd-item-grid" id="cd-eye-styles">
+          <div class="cd-item-card" data-value="dots" onclick="cdPickEyeStyle(this)">
+            <span class="cd-card-icon">&#x1f441;</span>
+            <span class="cd-card-label">Dots</span>
+          </div>
+          <div class="cd-item-card" data-value="anime" onclick="cdPickEyeStyle(this)">
+            <span class="cd-card-icon">&#x2728;</span>
+            <span class="cd-card-label">Anime</span>
+          </div>
+          <div class="cd-item-card" data-value="glasses" onclick="cdPickEyeStyle(this)">
+            <span class="cd-card-icon">&#x1f453;</span>
+            <span class="cd-card-label">Glasses</span>
+          </div>
+          <div class="cd-item-card" data-value="sleepy" onclick="cdPickEyeStyle(this)">
+            <span class="cd-card-icon">&#x1f634;</span>
+            <span class="cd-card-label">Sleepy</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="cd-subsection-label">Mouth</div>
+        <div class="cd-item-grid" id="cd-mouth-styles">
+          <div class="cd-item-card" data-value="smile" onclick="cdPickMouthStyle(this)">
+            <span class="cd-card-icon">&#x1f642;</span>
+            <span class="cd-card-label">Smile</span>
+          </div>
+          <div class="cd-item-card" data-value="neutral" onclick="cdPickMouthStyle(this)">
+            <span class="cd-card-icon">&#x1f610;</span>
+            <span class="cd-card-label">Neutral</span>
+          </div>
+          <div class="cd-item-card" data-value="open" onclick="cdPickMouthStyle(this)">
+            <span class="cd-card-icon">&#x1f62e;</span>
+            <span class="cd-card-label">Open</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Outfit -->
+    <div class="cd-tab-content" id="cd-tab-outfit">
+      <div class="cd-color-row">
+        <label>Shirt color</label>
+        <input type="color" id="pe-shirt-color" value="#58a6ff" onchange="cdOnChange()">
+        <span class="cd-color-hex" id="cd-shirt-hex">#58a6ff</span>
+      </div>
+      <div class="cd-color-row">
+        <label>Pants color</label>
+        <input type="color" id="pe-pants-color" value="#2d3748" onchange="cdOnChange()">
+        <span class="cd-color-hex" id="cd-pants-hex">#2d3748</span>
+      </div>
+      <div class="cd-color-row">
+        <label>Shoe color</label>
+        <input type="color" id="pe-shoe-color" value="#1a1a2e" onchange="cdOnChange()">
+        <span class="cd-color-hex" id="cd-shoe-hex">#1a1a2e</span>
+      </div>
+    </div>
+
+    <!-- Tab: Accessories -->
+    <div class="cd-tab-content" id="cd-tab-accessories">
+      <div>
+        <div class="cd-subsection-label">Glasses</div>
+        <div class="cd-item-grid" id="cd-glasses-styles">
+          <div class="cd-item-card" data-value="" onclick="cdPickGlasses(this)">
+            <span class="cd-card-icon">&#x1f6ab;</span>
+            <span class="cd-card-label">None</span>
+          </div>
+          <div class="cd-item-card" data-value="round" onclick="cdPickGlasses(this)">
+            <span class="cd-card-icon">&#x1f4a0;</span>
+            <span class="cd-card-label">Round</span>
+          </div>
+          <div class="cd-item-card" data-value="square" onclick="cdPickGlasses(this)">
+            <span class="cd-card-icon">&#x25fb;</span>
+            <span class="cd-card-label">Square</span>
+          </div>
+          <div class="cd-item-card" data-value="sunglasses" onclick="cdPickGlasses(this)">
+            <span class="cd-card-icon">&#x1f576;</span>
+            <span class="cd-card-label">Sunglasses</span>
+          </div>
+        </div>
+        <div class="cd-color-row" id="cd-glasses-color-row" style="margin-top:8px;display:none">
+          <label>Frame color</label>
+          <input type="color" id="pe-glasses-color" value="#555555" onchange="cdOnChange()">
+          <span class="cd-color-hex" id="cd-glasses-hex">#555555</span>
+        </div>
+      </div>
+      <div>
+        <div class="cd-subsection-label">Headwear</div>
+        <div class="cd-item-grid" id="cd-headwear-styles">
+          <div class="cd-item-card" data-value="" onclick="cdPickHeadwear(this)">
+            <span class="cd-card-icon">&#x1f6ab;</span>
+            <span class="cd-card-label">None</span>
+          </div>
+          <div class="cd-item-card" data-value="beanie" onclick="cdPickHeadwear(this)">
+            <span class="cd-card-icon">&#x1f9e2;</span>
+            <span class="cd-card-label">Beanie</span>
+          </div>
+          <div class="cd-item-card" data-value="cap" onclick="cdPickHeadwear(this)">
+            <span class="cd-card-icon">&#x1f9e2;</span>
+            <span class="cd-card-label">Cap</span>
+          </div>
+          <div class="cd-item-card" data-value="headphones" onclick="cdPickHeadwear(this)">
+            <span class="cd-card-icon">&#x1f3a7;</span>
+            <span class="cd-card-label">Headphones</span>
+          </div>
+          <div class="cd-item-card" data-value="headband" onclick="cdPickHeadwear(this)">
+            <span class="cd-card-icon">&#x1f3bd;</span>
+            <span class="cd-card-label">Headband</span>
+          </div>
+        </div>
+        <div class="cd-color-row" id="cd-headwear-color-row" style="margin-top:8px;display:none">
+          <label>Color</label>
+          <input type="color" id="pe-headwear-color" value="#333333" onchange="cdOnChange()">
+          <span class="cd-color-hex" id="cd-headwear-hex">#333333</span>
+        </div>
+      </div>
+      <div>
+        <div class="cd-subsection-label">Neckwear</div>
+        <div class="cd-item-grid" id="cd-neckwear-styles">
+          <div class="cd-item-card" data-value="" onclick="cdPickNeckwear(this)">
+            <span class="cd-card-icon">&#x1f6ab;</span>
+            <span class="cd-card-label">None</span>
+          </div>
+          <div class="cd-item-card" data-value="tie" onclick="cdPickNeckwear(this)">
+            <span class="cd-card-icon">&#x1f454;</span>
+            <span class="cd-card-label">Tie</span>
+          </div>
+          <div class="cd-item-card" data-value="bowtie" onclick="cdPickNeckwear(this)">
+            <span class="cd-card-icon">&#x1f380;</span>
+            <span class="cd-card-label">Bowtie</span>
+          </div>
+          <div class="cd-item-card" data-value="lanyard" onclick="cdPickNeckwear(this)">
+            <span class="cd-card-icon">&#x1f4db;</span>
+            <span class="cd-card-label">Lanyard</span>
+          </div>
+        </div>
+        <div class="cd-color-row" id="cd-neckwear-color-row" style="margin-top:8px;display:none">
+          <label>Color</label>
+          <input type="color" id="pe-neckwear-color" value="#c0392b" onchange="cdOnChange()">
+          <span class="cd-color-hex" id="cd-neckwear-hex">#c0392b</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="cd-footer">
+    <button class="btn" onclick="cdRandomize()">Randomize</button>
+    <button class="btn btn-primary" onclick="saveProfile()">Save</button>
   </div>
 </div>
 
@@ -3867,10 +4574,12 @@ document.addEventListener('keydown', function(e) {
   if (e.key === '3') { switchView('workspaces'); return; }
   // 4 — Workflows tab
   if (e.key === '4') { switchView('workflows'); return; }
-  // 5 — Launch tab
-  if (e.key === '5') { switchView('launch'); return; }
-  // 6 — Stats tab
-  if (e.key === '6') { switchView('stats'); return; }
+  // 5 — Office tab
+  if (e.key === '5') { switchView('office'); return; }
+  // 6 — Launch tab
+  if (e.key === '6') { switchView('launch'); return; }
+  // 7 — Stats tab
+  if (e.key === '7') { switchView('stats'); return; }
 });
 
 // ==================== RELATIVE TIMESTAMPS ====================
@@ -4124,20 +4833,28 @@ function switchView(view) {
   document.getElementById('tab-tasks').classList.toggle('active', view === 'tasks');
   document.getElementById('tab-workspaces').classList.toggle('active', view === 'workspaces');
   document.getElementById('tab-workflows').classList.toggle('active', view === 'workflows');
+  document.getElementById('tab-office').classList.toggle('active', view === 'office');
   document.getElementById('tab-launch').classList.toggle('active', view === 'launch');
   document.getElementById('tab-stats').classList.toggle('active', view === 'stats');
   document.getElementById('messages').style.display = view === 'messages' ? 'flex' : 'none';
   document.getElementById('tasks-area').classList.toggle('visible', view === 'tasks');
   document.getElementById('workspaces-area').classList.toggle('visible', view === 'workspaces');
   document.getElementById('workflows-area').classList.toggle('visible', view === 'workflows');
+  document.getElementById('office-area').classList.toggle('visible', view === 'office');
   document.getElementById('launch-area').classList.toggle('visible', view === 'launch');
   document.getElementById('stats-area').classList.toggle('visible', view === 'stats');
   document.getElementById('search-bar').style.display = view === 'messages' ? 'flex' : 'none';
   if (view === 'tasks') fetchTasks();
   if (view === 'workspaces') fetchWorkspaces();
   if (view === 'workflows') fetchWorkflows();
+  if (view === 'office') {
+    if (window.office3dStart) window.office3dStart();
+  }
   if (view === 'launch') renderLaunchPanel();
   if (view === 'stats') fetchStats();
+  if (view !== 'office') {
+    if (window.office3dStop) window.office3dStop();
+  }
   // Auto-close sidebar on mobile after view switch
   if (isMobile) closeSidebar();
 }
@@ -4486,18 +5203,198 @@ var BUILT_IN_AVATARS = [
 var editingAgent = '';
 var selectedAvatar = '';
 
+// ---- Character Designer state ----
+var cdCurrentTab = 'body';
+var cdAppearance = {};
+
+function cdGetAppearance() {
+  return {
+    head_color: document.getElementById('pe-head-color').value,
+    shirt_color: document.getElementById('pe-shirt-color').value,
+    pants_color: document.getElementById('pe-pants-color').value,
+    shoe_color: document.getElementById('pe-shoe-color').value,
+    hair_style: cdAppearance.hair_style || 'short',
+    hair_color: document.getElementById('pe-hair-color').value,
+    eye_style: cdAppearance.eye_style || 'dots',
+    mouth_style: cdAppearance.mouth_style || 'smile',
+    glasses: cdAppearance.glasses || null,
+    glasses_color: document.getElementById('pe-glasses-color').value,
+    headwear: cdAppearance.headwear || null,
+    headwear_color: document.getElementById('pe-headwear-color').value,
+    neckwear: cdAppearance.neckwear || null,
+    neckwear_color: document.getElementById('pe-neckwear-color').value
+  };
+}
+
+function cdOnChange() {
+  // Update hex display labels
+  var colorFields = [
+    ['pe-head-color', 'cd-skin-hex'],
+    ['pe-hair-color', 'cd-hair-hex'],
+    ['pe-shirt-color', 'cd-shirt-hex'],
+    ['pe-pants-color', 'cd-pants-hex'],
+    ['pe-shoe-color', 'cd-shoe-hex'],
+    ['pe-glasses-color', 'cd-glasses-hex'],
+    ['pe-headwear-color', 'cd-headwear-hex'],
+    ['pe-neckwear-color', 'cd-neckwear-hex']
+  ];
+  colorFields.forEach(function(pair) {
+    var input = document.getElementById(pair[0]);
+    var label = document.getElementById(pair[1]);
+    if (input && label) label.textContent = input.value.toUpperCase();
+  });
+  // Signal the 3D module to rebuild
+  if (window._cdRebuildPreview) window._cdRebuildPreview(cdGetAppearance());
+}
+
+function cdSwitchTab(name, btn) {
+  cdCurrentTab = name;
+  document.querySelectorAll('.cd-tab-content').forEach(function(el) { el.classList.remove('active'); });
+  document.querySelectorAll('.cd-tab').forEach(function(el) { el.classList.remove('active'); });
+  var target = document.getElementById('cd-tab-' + name);
+  if (target) target.classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+function cdActivateCard(container, value) {
+  var cards = document.querySelectorAll('#' + container + ' .cd-item-card');
+  cards.forEach(function(c) {
+    c.classList.toggle('active', c.dataset.value === value);
+  });
+}
+
+function cdPickHairStyle(el) {
+  cdAppearance.hair_style = el.dataset.value;
+  cdActivateCard('cd-hair-styles', el.dataset.value);
+  cdOnChange();
+}
+function cdPickEyeStyle(el) {
+  cdAppearance.eye_style = el.dataset.value;
+  cdActivateCard('cd-eye-styles', el.dataset.value);
+  cdOnChange();
+}
+function cdPickMouthStyle(el) {
+  cdAppearance.mouth_style = el.dataset.value;
+  cdActivateCard('cd-mouth-styles', el.dataset.value);
+  cdOnChange();
+}
+function cdPickGlasses(el) {
+  cdAppearance.glasses = el.dataset.value || null;
+  cdActivateCard('cd-glasses-styles', el.dataset.value);
+  document.getElementById('cd-glasses-color-row').style.display = el.dataset.value ? 'flex' : 'none';
+  cdOnChange();
+}
+function cdPickHeadwear(el) {
+  cdAppearance.headwear = el.dataset.value || null;
+  cdActivateCard('cd-headwear-styles', el.dataset.value);
+  document.getElementById('cd-headwear-color-row').style.display = el.dataset.value ? 'flex' : 'none';
+  cdOnChange();
+}
+function cdPickNeckwear(el) {
+  cdAppearance.neckwear = el.dataset.value || null;
+  cdActivateCard('cd-neckwear-styles', el.dataset.value);
+  document.getElementById('cd-neckwear-color-row').style.display = el.dataset.value ? 'flex' : 'none';
+  cdOnChange();
+}
+
+function cdRandomize() {
+  var skinColors = ['#FFD5B8', '#F5D0A9', '#D4A574', '#C68642', '#8D5524', '#6B3E26', '#FFDFC4', '#F0C8A0', '#E0AC69', '#503335'];
+  var hairColors = ['#4A3728', '#1a1a1a', '#8B4513', '#D4A574', '#333', '#8B0000', '#F5DEB3', '#FFD700', '#A52A2A', '#2C1608'];
+  var shirtColors = ['#58a6ff', '#f97316', '#a855f7', '#22c55e', '#ef4444', '#eab308', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6'];
+  var pantsColors = ['#2d3748', '#3d2b1f', '#1e1b2e', '#1a2e1a', '#2e1a1a', '#2e2a1a', '#1a2e2e', '#2e1a28', '#1a1a3e', '#1e2e2e'];
+  var shoeColors = ['#1a1a2e', '#2a1a0a', '#0a0a0a', '#3a2a1a', '#1a0a0a'];
+  var hairStyles = ['none', 'short', 'spiky', 'long', 'ponytail', 'bob'];
+  var eyeStyles = ['dots', 'anime', 'glasses', 'sleepy'];
+  var mouthStyles = ['smile', 'neutral', 'open'];
+  var glassesOpts = [null, 'round', 'square', 'sunglasses'];
+  var headwearOpts = [null, 'beanie', 'cap', 'headphones', 'headband'];
+  var neckwearOpts = [null, 'tie', 'bowtie', 'lanyard'];
+  var accColors = ['#555555', '#8B4513', '#333333', '#c0392b', '#1a5276', '#7d3c98', '#2e4053'];
+
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  document.getElementById('pe-head-color').value = pick(skinColors);
+  document.getElementById('pe-hair-color').value = pick(hairColors);
+  document.getElementById('pe-shirt-color').value = pick(shirtColors);
+  document.getElementById('pe-pants-color').value = pick(pantsColors);
+  document.getElementById('pe-shoe-color').value = pick(shoeColors);
+
+  cdAppearance.hair_style = pick(hairStyles);
+  cdAppearance.eye_style = pick(eyeStyles);
+  cdAppearance.mouth_style = pick(mouthStyles);
+  cdAppearance.glasses = pick(glassesOpts);
+  cdAppearance.headwear = pick(headwearOpts);
+  cdAppearance.neckwear = pick(neckwearOpts);
+
+  document.getElementById('pe-glasses-color').value = pick(accColors);
+  document.getElementById('pe-headwear-color').value = pick(accColors);
+  document.getElementById('pe-neckwear-color').value = pick(accColors);
+
+  // Update card selections
+  cdActivateCard('cd-hair-styles', cdAppearance.hair_style);
+  cdActivateCard('cd-eye-styles', cdAppearance.eye_style);
+  cdActivateCard('cd-mouth-styles', cdAppearance.mouth_style);
+  cdActivateCard('cd-glasses-styles', cdAppearance.glasses || '');
+  cdActivateCard('cd-headwear-styles', cdAppearance.headwear || '');
+  cdActivateCard('cd-neckwear-styles', cdAppearance.neckwear || '');
+
+  // Show/hide accessory color rows
+  document.getElementById('cd-glasses-color-row').style.display = cdAppearance.glasses ? 'flex' : 'none';
+  document.getElementById('cd-headwear-color-row').style.display = cdAppearance.headwear ? 'flex' : 'none';
+  document.getElementById('cd-neckwear-color-row').style.display = cdAppearance.neckwear ? 'flex' : 'none';
+
+  cdOnChange();
+}
+
 function openProfileEditor() {
   var agent = cachedAgents[editingAgent];
   if (!editingAgent || !agent) return;
 
   document.getElementById('profile-popup').classList.remove('open');
 
-  // Populate fields
+  // Populate basic fields
   document.getElementById('pe-display-name').value = agent.display_name || editingAgent;
   document.getElementById('pe-role').value = agent.role || '';
   document.getElementById('pe-bio').value = agent.bio || '';
   document.getElementById('pe-avatar-url').value = '';
   selectedAvatar = agent.avatar || '';
+
+  // Resolve full appearance (with deterministic defaults)
+  var app = agent.appearance || {};
+  var defApp = typeof officeGetAppearance === 'function'
+    ? officeGetAppearance({ displayName: editingAgent, appearance: app })
+    : app;
+
+  // Set color pickers
+  document.getElementById('pe-head-color').value = defApp.head_color || '#FFD5B8';
+  document.getElementById('pe-shirt-color').value = defApp.shirt_color || '#58a6ff';
+  document.getElementById('pe-hair-color').value = defApp.hair_color || '#4A3728';
+  document.getElementById('pe-pants-color').value = defApp.pants_color || '#2d3748';
+  document.getElementById('pe-shoe-color').value = defApp.shoe_color || '#1a1a2e';
+  document.getElementById('pe-glasses-color').value = defApp.glasses_color || '#555555';
+  document.getElementById('pe-headwear-color').value = defApp.headwear_color || '#333333';
+  document.getElementById('pe-neckwear-color').value = defApp.neckwear_color || '#c0392b';
+
+  // Set appearance state
+  cdAppearance.hair_style = defApp.hair_style || 'short';
+  cdAppearance.eye_style = defApp.eye_style || 'dots';
+  cdAppearance.mouth_style = defApp.mouth_style || 'smile';
+  cdAppearance.glasses = defApp.glasses || null;
+  cdAppearance.headwear = defApp.headwear || null;
+  cdAppearance.neckwear = defApp.neckwear || null;
+
+  // Activate correct cards
+  cdActivateCard('cd-hair-styles', cdAppearance.hair_style);
+  cdActivateCard('cd-eye-styles', cdAppearance.eye_style);
+  cdActivateCard('cd-mouth-styles', cdAppearance.mouth_style);
+  cdActivateCard('cd-glasses-styles', cdAppearance.glasses || '');
+  cdActivateCard('cd-headwear-styles', cdAppearance.headwear || '');
+  cdActivateCard('cd-neckwear-styles', cdAppearance.neckwear || '');
+
+  // Show/hide accessory color rows
+  document.getElementById('cd-glasses-color-row').style.display = cdAppearance.glasses ? 'flex' : 'none';
+  document.getElementById('cd-headwear-color-row').style.display = cdAppearance.headwear ? 'flex' : 'none';
+  document.getElementById('cd-neckwear-color-row').style.display = cdAppearance.neckwear ? 'flex' : 'none';
 
   // Build avatar picker grid
   var picker = document.getElementById('avatar-picker');
@@ -4508,13 +5405,22 @@ function openProfileEditor() {
   }
   picker.innerHTML = html;
 
-  // Show modal
-  var overlay = document.getElementById('profile-editor-overlay');
-  overlay.style.display = 'flex';
+  // Reset to Body tab
+  cdSwitchTab('body', document.querySelector('.cd-tab'));
+
+  // Open the panel
+  document.getElementById('char-designer').classList.add('open');
+  document.getElementById('cd-backdrop').classList.add('open');
+
+  // Update hex displays and init 3D preview
+  cdOnChange();
+  if (window._cdInitPreview) window._cdInitPreview();
 }
 
 function closeProfileEditor() {
-  document.getElementById('profile-editor-overlay').style.display = 'none';
+  document.getElementById('char-designer').classList.remove('open');
+  document.getElementById('cd-backdrop').classList.remove('open');
+  if (window._cdDisposePreview) window._cdDisposePreview();
 }
 
 function selectAvatar(idx) {
@@ -4533,7 +5439,6 @@ function handleAvatarUpload(input) {
   var reader = new FileReader();
   reader.onload = function(e) {
     selectedAvatar = e.target.result;
-    // Deselect built-in options
     document.querySelectorAll('#avatar-picker .avatar-option').forEach(function(el) { el.classList.remove('selected'); });
     document.getElementById('pe-avatar-url').value = '';
   };
@@ -4543,11 +5448,28 @@ function handleAvatarUpload(input) {
 function saveProfile() {
   var avatarUrl = document.getElementById('pe-avatar-url').value.trim();
   var avatar = avatarUrl || selectedAvatar;
+  var app = cdGetAppearance();
   var body = {
     agent: editingAgent,
     display_name: document.getElementById('pe-display-name').value.trim() || editingAgent,
     role: document.getElementById('pe-role').value.trim(),
     bio: document.getElementById('pe-bio').value.trim(),
+    appearance: {
+      head_color: app.head_color,
+      shirt_color: app.shirt_color,
+      hair_style: app.hair_style,
+      hair_color: app.hair_color,
+      eye_style: app.eye_style,
+      mouth_style: app.mouth_style,
+      pants_color: app.pants_color,
+      shoe_color: app.shoe_color,
+      glasses: app.glasses,
+      glasses_color: app.glasses_color,
+      headwear: app.headwear,
+      headwear_color: app.headwear_color,
+      neckwear: app.neckwear,
+      neckwear_color: app.neckwear_color
+    }
   };
   if (avatar) body.avatar = avatar;
 
@@ -4558,7 +5480,7 @@ function saveProfile() {
   }).then(function(r) { return r.json(); }).then(function(res) {
     if (res.success) {
       closeProfileEditor();
-      poll(); // refresh to show new avatar/name
+      poll();
     }
   }).catch(function(e) { console.error('Save profile failed:', e); });
 }
@@ -5625,6 +6547,28 @@ function copyLaunchPrompt() {
   });
 }
 
+// ==================== VIRTUAL OFFICE ====================
+// 3D engine extracted to office/ modules (loaded as ES module below).
+// Minimal compat shim for legacy callers:
+
+var officeMode = '3d';
+window.officeMode = '3d';
+
+function officeSetMode(mode) {
+  // 3D only — no-op
+}
+
+var officeEnvironment = 'modern';
+
+// officeSetEnvironment bridges to 3D module
+function officeSetEnvironment(env) {
+  officeEnvironment = env;
+  if (window.office3dSetEnvironment) window.office3dSetEnvironment(env);
+}
+
+// Hook into poll() to sync office state (3D module handles its own sync interval)
+// Visibility change for 3D mode is handled by the 3D module
+
 // ==================== SSE + POLLING ====================
 
 var sseConnected = false;
@@ -5714,6 +6658,177 @@ loadProjects().then(function() {
 });
 // Safety-net poll at 10s (SSE handles real-time, this catches any missed updates)
 setInterval(poll, 10000);
+</script>
+
+<script type="module" src="/office/index.js"></script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createCharacter } from '/office/index.js';
+
+var renderer = null;
+var scene = null;
+var camera = null;
+var controls = null;
+var animId = null;
+var charObj = null;
+var container = null;
+var autoRotateSpeed = 0.8;
+
+function initPreview() {
+  container = document.getElementById('cd-preview-container');
+  if (!container) return;
+
+  // Clean up if already exists
+  disposePreview();
+
+  var w = container.clientWidth || 440;
+  var h = 250;
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h);
+  renderer.setClearColor(0x12151c);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  container.appendChild(renderer.domElement);
+
+  // Scene
+  scene = new THREE.Scene();
+
+  // Camera
+  camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 50);
+  camera.position.set(0, 1.2, 3.2);
+  camera.lookAt(0, 0.6, 0);
+
+  // Controls
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.6, 0);
+  controls.enablePan = false;
+  controls.enableZoom = false;
+  controls.minPolarAngle = Math.PI * 0.2;
+  controls.maxPolarAngle = Math.PI * 0.65;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = autoRotateSpeed;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.update();
+
+  // Lights
+  var ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+  var dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  dirLight.position.set(3, 5, 4);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.set(512, 512);
+  dirLight.shadow.camera.near = 0.5;
+  dirLight.shadow.camera.far = 15;
+  dirLight.shadow.camera.left = -2;
+  dirLight.shadow.camera.right = 2;
+  dirLight.shadow.camera.top = 2;
+  dirLight.shadow.camera.bottom = -1;
+  scene.add(dirLight);
+  var fillLight = new THREE.DirectionalLight(0x8899cc, 0.3);
+  fillLight.position.set(-2, 2, -1);
+  scene.add(fillLight);
+
+  // Floor disc
+  var floorGeo = new THREE.CircleGeometry(0.6, 32);
+  var floorMat = new THREE.MeshStandardMaterial({ color: 0x1e2530, roughness: 0.9 });
+  var floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0.01;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Build character with current appearance
+  rebuildCharacter(window.cdGetAppearance ? window.cdGetAppearance() : {});
+
+  // Start render loop
+  function animate() {
+    animId = requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Handle resize
+  var ro = new ResizeObserver(function() {
+    if (!container || !renderer) return;
+    var nw = container.clientWidth;
+    var nh = 250;
+    camera.aspect = nw / nh;
+    camera.updateProjectionMatrix();
+    renderer.setSize(nw, nh);
+  });
+  ro.observe(container);
+  container._ro = ro;
+}
+
+function rebuildCharacter(appearance) {
+  if (!scene) return;
+
+  // Remove old character
+  if (charObj) {
+    scene.remove(charObj.group);
+    charObj.group.traverse(function(child) {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (child.material.map) child.material.map.dispose();
+        child.material.dispose();
+      }
+    });
+    // Remove CSS2D label/bubble divs
+    if (charObj.labelDiv && charObj.labelDiv.parentNode) charObj.labelDiv.parentNode.removeChild(charObj.labelDiv);
+    if (charObj.bubbleDiv && charObj.bubbleDiv.parentNode) charObj.bubbleDiv.parentNode.removeChild(charObj.bubbleDiv);
+    charObj = null;
+  }
+
+  try {
+    charObj = createCharacter(window.editingAgent || 'agent', appearance);
+    // Hide labels and bubbles in preview
+    if (charObj.label) charObj.label.visible = false;
+    if (charObj.bubble) charObj.bubble.visible = false;
+    if (charObj.taskLabel) charObj.taskLabel.visible = false;
+    if (charObj.typingLabel) charObj.typingLabel.visible = false;
+    if (charObj.zzzObjects) charObj.zzzObjects.forEach(function(z) { z.obj.visible = false; });
+    scene.add(charObj.group);
+  } catch (e) {
+    console.warn('[CD] Failed to create preview character:', e);
+  }
+}
+
+function disposePreview() {
+  if (animId) { cancelAnimationFrame(animId); animId = null; }
+  if (container && container._ro) { container._ro.disconnect(); container._ro = null; }
+  if (charObj) {
+    charObj.group.traverse(function(child) {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (child.material.map) child.material.map.dispose();
+        child.material.dispose();
+      }
+    });
+    if (charObj.labelDiv && charObj.labelDiv.parentNode) charObj.labelDiv.parentNode.removeChild(charObj.labelDiv);
+    if (charObj.bubbleDiv && charObj.bubbleDiv.parentNode) charObj.bubbleDiv.parentNode.removeChild(charObj.bubbleDiv);
+    charObj = null;
+  }
+  if (controls) { controls.dispose(); controls = null; }
+  if (renderer) {
+    if (container && container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+    renderer.dispose();
+    renderer = null;
+  }
+  scene = null;
+  camera = null;
+}
+
+// Expose to the main (non-module) script via window globals
+window._cdInitPreview = initPreview;
+window._cdDisposePreview = disposePreview;
+window._cdRebuildPreview = rebuildCharacter;
 </script>
 
 </body>

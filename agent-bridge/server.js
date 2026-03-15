@@ -1364,7 +1364,7 @@ function toolReset() {
 
 // --- Phase 1: Profile tool ---
 
-function toolUpdateProfile(displayName, avatar, bio, role) {
+function toolUpdateProfile(displayName, avatar, bio, role, appearance) {
   if (!registeredName) return { error: 'You must call register() first' };
 
   const profiles = getProfiles();
@@ -1387,6 +1387,29 @@ function toolUpdateProfile(displayName, avatar, bio, role) {
   if (role !== undefined && role !== null) {
     if (typeof role !== 'string' || role.length > 30) return { error: 'role must be <= 30 chars' };
     p.role = role;
+  }
+  if (appearance !== undefined && appearance !== null) {
+    if (typeof appearance !== 'object') return { error: 'appearance must be an object' };
+    const validKeys = ['head_color', 'hair_style', 'hair_color', 'eye_style', 'mouth_style', 'shirt_color', 'pants_color', 'shoe_color', 'glasses', 'glasses_color', 'headwear', 'headwear_color', 'neckwear', 'neckwear_color'];
+    const validHairStyles = ['none', 'short', 'spiky', 'long', 'ponytail', 'bob'];
+    const validEyeStyles = ['dots', 'anime', 'glasses', 'sleepy'];
+    const validMouthStyles = ['smile', 'neutral', 'open'];
+    const validGlasses = ['none', 'round', 'square', 'sunglasses'];
+    const validHeadwear = ['none', 'beanie', 'cap', 'headphones', 'headband'];
+    const validNeckwear = ['none', 'tie', 'bowtie', 'lanyard'];
+    const cleaned = {};
+    for (const [k, v] of Object.entries(appearance)) {
+      if (!validKeys.includes(k)) continue;
+      if (typeof v !== 'string' || v.length > 20) continue;
+      if (k === 'hair_style' && !validHairStyles.includes(v)) continue;
+      if (k === 'eye_style' && !validEyeStyles.includes(v)) continue;
+      if (k === 'mouth_style' && !validMouthStyles.includes(v)) continue;
+      if (k === 'glasses' && !validGlasses.includes(v)) continue;
+      if (k === 'headwear' && !validHeadwear.includes(v)) continue;
+      if (k === 'neckwear' && !validNeckwear.includes(v)) continue;
+      cleaned[k] = v;
+    }
+    p.appearance = Object.assign(p.appearance || {}, cleaned);
   }
   p.updated_at = new Date().toISOString();
   saveProfiles(profiles);
@@ -1905,7 +1928,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // --- Phase 1: Profiles ---
       {
         name: 'update_profile',
-        description: 'Update your agent profile (display name, avatar, bio, role). Profile data is shown in the dashboard and messages.',
+        description: 'Update your agent profile (display name, avatar, bio, role, appearance). Profile data is shown in the dashboard and virtual office.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1913,6 +1936,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             avatar: { type: 'string', description: 'Avatar URL or data URI (max 64KB)' },
             bio: { type: 'string', description: 'Short bio (max 200 chars)' },
             role: { type: 'string', description: 'Role/title (max 30 chars, e.g. "Architect", "Reviewer")' },
+            appearance: {
+              type: 'object',
+              description: 'Character appearance for virtual office visualization',
+              properties: {
+                head_color: { type: 'string', description: 'Skin/head color hex (e.g. "#FFD5B8")' },
+                hair_style: { type: 'string', enum: ['none', 'short', 'spiky', 'long', 'ponytail', 'bob'], description: 'Hair style' },
+                hair_color: { type: 'string', description: 'Hair color hex (e.g. "#4A3728")' },
+                eye_style: { type: 'string', enum: ['dots', 'anime', 'glasses', 'sleepy'], description: 'Eye style' },
+                mouth_style: { type: 'string', enum: ['smile', 'neutral', 'open'], description: 'Mouth style' },
+                shirt_color: { type: 'string', description: 'Shirt color hex' },
+                pants_color: { type: 'string', description: 'Pants color hex' },
+                shoe_color: { type: 'string', description: 'Shoe color hex' },
+                glasses: { type: 'string', enum: ['none', 'round', 'square', 'sunglasses'], description: 'Glasses style' },
+                glasses_color: { type: 'string', description: 'Glasses frame color hex' },
+                headwear: { type: 'string', enum: ['none', 'beanie', 'cap', 'headphones', 'headband'], description: 'Headwear style' },
+                headwear_color: { type: 'string', description: 'Headwear color hex' },
+                neckwear: { type: 'string', enum: ['none', 'tie', 'bowtie', 'lanyard'], description: 'Neckwear style' },
+                neckwear_color: { type: 'string', description: 'Neckwear color hex' },
+              },
+            },
           },
         },
       },
@@ -2110,7 +2153,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolReset();
         break;
       case 'update_profile':
-        result = toolUpdateProfile(args?.display_name, args?.avatar, args?.bio, args?.role);
+        result = toolUpdateProfile(args?.display_name, args?.avatar, args?.bio, args?.role, args?.appearance);
         break;
       case 'workspace_write':
         result = toolWorkspaceWrite(args.key, args.content);
