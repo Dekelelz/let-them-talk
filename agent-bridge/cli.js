@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v3.3.3
+  Let Them Talk — Agent Bridge v3.4.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 
@@ -28,7 +28,9 @@ function printUsage() {
     npx let-them-talk plugin remove <n> Remove a plugin by name
     npx let-them-talk plugin enable <n> Enable a plugin
     npx let-them-talk plugin disable <n> Disable a plugin
-    npx let-them-talk help              Show this help message
+    npx let-them-talk msg <agent> <text> Send a message to an agent
+    npx let-them-talk status             Show active agents and message count
+    npx let-them-talk help               Show this help message
   `);
 }
 
@@ -416,6 +418,97 @@ function dashboard() {
   require('./dashboard.js');
 }
 
+function resolveDataDirCli() {
+  return process.env.AGENT_BRIDGE_DATA_DIR || path.join(process.cwd(), '.agent-bridge');
+}
+
+function readJsonl(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs.readFileSync(filePath, 'utf8')
+    .split('\n')
+    .filter(l => l.trim())
+    .map(l => { try { return JSON.parse(l); } catch { return null; } })
+    .filter(Boolean);
+}
+
+function readJson(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return {}; }
+}
+
+function isPidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function cliMsg() {
+  const recipient = process.argv[3];
+  const textParts = process.argv.slice(4);
+  if (!recipient || !textParts.length) {
+    console.error('  Usage: npx let-them-talk msg <agent> <text>');
+    process.exit(1);
+  }
+  if (!/^[a-zA-Z0-9_-]{1,20}$/.test(recipient)) {
+    console.error('  Agent name must be 1-20 alphanumeric characters (with _ or -).');
+    process.exit(1);
+  }
+  const text = textParts.join(' ');
+  const dir = resolveDataDirCli();
+  if (!fs.existsSync(dir)) {
+    console.error('  No .agent-bridge/ directory found. Run "npx let-them-talk init" first.');
+    process.exit(1);
+  }
+
+  const msgId = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const msg = {
+    id: msgId,
+    from: 'CLI',
+    to: recipient,
+    content: text,
+    timestamp: new Date().toISOString(),
+  };
+
+  const messagesFile = path.join(dir, 'messages.jsonl');
+  const historyFile = path.join(dir, 'history.jsonl');
+  fs.appendFileSync(messagesFile, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(historyFile, JSON.stringify(msg) + '\n');
+
+  console.log('  Message sent to ' + recipient + ': ' + text);
+}
+
+function cliStatus() {
+  const dir = resolveDataDirCli();
+  if (!fs.existsSync(dir)) {
+    console.error('  No .agent-bridge/ directory found. Run "npx let-them-talk init" first.');
+    process.exit(1);
+  }
+
+  const agents = readJson(path.join(dir, 'agents.json'));
+  const history = readJsonl(path.join(dir, 'history.jsonl'));
+
+  console.log('');
+  console.log('  Agent Bridge Status');
+  console.log('  ===================');
+  console.log('  Messages: ' + history.length);
+  console.log('');
+
+  const names = Object.keys(agents);
+  if (!names.length) {
+    console.log('  No agents registered.');
+  } else {
+    console.log('  Agents:');
+    for (const name of names) {
+      const info = agents[name];
+      const alive = isPidAlive(info.pid);
+      const status = alive ? '\x1b[32monline\x1b[0m' : '\x1b[31moffline\x1b[0m';
+      const lastActivity = info.last_activity || info.timestamp || '';
+      const msgCount = history.filter(m => m.from === name).length;
+      console.log('    ' + name.padEnd(16) + ' ' + status + '  msgs: ' + msgCount + '  last: ' + (lastActivity ? new Date(lastActivity).toLocaleTimeString() : '-'));
+    }
+  }
+  console.log('');
+}
+
 switch (command) {
   case 'init':
     init();
@@ -428,6 +521,14 @@ switch (command) {
     break;
   case 'reset':
     reset();
+    break;
+  case 'msg':
+  case 'message':
+  case 'send':
+    cliMsg();
+    break;
+  case 'status':
+    cliStatus();
     break;
   case 'plugin':
   case 'plugins':

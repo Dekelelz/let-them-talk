@@ -228,6 +228,74 @@ function apiStatus(query) {
   };
 }
 
+function apiStats(query) {
+  const projectPath = query.get('project') || null;
+  const history = readJsonl(filePath('history.jsonl', projectPath));
+  const agents = readJson(filePath('agents.json', projectPath));
+
+  // Per-agent stats
+  const perAgent = {};
+  let totalMessages = history.length;
+  const hourBuckets = new Array(24).fill(0);
+
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    const from = m.from || 'unknown';
+    if (!perAgent[from]) {
+      perAgent[from] = { messages: 0, responseTimes: [], hours: new Array(24).fill(0) };
+    }
+    perAgent[from].messages++;
+    const ts = new Date(m.timestamp);
+    const hour = ts.getHours();
+    perAgent[from].hours[hour]++;
+    hourBuckets[hour]++;
+
+    // Compute response time if this is a reply
+    if (m.reply_to) {
+      for (let j = i - 1; j >= Math.max(0, i - 50); j--) {
+        if (history[j].id === m.reply_to) {
+          const delta = ts.getTime() - new Date(history[j].timestamp).getTime();
+          if (delta > 0 && delta < 3600000) perAgent[from].responseTimes.push(delta);
+          break;
+        }
+      }
+    }
+  }
+
+  // Build per-agent summary
+  const agentStats = {};
+  let busiestAgent = null;
+  let busiestCount = 0;
+  for (const [name, data] of Object.entries(perAgent)) {
+    const avgResponseMs = data.responseTimes.length
+      ? Math.round(data.responseTimes.reduce((a, b) => a + b, 0) / data.responseTimes.length)
+      : null;
+    const peakHour = data.hours.indexOf(Math.max(...data.hours));
+    agentStats[name] = {
+      messages: data.messages,
+      avg_response_ms: avgResponseMs,
+      peak_hour: peakHour,
+    };
+    if (data.messages > busiestCount) {
+      busiestCount = data.messages;
+      busiestAgent = name;
+    }
+  }
+
+  // Conversation velocity (messages per minute over last 10 minutes)
+  const tenMinAgo = Date.now() - 600000;
+  const recentCount = history.filter(m => new Date(m.timestamp).getTime() > tenMinAgo).length;
+  const velocity = Math.round((recentCount / 10) * 10) / 10;
+
+  return {
+    total_messages: totalMessages,
+    busiest_agent: busiestAgent,
+    velocity_per_min: velocity,
+    hour_distribution: hourBuckets,
+    agents: agentStats,
+  };
+}
+
 function apiReset(query) {
   const projectPath = query.get('project') || null;
   const dataDir = resolveDataDir(projectPath);
@@ -528,9 +596,12 @@ function apiUpdateTask(body, query) {
   const task = tasks.find(t => t.id === body.task_id);
   if (!task) return { error: 'Task not found' };
 
+  const validStatuses = ['pending', 'in_progress', 'done', 'blocked'];
+  if (!validStatuses.includes(body.status)) return { error: 'Invalid status. Must be: ' + validStatuses.join(', ') };
   task.status = body.status;
   task.updated_at = new Date().toISOString();
   if (body.notes) {
+    if (!Array.isArray(task.notes)) task.notes = [];
     task.notes.push({ by: 'Dashboard', text: body.notes, at: new Date().toISOString() });
   }
 
@@ -662,6 +733,233 @@ function apiLaunchAgent(body) {
   };
 }
 
+// --- v3.4: Message Edit ---
+function apiEditMessage(body, query) {
+  const projectPath = query.get('project') || null;
+  const { id, content } = body;
+  if (!id || !content) return { error: 'Missing "id" and/or "content" fields' };
+  if (content.length > 50000) return { error: 'Content too long (max 50000 chars)' };
+
+  const dataDir = resolveDataDir(projectPath);
+  const historyFile = path.join(dataDir, 'history.jsonl');
+  const messagesFile = path.join(dataDir, 'messages.jsonl');
+
+  let found = false;
+  const now = new Date().toISOString();
+
+  // Update in history.jsonl
+  if (fs.existsSync(historyFile)) {
+    const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n').filter(Boolean);
+    const updated = lines.map(line => {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id === id) {
+          found = true;
+          if (!msg.edit_history) msg.edit_history = [];
+          msg.edit_history.push({ content: msg.content, edited_at: now });
+          msg.content = content;
+          msg.edited = true;
+          msg.edited_at = now;
+          return JSON.stringify(msg);
+        }
+        return line;
+      } catch { return line; }
+    });
+    if (found) fs.writeFileSync(historyFile, updated.join('\n') + '\n');
+  }
+
+  // Also update in messages.jsonl (for agents that haven't consumed yet)
+  if (found && fs.existsSync(messagesFile)) {
+    const raw = fs.readFileSync(messagesFile, 'utf8').trim();
+    if (raw) {
+      const lines = raw.split('\n');
+      const updated = lines.map(line => {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id === id) {
+            msg.content = content;
+            msg.edited = true;
+            msg.edited_at = now;
+            return JSON.stringify(msg);
+          }
+          return line;
+        } catch { return line; }
+      });
+      fs.writeFileSync(messagesFile, updated.join('\n') + '\n');
+    }
+  }
+
+  if (!found) return { error: 'Message not found' };
+  return { success: true, id, edited_at: now };
+}
+
+// --- v3.4: Message Delete ---
+function apiDeleteMessage(body, query) {
+  const projectPath = query.get('project') || null;
+  const { id } = body;
+  if (!id) return { error: 'Missing "id" field' };
+
+  const dataDir = resolveDataDir(projectPath);
+  const historyFile = path.join(dataDir, 'history.jsonl');
+  const messagesFile = path.join(dataDir, 'messages.jsonl');
+
+  let found = false;
+  let msgFrom = null;
+
+  // Find the message first to check permissions
+  if (fs.existsSync(historyFile)) {
+    const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
+    for (const line of lines) {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id === id) { found = true; msgFrom = msg.from; break; }
+      } catch {}
+    }
+  }
+
+  if (!found) return { error: 'Message not found' };
+
+  // Only allow deleting dashboard-injected or system messages
+  const allowed = ['Dashboard', 'dashboard', 'system', '__system__'];
+  if (!allowed.includes(msgFrom)) {
+    return { error: 'Can only delete messages sent from Dashboard or system' };
+  }
+
+  // Remove from history.jsonl
+  if (fs.existsSync(historyFile)) {
+    const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
+    const filtered = lines.filter(line => {
+      try { return JSON.parse(line).id !== id; } catch { return true; }
+    });
+    fs.writeFileSync(historyFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
+  }
+
+  // Remove from messages.jsonl
+  if (fs.existsSync(messagesFile)) {
+    const lines = fs.readFileSync(messagesFile, 'utf8').trim().split('\n');
+    const filtered = lines.filter(line => {
+      try { return JSON.parse(line).id !== id; } catch { return true; }
+    });
+    fs.writeFileSync(messagesFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
+  }
+
+  return { success: true, id };
+}
+
+// --- v3.4: Conversation Templates ---
+function apiGetConversationTemplates() {
+  const templatesDir = path.join(__dirname, 'conversation-templates');
+  if (!fs.existsSync(templatesDir)) {
+    // Return built-in templates
+    return getBuiltInConversationTemplates();
+  }
+  const custom = fs.readdirSync(templatesDir)
+    .filter(f => f.endsWith('.json'))
+    .map(f => { try { return JSON.parse(fs.readFileSync(path.join(templatesDir, f), 'utf8')); } catch { return null; } })
+    .filter(Boolean);
+  return [...getBuiltInConversationTemplates(), ...custom];
+}
+
+function getBuiltInConversationTemplates() {
+  return [
+    {
+      id: 'code-review',
+      name: 'Code Review Pipeline',
+      description: 'Developer writes code, Reviewer checks it, Tester validates',
+      agents: [
+        { name: 'Developer', role: 'Developer', prompt: 'You are a developer. Write code as instructed. After completing, send your code to Reviewer for review.' },
+        { name: 'Reviewer', role: 'Code Reviewer', prompt: 'You are a code reviewer. Wait for code from Developer. Review it for bugs, style, and best practices. Send feedback back to Developer or approve and forward to Tester.' },
+        { name: 'Tester', role: 'QA Tester', prompt: 'You are a QA tester. Wait for approved code from Reviewer. Write and run tests. Report results back to the team.' }
+      ],
+      workflow: { name: 'Code Review', steps: ['Write Code', 'Review', 'Test', 'Approve'] }
+    },
+    {
+      id: 'debug-squad',
+      name: 'Debug Squad',
+      description: 'Investigator finds the bug, Fixer patches it, Verifier confirms the fix',
+      agents: [
+        { name: 'Investigator', role: 'Bug Investigator', prompt: 'You investigate bugs. Analyze error logs, trace code paths, and identify root causes. Send findings to Fixer.' },
+        { name: 'Fixer', role: 'Bug Fixer', prompt: 'You fix bugs. Wait for findings from Investigator. Implement fixes and send to Verifier for confirmation.' },
+        { name: 'Verifier', role: 'Fix Verifier', prompt: 'You verify bug fixes. Wait for patches from Fixer. Test the fix and confirm resolution or send back for more work.' }
+      ],
+      workflow: { name: 'Bug Fix', steps: ['Investigate', 'Fix', 'Verify', 'Close'] }
+    },
+    {
+      id: 'feature-build',
+      name: 'Feature Development',
+      description: 'Architect designs, Builder implements, Reviewer approves',
+      agents: [
+        { name: 'Architect', role: 'Software Architect', prompt: 'You are a software architect. Design the feature architecture, define interfaces, and create the implementation plan. Send the plan to Builder.' },
+        { name: 'Builder', role: 'Developer', prompt: 'You are a developer. Wait for architecture plans from Architect. Implement the feature following the design. Send completed code to Reviewer.' },
+        { name: 'Reviewer', role: 'Senior Reviewer', prompt: 'You are a senior reviewer. Review implementations from Builder against the architecture from Architect. Approve or request changes.' }
+      ],
+      workflow: { name: 'Feature Dev', steps: ['Design', 'Implement', 'Review', 'Ship'] }
+    },
+    {
+      id: 'research-write',
+      name: 'Research & Write',
+      description: 'Researcher gathers info, Writer creates content, Editor polishes',
+      agents: [
+        { name: 'Researcher', role: 'Researcher', prompt: 'You are a researcher. Gather information on the given topic. Organize findings and send a research brief to Writer.' },
+        { name: 'Writer', role: 'Writer', prompt: 'You are a writer. Wait for research from Researcher. Write clear, well-structured content based on the findings. Send to Editor.' },
+        { name: 'Editor', role: 'Editor', prompt: 'You are an editor. Review and polish content from Writer. Check for clarity, accuracy, and style. Send back final version or request revisions.' }
+      ],
+      workflow: { name: 'Content Pipeline', steps: ['Research', 'Draft', 'Edit', 'Publish'] }
+    }
+  ];
+}
+
+function apiLaunchConversationTemplate(body, query) {
+  const projectPath = query.get('project') || null;
+  const { template_id } = body;
+  if (!template_id) return { error: 'Missing template_id' };
+
+  const templates = apiGetConversationTemplates();
+  const template = templates.find(t => t.id === template_id);
+  if (!template) return { error: 'Template not found: ' + template_id };
+
+  // Return the template config for the frontend to display launch instructions
+  return {
+    success: true,
+    template,
+    instructions: template.agents.map(a => ({
+      agent_name: a.name,
+      role: a.role,
+      prompt: `You are "${a.name}" with role "${a.role}". ${a.prompt}\n\nFirst register yourself with: register(name="${a.name}"), then update_profile(role="${a.role}"). Then enter listen mode.`
+    }))
+  };
+}
+
+// --- v3.4: Agent Permissions ---
+function apiUpdatePermissions(body, query) {
+  const projectPath = query.get('project') || null;
+  const dataDir = resolveDataDir(projectPath);
+  const permFile = path.join(dataDir, 'permissions.json');
+
+  const { agent, permissions } = body;
+  if (!agent || !permissions) return { error: 'Missing "agent" and/or "permissions" fields' };
+
+  let perms = {};
+  if (fs.existsSync(permFile)) {
+    try { perms = JSON.parse(fs.readFileSync(permFile, 'utf8')); } catch {}
+  }
+
+  // permissions: { can_read: [agents...] or "*", can_write_to: [agents...] or "*", is_admin: bool }
+  const allowed = {};
+  if (permissions.can_read !== undefined) allowed.can_read = permissions.can_read;
+  if (permissions.can_write_to !== undefined) allowed.can_write_to = permissions.can_write_to;
+  if (permissions.is_admin !== undefined) allowed.is_admin = !!permissions.is_admin;
+  perms[agent] = {
+    ...perms[agent],
+    ...allowed,
+    updated_at: new Date().toISOString()
+  };
+
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(permFile, JSON.stringify(perms, null, 2));
+  return { success: true, agent, permissions: perms[agent] };
+}
+
 // --- HTTP Server ---
 
 // Load HTML at startup (re-read on each request in dev for hot-reload)
@@ -696,7 +994,7 @@ const server = http.createServer(async (req, res) => {
   } else if (reqOrigin === allowedOrigin || reqOrigin === `http://127.0.0.1:${PORT}`) {
     res.setHeader('Access-Control-Allow-Origin', reqOrigin);
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
@@ -706,7 +1004,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // CSRF + DNS rebinding protection: validate Host and Origin on mutating requests
-  if (req.method === 'POST' || req.method === 'DELETE') {
+  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
     // Check Host header to block DNS rebinding attacks
     const host = (req.headers.host || '').replace(/:\d+$/, '');
     const validHosts = ['localhost', '127.0.0.1'];
@@ -774,6 +1072,10 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/status' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiStatus(url.searchParams)));
+    }
+    else if (url.pathname === '/api/stats' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiStats(url.searchParams)));
     }
     else if (url.pathname === '/api/reset' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -953,6 +1255,43 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
+    // --- v3.4: Message Edit ---
+    else if (url.pathname === '/api/message' && req.method === 'PUT') {
+      const body = await parseBody(req);
+      const result = apiEditMessage(body, url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    // --- v3.4: Message Delete ---
+    else if (url.pathname === '/api/message' && req.method === 'DELETE') {
+      const body = await parseBody(req);
+      const result = apiDeleteMessage(body, url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    // --- v3.4: Conversation Templates ---
+    else if (url.pathname === '/api/conversation-templates' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiGetConversationTemplates()));
+    }
+    else if (url.pathname === '/api/conversation-templates/launch' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const result = apiLaunchConversationTemplate(body, url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    // --- v3.4: Agent Permissions ---
+    else if (url.pathname === '/api/permissions' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(readJson(filePath('permissions.json', projectPath))));
+    }
+    else if (url.pathname === '/api/permissions' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const result = apiUpdatePermissions(body, url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
     // Server info (LAN mode detection for frontend)
     else if (url.pathname === '/api/server-info' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1081,7 +1420,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.3.3');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.0');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

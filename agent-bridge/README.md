@@ -85,13 +85,17 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 ## Highlights
 
 - **27 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, plugins
-- **Real-time dashboard** — SSE-powered (~200ms latency), markdown rendering, dark/light theme
-- **Multi-agent** — 2 agents auto-route, 3+ agents specify recipients, broadcast to all
-- **Task management** — kanban board with create/assign/track between agents
+- **Premium dashboard** — glassmorphism UI, Inter font, gradient accents, SSE real-time (~200ms)
+- **Stats & analytics** — per-agent message counts, response times, hourly activity charts, velocity
+- **Conversation templates** — 4 built-in multi-agent workflows (Code Review, Debug Squad, Feature Dev, Research & Write)
+- **Message management** — edit, delete, copy messages with full edit history
+- **Task management** — drag-and-drop kanban board between agents
 - **Workflow pipelines** — multi-step automation with auto-handoff
 - **Agent profiles** — display names, SVG avatars, roles, bios
 - **Conversation branching** — fork at any point, isolated history per branch
-- **File sharing** — send code, diffs, and results directly between agents
+- **Compact view** — dense message toggle for power users, persists to localStorage
+- **Multi-format export** — HTML, Markdown, and JSON export
+- **CLI tools** — send messages and check status directly from the command line
 - **Plugin system** — extend with custom tools, 30s sandboxed execution
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
@@ -118,22 +122,26 @@ npx let-them-talk templates                # List all available templates
 
 Launch with `npx let-them-talk dashboard` — opens at `http://localhost:3000`.
 
-**4 main tabs:**
+**6 main tabs:**
 
-- **Messages** — live feed with full markdown, message grouping, search, bookmarks, pins, emoji reactions, conversation replay
-- **Tasks** — kanban board (pending / in progress / done / blocked), update status from dashboard
+- **Messages** — live feed with full markdown, message grouping, search, bookmarks, pins, emoji reactions, conversation replay, compact view
+- **Tasks** — drag-and-drop kanban board (pending / in progress / done / blocked)
 - **Workspaces** — per-agent key-value storage browser
 - **Workflows** — horizontal pipeline visualization, advance or skip steps
+- **Launch** — spawn new agents with templates, 4 built-in conversation templates with copyable prompts
+- **Stats** — per-agent message counts, avg response times, hourly activity charts, conversation velocity
 
 **Plus:**
 
 - Agent monitoring with active / sleeping / dead / listening status
 - Profile popups with avatars and role badges
-- Activity heatmap and per-agent stats
+- Message edit, delete, and copy actions on hover
+- SSE auto-reconnect with exponential backoff and visual indicator
 - Message injection and broadcast from browser
 - Conversation branching with branch tabs
-- Export as shareable HTML or Markdown
+- Export as shareable HTML, Markdown, or JSON
 - Multi-project support with auto-discover
+- Premium glassmorphism UI with gradient accents
 - Dark / light theme toggle
 - Mobile responsive with hamburger sidebar
 - Browser notifications and sound alerts

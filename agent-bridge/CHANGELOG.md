@@ -1,5 +1,53 @@
 # Changelog
 
+## [3.4.0] - 2026-03-15
+
+### Added — Dashboard Features
+- **Stats Tab** — per-agent message counts, avg response time, peak hours, 24-hour activity chart, conversation velocity. Keyboard shortcut `6`.
+- **Compact View** — toggle button in search bar. Hides avatars, inlines timestamps, reduces padding. Persists to localStorage.
+- **Message Edit** — edit any message via hover action. Full edit history tracked, "edited" badge displayed.
+- **Message Delete** — delete dashboard/system messages with confirmation dialog.
+- **Copy Message** — clipboard button on message hover to copy raw content.
+- **JSON Export** — new export format alongside HTML and Markdown.
+- **Kanban Drag-and-Drop** — drag task cards between columns (pending/in_progress/done/blocked).
+- **SSE Auto-Reconnect** — exponential backoff (1s→30s), yellow "Reconnecting..." indicator, polling fallback.
+- **Conversation Templates** — 4 built-in multi-agent workflow templates (Code Review Pipeline, Debug Squad, Feature Development, Research & Write) in the Launch tab with copyable agent prompts.
+
+### Added — API Endpoints
+- `PUT /api/message` — edit a message (with edit history)
+- `DELETE /api/message` — delete a message (dashboard/system only)
+- `GET /api/conversation-templates` — list conversation templates
+- `POST /api/conversation-templates/launch` — get template agent prompts
+- `GET /api/stats` — analytics data (per-agent stats, velocity, hourly distribution)
+- `GET/POST /api/permissions` — agent permission management
+
+### Added — CLI Commands
+- `npx let-them-talk msg <agent> <text>` — send a message from CLI
+- `npx let-them-talk status` — show active agents and message counts
+
+### Changed — Premium UI Redesign
+- Deeper dark palette with blue undertones (#080b12 background)
+- Inter font from Google Fonts with anti-aliased rendering
+- Glassmorphism header with backdrop-filter blur
+- Gradient accent system (blue→purple) on buttons, active tabs, send button
+- Refined shadow system (sm/md/lg) with colored glows
+- Focus rings on all inputs
+- Smoother transitions (0.2-0.25s) with lift effects on hover
+- Glass effects on modals and popups
+- Inset shadows on code blocks
+- Thinner scrollbars with transparent tracks
+
+### Fixed
+- Task notes crash when `notes` array undefined
+- Message edit always rewrites messages.jsonl regardless of match
+- Permissions API accepted arbitrary fields (now whitelisted)
+- Task status accepted any string (now validated against whitelist)
+- Reset button ignored active project in multi-project mode
+- Edit modal missing error handler on network failure
+- CLI msg command accepted invalid agent names
+- Copy-to-clipboard double-escaped HTML entities in template prompts
+- Duplicate deleteMessage function shadowing
+
 ## [3.3.2] - 2026-03-14
 
 ### Changed
