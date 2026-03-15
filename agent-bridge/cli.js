@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v3.4.3
+  Let Them Talk — Agent Bridge v3.4.4
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 
@@ -65,7 +65,12 @@ function setupClaude(serverPath, cwd) {
     try {
       mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8'));
       if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
-    } catch {}
+    } catch {
+      // Backup corrupted file before overwriting
+      const backup = mcpConfigPath + '.backup';
+      fs.copyFileSync(mcpConfigPath, backup);
+      console.log('  [warn] Existing .mcp.json was invalid — backed up to .mcp.json.backup');
+    }
   }
 
   mcpConfig.mcpServers['agent-bridge'] = {
@@ -93,7 +98,11 @@ function setupGemini(serverPath, cwd) {
     try {
       settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       if (!settings.mcpServers) settings.mcpServers = {};
-    } catch {}
+    } catch {
+      const backup = settingsPath + '.backup';
+      fs.copyFileSync(settingsPath, backup);
+      console.log('  [warn] Existing settings.json was invalid — backed up to settings.json.backup');
+    }
   }
 
   settings.mcpServers['agent-bridge'] = {

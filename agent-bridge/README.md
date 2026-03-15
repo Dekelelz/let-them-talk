@@ -72,7 +72,7 @@ Run `npx let-them-talk init --all` to configure all three at once.
        |                       |                       |
        +----------- .agent-bridge/ directory ----------+
                     messages · agents · tasks
-                    profiles · workflows · plugins
+                    profiles · workflows · permissions
                               |
                               v
                     Web Dashboard :3000
@@ -84,7 +84,7 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
-- **27 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, plugins
+- **27 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching
 - **Premium dashboard** — glassmorphism UI, Inter font, gradient accents, SSE real-time (~200ms)
 - **Stats & analytics** — per-agent message counts, response times, hourly activity charts, velocity
 - **Conversation templates** — 4 built-in multi-agent workflows (Code Review, Debug Squad, Feature Dev, Research & Write)
@@ -96,7 +96,7 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 - **Compact view** — dense message toggle for power users, persists to localStorage
 - **Multi-format export** — HTML, Markdown, and JSON export
 - **CLI tools** — send messages and check status directly from the command line
-- **Plugin system** — extend with custom tools, 30s sandboxed execution
+- **Secure by default** — CSRF protection, LAN auth tokens, Content Security Policy, agent permissions
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
 ## Agent Templates
@@ -147,7 +147,7 @@ Launch with `npx let-them-talk dashboard` — opens at `http://localhost:3000`.
 - Browser notifications and sound alerts
 - LAN mode for phone access
 
-## MCP Tools (27 + plugins)
+## MCP Tools (27)
 
 <details>
 <summary><strong>Messaging (13 tools)</strong></summary>
@@ -207,38 +207,6 @@ Launch with `npx let-them-talk dashboard` — opens at `http://localhost:3000`.
 
 </details>
 
-## Plugins
-
-Extend Let Them Talk with custom tools. Drop a `.js` file in `.agent-bridge/plugins/`.
-
-```javascript
-module.exports = {
-  name: 'my-tool',
-  description: 'What this tool does',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      query: { type: 'string', description: 'Input text' }
-    },
-    required: ['query']
-  },
-  handler(args, ctx) {
-    // ctx: sendMessage, getAgents, getHistory, readFile, registeredName, dataDir
-    return { result: 'done', query: args.query };
-  }
-};
-```
-
-```bash
-npx let-them-talk plugin add my-tool.js    # install
-npx let-them-talk plugin list              # list installed
-npx let-them-talk plugin remove my-tool    # remove
-npx let-them-talk plugin enable my-tool    # enable
-npx let-them-talk plugin disable my-tool   # disable
-```
-
-Plugins run sandboxed with a 30-second timeout. Manage via CLI or dashboard.
-
 ## CLI Reference
 
 ```bash
@@ -248,7 +216,8 @@ npx let-them-talk init --template <name>   # use a team template
 npx let-them-talk templates                # list templates
 npx let-them-talk dashboard                # launch web dashboard
 npx let-them-talk reset                    # clear conversation data
-npx let-them-talk plugin <subcommand>      # manage plugins
+npx let-them-talk msg <agent> <text>       # send a message from CLI
+npx let-them-talk status                  # show active agents
 npx let-them-talk help                     # show help
 ```
 
@@ -268,7 +237,7 @@ Let Them Talk is a **local message broker**. It passes text messages between CLI
 
 **Does not:** access the internet, store API keys, run cloud services, or grant new filesystem access.
 
-**Built-in protections:** CORS restriction, XSS prevention, path traversal protection, symlink validation, origin enforcement, SSE connection limits, input validation, message size limits (1MB), plugin sandboxing (30s timeout).
+**Built-in protections:** CSRF custom header, LAN auth tokens, Content Security Policy, CORS restriction, XSS prevention, path traversal protection, symlink validation, origin enforcement, SSE connection limits, input validation, message size limits (1MB), agent permissions.
 
 **LAN mode:** Optional phone access exposes the dashboard to your local WiFi only. Requires explicit activation.
 

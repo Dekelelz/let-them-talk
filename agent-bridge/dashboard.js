@@ -412,15 +412,7 @@ function apiAddProject(body) {
   const absPath = path.resolve(body.path);
   if (!fs.existsSync(absPath)) return { error: `Path does not exist: ${absPath}` };
 
-  // Restrict to paths under cwd or paths that look like project directories
-  const cwd = path.resolve(process.cwd());
-  if (!absPath.startsWith(cwd + path.sep) && absPath !== cwd) {
-    const hasProject = fs.existsSync(path.join(absPath, 'package.json')) ||
-                       fs.existsSync(path.join(absPath, '.git'));
-    if (!hasProject) {
-      return { error: 'Path must be a project directory (with package.json or .git)' };
-    }
-  }
+  // Any existing directory can be added as a project — user explicitly chose it
 
   const projects = getProjects();
   const name = body.name || path.basename(absPath);
@@ -1480,7 +1472,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.3');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.4');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

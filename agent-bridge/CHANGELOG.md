@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.4.4] - 2026-03-15
+
+### Fixed
+- Add project now accepts any existing directory (removed requirement for package.json or .git)
+- Init safely backs up corrupted .mcp.json and settings.json before overwriting
+
+### Changed
+- Removed plugin references from website and docs
+- Website updated with security features (LAN auth token, CSRF, CSP)
+
 ## [3.4.3] - 2026-03-15
 
 ### Removed — Plugin System
