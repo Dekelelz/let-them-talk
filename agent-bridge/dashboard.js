@@ -18,6 +18,26 @@ const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
 const LAN_STATE_FILE = path.join(__dirname, '.lan-mode');
 let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true' || (fs.existsSync(LAN_STATE_FILE) && fs.readFileSync(LAN_STATE_FILE, 'utf8').trim() === 'true');
 
+const LAN_TOKEN_FILE = path.join(__dirname, '.lan-token');
+let LAN_TOKEN = null;
+
+function generateLanToken() {
+  const crypto = require('crypto');
+  LAN_TOKEN = crypto.randomBytes(16).toString('hex');
+  try { fs.writeFileSync(LAN_TOKEN_FILE, LAN_TOKEN); } catch {}
+  return LAN_TOKEN;
+}
+
+function loadLanToken() {
+  if (fs.existsSync(LAN_TOKEN_FILE)) {
+    try { LAN_TOKEN = fs.readFileSync(LAN_TOKEN_FILE, 'utf8').trim(); } catch {}
+  }
+  if (!LAN_TOKEN) generateLanToken();
+}
+
+// Load or generate token on startup
+loadLanToken();
+
 function persistLanMode() {
   try { fs.writeFileSync(LAN_STATE_FILE, LAN_MODE ? 'true' : 'false'); } catch {}
 }
@@ -1009,13 +1029,15 @@ const server = http.createServer(async (req, res) => {
 
   const allowedOrigin = `http://localhost:${PORT}`;
   const reqOrigin = req.headers.origin;
-  if (LAN_MODE && reqOrigin) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  } else if (reqOrigin === allowedOrigin || reqOrigin === `http://127.0.0.1:${PORT}`) {
+  const lanIP = getLanIP();
+  const lanOrigin = lanIP ? `http://${lanIP}:${PORT}` : null;
+  const trustedOrigins = [allowedOrigin, `http://127.0.0.1:${PORT}`];
+  if (LAN_MODE && lanOrigin) trustedOrigins.push(lanOrigin);
+  if (reqOrigin && trustedOrigins.includes(reqOrigin)) {
     res.setHeader('Access-Control-Allow-Origin', reqOrigin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-LTT-Request, X-LTT-Token');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -1023,7 +1045,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // CSRF + DNS rebinding protection: validate Host and Origin on mutating requests
+  // LAN auth token — required for non-localhost requests when LAN mode is active
+  if (LAN_MODE) {
+    const host = (req.headers.host || '').replace(/:\d+$/, '');
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+    if (!isLocalhost) {
+      const tokenFromQuery = url.searchParams.get('token');
+      const tokenFromHeader = req.headers['x-ltt-token'];
+      const providedToken = tokenFromHeader || tokenFromQuery;
+      if (!providedToken || providedToken !== LAN_TOKEN) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized: invalid or missing LAN token' }));
+        return;
+      }
+    }
+  }
+
+  // CSRF + DNS rebinding protection: validate Host, Origin, and custom header on mutating requests
   if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
     // Check Host header to block DNS rebinding attacks
     const host = (req.headers.host || '').replace(/:\d+$/, '');
@@ -1034,13 +1072,26 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Forbidden: invalid host' }));
       return;
     }
+    // Require custom header — browsers block cross-origin custom headers without preflight,
+    // which our CORS policy won't approve for foreign origins. This closes the no-Origin gap.
+    if (!req.headers['x-ltt-request']) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: missing X-LTT-Request header' }));
+      return;
+    }
     // Check Origin header to block cross-site requests
+    // Empty origin is NOT trusted — requires at least the custom header (checked above)
     const origin = req.headers.origin || '';
     const referer = req.headers.referer || '';
     const source = origin || referer;
-    const isLocal = !source || source.includes('localhost:' + PORT) || source.includes('127.0.0.1:' + PORT);
-    const isLan = LAN_MODE && getLanIP() && source.includes(getLanIP() + ':' + PORT);
-    if (!isLocal && !isLan) {
+    if (!source) {
+      // No origin/referer — non-browser client (curl, scripts, etc.)
+      // Custom header check above is the only protection layer here — allow through
+      // since local CLI tools (like our own `msg` command) need to work
+    }
+    const isLocal = source && (source.includes('localhost:' + PORT) || source.includes('127.0.0.1:' + PORT));
+    const isLan = LAN_MODE && getLanIP() && source && source.includes(getLanIP() + ':' + PORT);
+    if (source && !isLocal && !isLan) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden: invalid origin' }));
       return;
@@ -1074,6 +1125,7 @@ const server = http.createServer(async (req, res) => {
       const html = fs.readFileSync(HTML_FILE, 'utf8');
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'",
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
@@ -1321,7 +1373,7 @@ const server = http.createServer(async (req, res) => {
     // Server info (LAN mode detection for frontend)
     else if (url.pathname === '/api/server-info' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: getLanIP(), port: PORT }));
+      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: getLanIP(), port: PORT, lan_token: LAN_MODE ? LAN_TOKEN : null }));
     }
     // Toggle LAN mode (re-bind server live)
     else if (url.pathname === '/api/toggle-lan' && req.method === 'POST') {
@@ -1329,9 +1381,11 @@ const server = http.createServer(async (req, res) => {
       const lanIP = getLanIP();
       LAN_MODE = newMode;
       persistLanMode();
+      // Regenerate token when enabling LAN mode
+      if (newMode) generateLanToken();
       // Send response first
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT }));
+      res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT, lan_token: newMode ? LAN_TOKEN : null }));
       // Re-bind by stopping the listener and immediately re-listening
       // Use setImmediate to let the response flush first
       setImmediate(() => {
@@ -1447,7 +1501,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.1');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.2');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

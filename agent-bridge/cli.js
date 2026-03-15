@@ -8,7 +8,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v3.4.1
+  Let Them Talk — Agent Bridge v3.4.2
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI
 

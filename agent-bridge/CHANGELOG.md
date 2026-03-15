@@ -1,5 +1,34 @@
 # Changelog
 
+## [3.4.2] - 2026-03-15
+
+### Security — CSRF Protection
+- Required `X-LTT-Request` custom header on all POST/PUT/DELETE requests
+- `lttFetch` wrapper in dashboard automatically includes the header
+- Malicious cross-origin pages cannot set custom headers without CORS preflight approval
+- Removed wildcard `Access-Control-Allow-Origin: *` in LAN mode — now uses explicit trusted origins only
+- Empty Origin/Referer no longer auto-trusted — requires custom header as minimum protection
+
+### Security — LAN Auth Token
+- Auto-generated 32-char hex token when LAN mode is enabled
+- Token required for all non-localhost requests (via `?token=` query param or `X-LTT-Token` header)
+- Token included in QR code URL — phone scans and it just works
+- Token displayed in phone access modal with explanation
+- New token generated each time LAN mode is toggled on
+- Token persists across server restarts via `.lan-token` file
+- Localhost access never requires a token
+
+### Security — Content Security Policy
+- CSP header added to dashboard HTML response
+- `script-src 'unsafe-inline'` for inline handlers, blocks `eval()` and external scripts
+- `connect-src 'self'` restricts API calls to same origin
+- `font-src`, `style-src`, `img-src` scoped to required sources only
+
+### Fixed
+- CSRF brace imbalance that trapped GET handlers inside POST-only block
+- LAN token not forwarded from phone URL to API calls and SSE
+- Redundant nested origin check collapsed to single condition
+
 ## [3.4.1] - 2026-03-15
 
 ### Added

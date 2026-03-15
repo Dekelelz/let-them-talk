@@ -2842,7 +2842,7 @@
   </div>
 </div>
 <div class="app-footer">
-  <span>Let Them Talk v3.4.1</span>
+  <span>Let Them Talk v3.4.2</span>
 </div>
 <div class="profile-popup" id="profile-popup" onclick="event.stopPropagation()">
   <div class="profile-popup-header">
@@ -2897,6 +2897,26 @@ var POLL_INTERVAL = 2000;
 var SLEEP_THRESHOLD = 60; // seconds
 var lastMessageCount = 0;
 var autoScroll = true;
+// CSRF protection — all mutating requests must include this header
+// Read LAN token from URL on page load (phone access via QR code)
+var _lttToken = (function() {
+  try { var p = new URLSearchParams(window.location.search); var t = p.get('token'); if (t) sessionStorage.setItem('ltt-token', t); return sessionStorage.getItem('ltt-token') || ''; } catch(e) { return ''; }
+})();
+
+function lttFetch(url, opts) {
+  opts = opts || {};
+  // Append LAN token to URL if present (needed for phone/LAN access)
+  if (_lttToken) {
+    var sep = url.indexOf('?') >= 0 ? '&' : '?';
+    url = url + sep + 'token=' + encodeURIComponent(_lttToken);
+  }
+  if (opts.method && opts.method !== 'GET') {
+    if (!opts.headers) opts.headers = {};
+    opts.headers['X-LTT-Request'] = '1';
+  }
+  return fetch(url, opts);
+}
+
 var activeThread = null;
 var activeProject = ''; // empty = default/local
 var cachedHistory = [];
@@ -3227,7 +3247,7 @@ function renderAgents(agents) {
 
 function sendNudge(agentName) {
   var body = JSON.stringify({ to: agentName, content: 'Hey ' + agentName + ', the user is waiting for you. Please check for new messages and continue your work.' });
-  fetch('/api/inject' + projectParam(), {
+  lttFetch('/api/inject' + projectParam(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body
@@ -3285,7 +3305,7 @@ function doInject() {
   if (!target || !content) return;
 
   var body = JSON.stringify({ to: target, content: content });
-  fetch('/api/inject' + projectParam(), {
+  lttFetch('/api/inject' + projectParam(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body
@@ -3612,7 +3632,7 @@ var cachedReadReceipts = {};
 
 function fetchReadReceipts() {
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  fetch('/api/read-receipts' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/read-receipts' + pq).then(function(r) { return r.json(); }).then(function(data) {
     cachedReadReceipts = data || {};
   }).catch(function() {});
 }
@@ -3752,7 +3772,7 @@ function deleteMessage(msgId) {
   var preview = msg.content.substring(0, 60) + (msg.content.length > 60 ? '...' : '');
   if (!confirm('Delete this message from ' + msg.from + '?\n\n"' + preview + '"')) return;
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  fetch('/api/message' + pq, {
+  lttFetch('/api/message' + pq, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: msgId })
@@ -3802,7 +3822,7 @@ function saveEditMessage() {
   var content = document.getElementById('edit-msg-content').value.trim();
   if (!content) return;
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  fetch('/api/message' + pq, {
+  lttFetch('/api/message' + pq, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: msgId, content: content })
@@ -3994,7 +4014,7 @@ function renderAgentStats() {
 
 function fetchActivity() {
   var pq = projectParam();
-  fetch('/api/timeline' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/timeline' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderActivityHeatmap(data);
   }).catch(function() {});
 }
@@ -4174,7 +4194,7 @@ var cachedTasks = [];
 
 function fetchTasks() {
   var pq = projectParam();
-  fetch('/api/tasks' + pq).then(function(r) { return r.json(); }).then(function(tasks) {
+  lttFetch('/api/tasks' + pq).then(function(r) { return r.json(); }).then(function(tasks) {
     cachedTasks = Array.isArray(tasks) ? tasks : [];
     renderTasks();
   }).catch(function() {
@@ -4265,7 +4285,7 @@ function buildTaskCard(t) {
 }
 
 function updateTaskStatus(taskId, newStatus) {
-  fetch('/api/tasks' + projectParam(), {
+  lttFetch('/api/tasks' + projectParam(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId, status: newStatus })
@@ -4322,7 +4342,7 @@ var AGENT_COLORS = ['#58a6ff', '#f78166', '#7ee787', '#d2a8ff', '#ffa657', '#ff7
 
 function fetchStats() {
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  fetch('/api/stats' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/stats' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderStats(data);
   }).catch(function(e) { console.error('Stats fetch failed:', e); });
 }
@@ -4571,7 +4591,7 @@ function saveProfile() {
   };
   if (avatar) body.avatar = avatar;
 
-  fetch('/api/profiles' + projectParam(), {
+  lttFetch('/api/profiles' + projectParam(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -4587,7 +4607,7 @@ function saveProfile() {
 
 function fetchWorkspaces() {
   var pq = projectParam();
-  fetch('/api/workspaces' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/workspaces' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderWorkspaces(data);
   }).catch(function() {});
 }
@@ -4634,7 +4654,7 @@ function renderWorkspaces(data) {
 
 function fetchWorkflows() {
   var pq = projectParam();
-  fetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderWorkflows(Array.isArray(data) ? data : []);
   }).catch(function() {});
 }
@@ -4685,7 +4705,7 @@ function renderWorkflows(workflows) {
 }
 
 function dashAdvanceWorkflow(wfId) {
-  fetch('/api/workflows' + projectParam(), {
+  lttFetch('/api/workflows' + projectParam(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'advance', workflow_id: wfId })
@@ -4698,7 +4718,7 @@ var activeBranch = '';
 
 function fetchBranches() {
   var pq = projectParam();
-  fetch('/api/branches' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/branches' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderBranchTabs(data);
   }).catch(function() {});
 }
@@ -4734,7 +4754,7 @@ function switchBranch(name) {
 
 function fetchPlugins() {
   var pq = projectParam();
-  fetch('/api/plugins' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch('/api/plugins' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderPlugins(Array.isArray(data) ? data : []);
   }).catch(function() {});
 }
@@ -4761,7 +4781,7 @@ function renderPlugins(plugins) {
 }
 
 function togglePlugin(name) {
-  fetch('/api/plugins' + projectParam(), {
+  lttFetch('/api/plugins' + projectParam(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'toggle', name: name })
@@ -4776,9 +4796,9 @@ function poll() {
   var bp = activeBranch && activeBranch !== 'main' ? '&branch=' + encodeURIComponent(activeBranch) : '';
   var pollStart = Date.now();
   Promise.all([
-    fetch('/api/history?limit=500' + pp + bp).then(function(r) { return r.json(); }),
-    fetch('/api/agents' + pq).then(function(r) { return r.json(); }),
-    fetch('/api/status' + pq).then(function(r) { return r.json(); }),
+    lttFetch('/api/history?limit=500' + pp + bp).then(function(r) { return r.json(); }),
+    lttFetch('/api/agents' + pq).then(function(r) { return r.json(); }),
+    lttFetch('/api/status' + pq).then(function(r) { return r.json(); }),
   ]).then(function(results) {
     console.log('[LTT] poll ok — history:' + results[0].length + ' agents:' + Object.keys(results[1]).length + ' project:' + (activeProject || 'default'));
     updateConnectionInfo(Date.now() - pollStart);
@@ -4834,7 +4854,7 @@ function poll() {
 
 function doReset() {
   if (!confirm('Clear all messages, agents, and history?')) return;
-  fetch('/api/reset' + projectParam(), { method: 'POST' }).then(function() {
+  lttFetch('/api/reset' + projectParam(), { method: 'POST' }).then(function() {
     lastMessageCount = 0;
     activeThread = null;
     cachedHistory = [];
@@ -4846,7 +4866,7 @@ function doReset() {
 // ==================== PROJECT MANAGEMENT ====================
 
 function loadProjects() {
-  return fetch('/api/projects').then(function(r) { return r.json(); }).then(function(projects) {
+  return lttFetch('/api/projects').then(function(r) { return r.json(); }).then(function(projects) {
     console.log('[LTT] loadProjects:', projects.length, 'projects, activeProject:', activeProject);
     var sel = document.getElementById('project-select');
     // Keep the first option (Default)
@@ -4944,7 +4964,7 @@ function addProject() {
   var projectPath = input.value.trim();
   if (!projectPath) return;
 
-  fetch('/api/projects', {
+  lttFetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: projectPath })
@@ -4970,7 +4990,7 @@ function discoverProjects() {
   resultsEl.style.display = 'block';
   resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">Scanning...</div>';
 
-  fetch('/api/discover', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(found) {
+  lttFetch('/api/discover', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(found) {
     if (!found.length) {
       resultsEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">No new projects found (all discovered projects already added)</div>';
       setTimeout(function() { resultsEl.style.display = 'none'; }, 3000);
@@ -4996,7 +5016,7 @@ function discoverProjects() {
 }
 
 function addDiscovered(projectPath, name) {
-  fetch('/api/projects', {
+  lttFetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: projectPath, name: name })
@@ -5012,7 +5032,7 @@ function removeProject() {
   if (!activeProject) return;
   if (!confirm('Remove this project from the dashboard?')) return;
 
-  fetch('/api/projects', {
+  lttFetch('/api/projects', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: activeProject })
@@ -5275,7 +5295,7 @@ updateNotifBtn();
 var lanState = { lan_mode: false, lan_ip: null, port: 3000 };
 
 function fetchLanState() {
-  return fetch('/api/server-info').then(function(r) { return r.json(); }).then(function(info) {
+  return lttFetch('/api/server-info').then(function(r) { return r.json(); }).then(function(info) {
     lanState = info;
     updateLanUI();
     return info;
@@ -5325,7 +5345,7 @@ function toggleLanMode() {
   var content = document.getElementById('phone-modal-content');
   content.innerHTML = '<div class="phone-off-state"><p>Switching...</p></div>';
 
-  fetch('/api/toggle-lan', { method: 'POST' })
+  lttFetch('/api/toggle-lan', { method: 'POST' })
     .then(function(r) { return r.json(); })
     .then(function(info) {
       lanState = info;
@@ -5353,9 +5373,19 @@ function renderPhoneModalContent() {
   }
 
   var url = 'http://' + lanState.lan_ip + ':' + lanState.port;
-  // Include active project so the phone shows the same view
-  if (activeProject) url += '?project=' + encodeURIComponent(activeProject);
+  // Include auth token and active project so the phone shows the same view
+  var params = [];
+  if (lanState.lan_token) params.push('token=' + encodeURIComponent(lanState.lan_token));
+  if (activeProject) params.push('project=' + encodeURIComponent(activeProject));
+  if (params.length) url += '?' + params.join('&');
   var qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=58a6ff&bgcolor=0d1117&data=' + encodeURIComponent(url);
+
+  var tokenHtml = lanState.lan_token ?
+    '<div style="margin-top:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px">' +
+      '<div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Auth Token</div>' +
+      '<div style="font-family:monospace;font-size:13px;color:var(--accent);word-break:break-all">' + escapeHtml(lanState.lan_token) + '</div>' +
+      '<div style="font-size:10px;color:var(--text-muted);margin-top:4px">Included in the QR code URL. Only people with this token can access your dashboard.</div>' +
+    '</div>' : '';
 
   el.innerHTML =
     '<div class="phone-url-box">' +
@@ -5365,12 +5395,16 @@ function renderPhoneModalContent() {
     '<div class="phone-qr">' +
       '<img src="' + qrUrl + '" alt="QR Code" onerror="this.parentElement.style.display=\'none\'">' +
     '</div>' +
-    '<div class="phone-qr-hint">Scan with your phone camera on the same WiFi</div>';
+    '<div class="phone-qr-hint">Scan with your phone camera on the same WiFi</div>' +
+    tokenHtml;
 }
 
 function copyPhoneUrl() {
   var url = 'http://' + lanState.lan_ip + ':' + lanState.port;
-  if (activeProject) url += '?project=' + encodeURIComponent(activeProject);
+  var params = [];
+  if (lanState.lan_token) params.push('token=' + encodeURIComponent(lanState.lan_token));
+  if (activeProject) params.push('project=' + encodeURIComponent(activeProject));
+  if (params.length) url += '?' + params.join('&');
   navigator.clipboard.writeText(url).then(function() {
     var btn = document.querySelector('.phone-url-copy');
     btn.textContent = 'Copied!';
@@ -5389,7 +5423,7 @@ var selectedCli = 'claude';
 function renderLaunchPanel() {
   var el = document.getElementById('launch-area');
   // Fetch templates
-  fetch('/api/templates').then(function(r) { return r.json(); }).then(function(templates) {
+  lttFetch('/api/templates').then(function(r) { return r.json(); }).then(function(templates) {
     launchTemplates = templates;
     var templateOpts = '<option value="">-- No template --</option>';
     for (var i = 0; i < templates.length; i++) {
@@ -5436,8 +5470,8 @@ function renderLaunchPanel() {
 }
 
 // ==================== v3.4: CONVERSATION TEMPLATES ====================
-function renderConversationTemplates(p){fetch('/api/conversation-templates').then(function(r){return r.json()}).then(function(t){if(!t.length)return;var s=document.createElement('div');s.className='launch-panel';s.style.marginTop='20px';var h='<h3 style="margin-bottom:4px">Conversation Templates</h3><p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">Pre-built multi-agent workflows. Click to see agent prompts.</p><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">';for(var i=0;i<t.length;i++){var c=t[i];var n=c.agents.map(function(a){return a.name}).join(', ');h+='<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:14px;cursor:pointer;transition:all 0.15s" onclick="showConvTemplate(\''+escapeHtml(c.id)+'\')" onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'var(--border)\'"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+escapeHtml(c.name)+'</div><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">'+escapeHtml(c.description)+'</div><div style="font-size:10px;color:var(--text-muted)">Agents: '+escapeHtml(n)+'</div>'+(c.workflow?'<div style="font-size:10px;color:var(--purple);margin-top:4px">Workflow: '+escapeHtml(c.workflow.steps.join(' \u2192 '))+'</div>':'')+'</div>'}h+='</div><div id="conv-template-detail" style="margin-top:16px"></div>';s.innerHTML=h;p.appendChild(s)}).catch(function(){})}
-function showConvTemplate(tid){var pq=activeProject?'?project='+encodeURIComponent(activeProject):'';fetch('/api/conversation-templates/launch'+pq,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id:tid})}).then(function(r){return r.json()}).then(function(d){if(d.error){alert(d.error);return}var el=document.getElementById('conv-template-detail');var h='<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px"><div style="font-weight:700;font-size:15px;margin-bottom:4px">'+escapeHtml(d.template.name)+'</div><div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">'+escapeHtml(d.template.description)+'</div>';if(d.template.workflow){h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:14px;flex-wrap:wrap">';var st=d.template.workflow.steps;for(var s=0;s<st.length;s++){if(s>0)h+='<span style="color:var(--text-muted);font-size:12px">\u2192</span>';h+='<span style="background:var(--purple-dim);color:var(--purple);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">'+escapeHtml(st[s])+'</span>'}h+='</div>'}h+='<div style="font-weight:600;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Agent Prompts (copy each into a separate terminal)</div>';for(var i=0;i<d.instructions.length;i++){var inst=d.instructions[i];h+='<div style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-weight:600;font-size:13px">'+escapeHtml(inst.agent_name)+'</span><span class="role-badge">'+escapeHtml(inst.role)+'</span></div><div class="copy-block" onclick="copyText(this)" data-text="'+inst.prompt.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'"><span class="copy-hint">click to copy</span><span style="font-size:11px;color:var(--text-dim)">'+escapeHtml(inst.prompt.substring(0,200))+(inst.prompt.length>200?'...':'')+'</span></div></div>'}h+='</div>';el.innerHTML=h;el.scrollIntoView({behavior:'smooth',block:'nearest'})})}
+function renderConversationTemplates(p){lttFetch('/api/conversation-templates').then(function(r){return r.json()}).then(function(t){if(!t.length)return;var s=document.createElement('div');s.className='launch-panel';s.style.marginTop='20px';var h='<h3 style="margin-bottom:4px">Conversation Templates</h3><p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">Pre-built multi-agent workflows. Click to see agent prompts.</p><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">';for(var i=0;i<t.length;i++){var c=t[i];var n=c.agents.map(function(a){return a.name}).join(', ');h+='<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:14px;cursor:pointer;transition:all 0.15s" onclick="showConvTemplate(\''+escapeHtml(c.id)+'\')" onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'var(--border)\'"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+escapeHtml(c.name)+'</div><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">'+escapeHtml(c.description)+'</div><div style="font-size:10px;color:var(--text-muted)">Agents: '+escapeHtml(n)+'</div>'+(c.workflow?'<div style="font-size:10px;color:var(--purple);margin-top:4px">Workflow: '+escapeHtml(c.workflow.steps.join(' \u2192 '))+'</div>':'')+'</div>'}h+='</div><div id="conv-template-detail" style="margin-top:16px"></div>';s.innerHTML=h;p.appendChild(s)}).catch(function(){})}
+function showConvTemplate(tid){var pq=activeProject?'?project='+encodeURIComponent(activeProject):'';lttFetch('/api/conversation-templates/launch'+pq,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id:tid})}).then(function(r){return r.json()}).then(function(d){if(d.error){alert(d.error);return}var el=document.getElementById('conv-template-detail');var h='<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px"><div style="font-weight:700;font-size:15px;margin-bottom:4px">'+escapeHtml(d.template.name)+'</div><div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">'+escapeHtml(d.template.description)+'</div>';if(d.template.workflow){h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:14px;flex-wrap:wrap">';var st=d.template.workflow.steps;for(var s=0;s<st.length;s++){if(s>0)h+='<span style="color:var(--text-muted);font-size:12px">\u2192</span>';h+='<span style="background:var(--purple-dim);color:var(--purple);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">'+escapeHtml(st[s])+'</span>'}h+='</div>'}h+='<div style="font-weight:600;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Agent Prompts (copy each into a separate terminal)</div>';for(var i=0;i<d.instructions.length;i++){var inst=d.instructions[i];h+='<div style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-weight:600;font-size:13px">'+escapeHtml(inst.agent_name)+'</span><span class="role-badge">'+escapeHtml(inst.role)+'</span></div><div class="copy-block" onclick="copyText(this)" data-text="'+inst.prompt.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'"><span class="copy-hint">click to copy</span><span style="font-size:11px;color:var(--text-dim)">'+escapeHtml(inst.prompt.substring(0,200))+(inst.prompt.length>200?'...':'')+'</span></div></div>'}h+='</div>';el.innerHTML=h;el.scrollIntoView({behavior:'smooth',block:'nearest'})})}
 
 function selectCli(cli) {
   selectedCli = cli;
@@ -5471,7 +5505,7 @@ function doLaunch() {
   var prompt = document.getElementById('launch-prompt').value.trim();
   var resultEl = document.getElementById('launch-result');
 
-  fetch('/api/launch', {
+  lttFetch('/api/launch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cli: selectedCli, project_dir: projectDir || undefined, agent_name: agentName, prompt: prompt || undefined })
@@ -5539,7 +5573,8 @@ function setConnStatus(status) {
 
 function initSSE() {
   try {
-    var eventSource = new EventSource('/api/events');
+    var sseUrl = '/api/events' + (_lttToken ? '?token=' + encodeURIComponent(_lttToken) : '');
+    var eventSource = new EventSource(sseUrl);
     eventSource.onmessage = function(e) {
       if (e.data === 'update' || e.data === 'connected') {
         poll();
