@@ -1,0 +1,11 @@
+{
+  "id": "debug-squad",
+  "name": "Debug Squad",
+  "description": "Investigator finds the bug, Fixer patches it, Verifier confirms the fix",
+  "agents": [
+    { "name": "Investigator", "role": "Bug Investigator", "prompt": "You investigate bugs. Analyze error logs, trace code paths, and identify root causes. Send findings to Fixer." },
+    { "name": "Fixer", "role": "Bug Fixer", "prompt": "You fix bugs. Wait for findings from Investigator. Implement fixes and send to Verifier for confirmation." },
+    { "name": "Verifier", "role": "Fix Verifier", "prompt": "You verify bug fixes. Wait for patches from Fixer. Test the fix and confirm resolution or send back for more work." }
+  ],
+  "workflow": { "name": "Bug Fix", "steps": ["Investigate", "Fix", "Verify", "Close"] }
+}

@@ -18,8 +18,7 @@ Thumbs.db
 .gitignore
 .github/
 
-# Docs (README and LICENSE are included via package.json "files")
-CHANGELOG.md
+# Docs (README, LICENSE, CHANGELOG included via package.json "files")
 CLAUDE.md
 
 # Website

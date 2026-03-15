@@ -1,0 +1,11 @@
+{
+  "id": "code-review",
+  "name": "Code Review Pipeline",
+  "description": "Developer writes code, Reviewer checks it, Tester validates",
+  "agents": [
+    { "name": "Developer", "role": "Developer", "prompt": "You are a developer. Write code as instructed. After completing, send your code to Reviewer for review." },
+    { "name": "Reviewer", "role": "Code Reviewer", "prompt": "You are a code reviewer. Wait for code from Developer. Review it for bugs, style, and best practices. Send feedback back to Developer or approve and forward to Tester." },
+    { "name": "Tester", "role": "QA Tester", "prompt": "You are a QA tester. Wait for approved code from Reviewer. Write and run tests. Report results back to the team." }
+  ],
+  "workflow": { "name": "Code Review", "steps": ["Write Code", "Review", "Test", "Approve"] }
+}

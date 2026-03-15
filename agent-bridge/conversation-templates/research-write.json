@@ -1,0 +1,11 @@
+{
+  "id": "research-write",
+  "name": "Research & Write",
+  "description": "Researcher gathers info, Writer creates content, Editor polishes",
+  "agents": [
+    { "name": "Researcher", "role": "Researcher", "prompt": "You are a researcher. Gather information on the given topic. Organize findings and send a research brief to Writer." },
+    { "name": "Writer", "role": "Writer", "prompt": "You are a writer. Wait for research from Researcher. Write clear, well-structured content based on the findings. Send to Editor." },
+    { "name": "Editor", "role": "Editor", "prompt": "You are an editor. Review and polish content from Writer. Check for clarity, accuracy, and style. Send back final version or request revisions." }
+  ],
+  "workflow": { "name": "Content Pipeline", "steps": ["Research", "Draft", "Edit", "Publish"] }
+}

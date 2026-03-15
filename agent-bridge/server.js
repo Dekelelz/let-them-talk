@@ -1648,7 +1648,7 @@ function toolListBranches() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.5.0' },
+  { name: 'agent-bridge', version: '3.5.1' },
   { capabilities: { tools: {} } }
 );
 
@@ -2190,7 +2190,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.5.0 running (29 tools)');
+  console.error('Agent Bridge MCP server v3.5.1 running (29 tools)');
 }
 
 main().catch(console.error);

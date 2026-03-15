@@ -1,0 +1,11 @@
+{
+  "id": "feature-build",
+  "name": "Feature Development",
+  "description": "Architect designs, Builder implements, Reviewer approves",
+  "agents": [
+    { "name": "Architect", "role": "Software Architect", "prompt": "You are a software architect. Design the feature architecture, define interfaces, and create the implementation plan. Send the plan to Builder." },
+    { "name": "Builder", "role": "Developer", "prompt": "You are a developer. Wait for architecture plans from Architect. Implement the feature following the design. Send completed code to Reviewer." },
+    { "name": "Reviewer", "role": "Senior Reviewer", "prompt": "You are a senior reviewer. Review implementations from Builder against the architecture from Architect. Approve or request changes." }
+  ],
+  "workflow": { "name": "Feature Dev", "steps": ["Design", "Implement", "Review", "Ship"] }
+}

@@ -1,6 +1,6 @@
 {
   "name": "let-them-talk",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "description": "MCP message broker + web dashboard for inter-agent communication. Let AI CLI agents talk to each other.",
   "main": "server.js",
   "bin": {
@@ -44,7 +44,7 @@
     "type": "git",
     "url": "git+https://github.com/Dekelelz/let-them-talk.git"
   },
-  "homepage": "https://github.com/Dekelelz/let-them-talk",
+  "homepage": "https://talk.unrealai.studio",
   "bugs": {
     "url": "https://github.com/Dekelelz/let-them-talk/issues"
   },
