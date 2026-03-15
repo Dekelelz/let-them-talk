@@ -27,6 +27,28 @@ let lastReadOffset = 0; // byte offset into messages.jsonl for efficient polling
 let heartbeatInterval = null; // heartbeat timer reference
 let messageSeq = 0; // monotonic sequence counter for message ordering
 let currentBranch = 'main'; // which branch this agent is on
+let lastSentAt = 0; // timestamp of last sent message (for group cooldown)
+
+// --- Group conversation mode ---
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+
+function getConfig() {
+  if (!fs.existsSync(CONFIG_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; }
+}
+
+function saveConfig(config) {
+  ensureDataDir();
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+function isGroupMode() {
+  return getConfig().conversation_mode === 'group';
+}
+
+function getGroupCooldown() {
+  return getConfig().group_cooldown || 3000; // default 3s
+}
 
 // Rate limiting — prevent broadcast storms and message flooding
 const rateLimitWindow = 60000; // 1 minute window
@@ -86,6 +108,22 @@ function readJsonl(file) {
   }).filter(Boolean);
 }
 
+// File-based lock for agents.json (prevents registration race conditions)
+const AGENTS_LOCK = AGENTS_FILE + '.lock';
+function lockAgentsFile() {
+  const maxWait = 5000; const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try { fs.writeFileSync(AGENTS_LOCK, String(process.pid), { flag: 'wx' }); return true; }
+    catch { /* lock exists, wait */ }
+    const wait = Date.now(); while (Date.now() - wait < 50) {} // busy-wait 50ms
+  }
+  // Force-break stale lock after timeout
+  try { fs.unlinkSync(AGENTS_LOCK); } catch {}
+  try { fs.writeFileSync(AGENTS_LOCK, String(process.pid), { flag: 'wx' }); return true; } catch {}
+  return false;
+}
+function unlockAgentsFile() { try { fs.unlinkSync(AGENTS_LOCK); } catch {} }
+
 function getAgents() {
   if (!fs.existsSync(AGENTS_FILE)) return {};
   try {
@@ -108,9 +146,15 @@ function getAcks() {
   }
 }
 
-function isPidAlive(pid) {
+function isPidAlive(pid, lastActivity) {
   try {
     process.kill(pid, 0);
+    // On Windows, PIDs get reused. If the heartbeat stopped (no activity for 30s = 3 missed
+    // heartbeats), treat as stale even if PID exists (it's likely a different process now)
+    if (lastActivity) {
+      const stale = Date.now() - new Date(lastActivity).getTime();
+      if (stale > 30000) return false; // 30s = 3 missed heartbeats
+    }
     return true;
   } catch {
     return false;
@@ -185,7 +229,7 @@ function buildMessageResponse(msg, consumedIds) {
 
   // Count online agents
   const agents = getAgents();
-  const agentsOnline = Object.entries(agents).filter(([, info]) => isPidAlive(info.pid)).length;
+  const agentsOnline = Object.entries(agents).filter(([, info]) => isPidAlive(info.pid, info.last_activity)).length;
 
   // Count total messages for context window management
   let totalMessages = 0;
@@ -422,30 +466,32 @@ function getHistoryFile(branch) {
 function toolRegister(name, provider = null) {
   ensureDataDir();
   sanitizeName(name);
+  lockAgentsFile();
 
-  const agents = getAgents();
-  if (agents[name] && agents[name].pid !== process.pid && isPidAlive(agents[name].pid)) {
-    return { error: `Agent "${name}" is already registered by a live process. Choose a different name.` };
-  }
-
-  // If name was previously registered by a dead process, verify token to prevent impersonation
-  if (agents[name] && agents[name].token && !isPidAlive(agents[name].pid)) {
-    // Dead agent — only allow re-registration from the same process (same token)
-    if (registeredToken && registeredToken !== agents[name].token) {
-      return { error: `Agent "${name}" was previously registered by another process. Choose a different name.` };
+  try {
+    const agents = getAgents();
+    if (agents[name] && agents[name].pid !== process.pid && isPidAlive(agents[name].pid, agents[name].last_activity)) {
+      return { error: `Agent "${name}" is already registered by a live process. Choose a different name.` };
     }
-  }
 
-  // Clean up old registration if re-registering with a different name
-  if (registeredName && registeredName !== name && agents[registeredName] && agents[registeredName].pid === process.pid) {
-    delete agents[registeredName];
-  }
+    // If name was previously registered by a dead process, verify token to prevent impersonation
+    if (agents[name] && agents[name].token && !isPidAlive(agents[name].pid, agents[name].last_activity)) {
+      // Dead agent — only allow re-registration from the same process (same token)
+      if (registeredToken && registeredToken !== agents[name].token) {
+        return { error: `Agent "${name}" was previously registered by another process. Choose a different name.` };
+      }
+    }
 
-  const now = new Date().toISOString();
-  const token = (agents[name] && agents[name].token) || generateToken();
-  agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown', branch: currentBranch, token };
-  saveAgents(agents);
-  registeredName = name;
+    // Clean up old registration if re-registering with a different name
+    if (registeredName && registeredName !== name && agents[registeredName] && agents[registeredName].pid === process.pid) {
+      delete agents[registeredName];
+    }
+
+    const now = new Date().toISOString();
+    const token = (agents[name] && agents[name].token) || generateToken();
+    agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown', branch: currentBranch, token, started_at: now };
+    saveAgents(agents);
+    registeredName = name;
   registeredToken = token;
 
   // Auto-create profile if not exists
@@ -468,7 +514,10 @@ function toolRegister(name, provider = null) {
   }, 10000);
   heartbeatInterval.unref(); // Don't prevent process exit
 
-  return { success: true, message: `Registered as Agent ${name} (PID ${process.pid})` };
+    return { success: true, message: `Registered as Agent ${name} (PID ${process.pid})` };
+  } finally {
+    unlockAgentsFile();
+  }
 }
 
 // Update last_activity timestamp for this agent
@@ -500,7 +549,7 @@ function toolListAgents() {
   const profiles = getProfiles();
   const result = {};
   for (const [name, info] of Object.entries(agents)) {
-    const alive = isPidAlive(info.pid);
+    const alive = isPidAlive(info.pid, info.last_activity);
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     const profile = profiles[name] || {};
@@ -523,13 +572,22 @@ function toolListAgents() {
   return { agents: result };
 }
 
-function toolSendMessage(content, to = null, reply_to = null) {
+async function toolSendMessage(content, to = null, reply_to = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
 
   const rateErr = checkRateLimit();
   if (rateErr) return rateErr;
+
+  // Group mode cooldown — prevent agents from responding too fast
+  if (isGroupMode()) {
+    const cooldown = getGroupCooldown();
+    const elapsed = Date.now() - lastSentAt;
+    if (elapsed < cooldown) {
+      await sleep(cooldown - elapsed);
+    }
+  }
 
   const agents = getAgents();
   const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
@@ -564,7 +622,7 @@ function toolSendMessage(content, to = null, reply_to = null) {
   if (sizeErr) return sizeErr;
 
   // Check if recipient is alive — warn if dead
-  const recipientAlive = isPidAlive(agents[to].pid);
+  const recipientAlive = isPidAlive(agents[to].pid, agents[to].last_activity);
 
   // Resolve threading
   let thread_id = null;
@@ -594,6 +652,19 @@ function toolSendMessage(content, to = null, reply_to = null) {
   fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
   fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
   touchActivity();
+  lastSentAt = Date.now();
+
+  // In group mode, auto-broadcast: also write to all other agents' queues
+  // Skip if this message is already a response to a broadcast (prevents cascade)
+  if (isGroupMode() && !reply_to && !msg.broadcast) {
+    const otherRecipients = Object.keys(getAgents()).filter(n => n !== registeredName && n !== to);
+    for (const other of otherRecipients) {
+      if (!canSendTo(registeredName, other)) continue; // respect permissions
+      const broadcastMsg = { ...msg, id: generateId(), to: other, broadcast: true, original_to: to };
+      fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(broadcastMsg) + '\n');
+      fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(broadcastMsg) + '\n');
+    }
+  }
 
   const result = { success: true, messageId: msg.id, from: msg.from, to: msg.to };
   if (currentBranch !== 'main') result.branch = currentBranch;
@@ -641,6 +712,7 @@ function toolBroadcast(content) {
     ids.push({ to, messageId: msg.id });
   }
   touchActivity();
+  lastSentAt = Date.now();
 
   const result = { success: true, sent_to: ids, recipient_count: ids.length };
   if (skipped.length > 0) result.skipped = skipped;
@@ -868,6 +940,97 @@ async function toolListenCodex(from = null) {
   };
 }
 
+// --- Group conversation tools ---
+
+function toolSetConversationMode(mode) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!['group', 'direct'].includes(mode)) return { error: 'Mode must be "group" or "direct"' };
+  const config = getConfig();
+  config.conversation_mode = mode;
+  if (mode === 'group' && !config.group_cooldown) config.group_cooldown = 3000;
+  saveConfig(config);
+  return {
+    success: true,
+    mode,
+    message: mode === 'group'
+      ? 'Group mode enabled. Use listen_group() to receive batched messages. All messages are shared with everyone.'
+      : 'Direct mode enabled. Use listen() for point-to-point messaging.'
+  };
+}
+
+async function toolListenGroup(timeout_seconds = 300) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  const timeoutMs = Math.min(Math.max(1, timeout_seconds || 300), 3600) * 1000;
+
+  setListening(true);
+
+  // Random stagger to prevent all agents from responding simultaneously (1-3s)
+  const stagger = 1000 + Math.random() * 2000;
+  await new Promise(r => setTimeout(r, stagger));
+
+  const deadline = Date.now() + timeoutMs;
+  const consumed = getConsumedIds(registeredName);
+
+  while (Date.now() < deadline) {
+    // Collect ALL unconsumed messages addressed to us or broadcast
+    const messages = readJsonl(getMessagesFile(currentBranch));
+    const batch = [];
+    for (const msg of messages) {
+      if (consumed.has(msg.id)) continue;
+      if (msg.to !== registeredName && msg.to !== '__all__') continue;
+      // Permission check
+      const perms = getPermissions();
+      if (perms[registeredName] && perms[registeredName].can_read) {
+        const allowed = perms[registeredName].can_read;
+        if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(msg.from) && !msg.system) continue;
+      }
+      batch.push(msg);
+      consumed.add(msg.id);
+      markAsRead(registeredName, msg.id);
+    }
+
+    if (batch.length > 0) {
+      saveConsumedIds(registeredName, consumed);
+      touchActivity();
+      setListening(false);
+
+      // Get recent history for context
+      const history = readJsonl(getHistoryFile(currentBranch));
+      const recentHistory = history.slice(-20).map(m => ({
+        from: m.from, to: m.to, content: m.content.substring(0, 500),
+        timestamp: m.timestamp, id: m.id,
+      }));
+
+      // Count agents and who hasn't spoken recently
+      const agents = getAgents();
+      const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+      const recentSpeakers = new Set(history.slice(-10).map(m => m.from));
+      const silent = agentNames.filter(n => !recentSpeakers.has(n) && n !== registeredName);
+
+      return {
+        messages: batch.map(m => ({
+          id: m.id, from: m.from, to: m.to, content: m.content,
+          timestamp: m.timestamp,
+          ...(m.reply_to && { reply_to: m.reply_to }),
+          ...(m.thread_id && { thread_id: m.thread_id }),
+        })),
+        message_count: batch.length,
+        context: recentHistory,
+        agents_online: agentNames.length,
+        agents_silent: silent,
+        hint: silent.length > 0
+          ? `${silent.join(', ')} haven't spoken recently. Consider addressing them.`
+          : 'All agents are active in the conversation.',
+      };
+    }
+
+    await adaptiveSleep(0);
+  }
+
+  setListening(false);
+  return { timeout: true, message: 'No messages received within timeout.', messages: [], message_count: 0 };
+}
+
 function toolGetHistory(limit = 50, thread_id = null) {
   limit = Math.min(Math.max(1, limit || 50), 500);
   let history = readJsonl(getHistoryFile(currentBranch));
@@ -910,6 +1073,11 @@ function toolHandoff(to, context) {
 
   const sizeErr = validateContentSize(context);
   if (sizeErr) return sizeErr;
+
+  // Permission check
+  if (!canSendTo(registeredName, to)) {
+    return { error: `Permission denied: you are not allowed to hand off to "${to}"` };
+  }
 
   const agents = getAgents();
   if (!agents[to]) {
@@ -1170,7 +1338,7 @@ function toolReset() {
     }
   }
   // Remove profiles, workflows, branches, permissions, read receipts
-  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE]) {
+  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE, CONFIG_FILE]) {
     if (fs.existsSync(f)) fs.unlinkSync(f);
   }
   // Remove workspaces dir
@@ -1354,9 +1522,9 @@ function toolAdvanceWorkflow(workflowId, notes) {
     nextStep.status = 'in_progress';
     nextStep.started_at = new Date().toISOString();
 
-    // Auto-handoff to next assignee
+    // Auto-handoff to next assignee (respecting permissions)
     const agents = getAgents();
-    if (nextStep.assignee && agents[nextStep.assignee] && nextStep.assignee !== registeredName) {
+    if (nextStep.assignee && agents[nextStep.assignee] && nextStep.assignee !== registeredName && canSendTo(registeredName, nextStep.assignee)) {
       const handoffContent = `[Workflow "${wf.name}"] Step ${nextStep.id} assigned to you: ${nextStep.description}`;
       messageSeq++;
       const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: nextStep.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
@@ -1480,7 +1648,7 @@ function toolListBranches() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.4.4' },
+  { name: 'agent-bridge', version: '3.5.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -1858,6 +2026,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      {
+        name: 'set_conversation_mode',
+        description: 'Switch between "group" (free multi-agent chat with auto-broadcast, cooldown, and batched delivery) and "direct" (default point-to-point messaging). Group mode lets all agents see all messages and collaborate freely.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            mode: { type: 'string', description: '"group" for free multi-agent chat, "direct" for point-to-point (default)', enum: ['group', 'direct'] },
+          },
+          required: ['mode'],
+        },
+      },
+      {
+        name: 'listen_group',
+        description: 'Listen for messages in group conversation mode. Returns ALL unconsumed messages as a batch (not just one), plus recent conversation context and hints about which agents are silent. Includes a random stagger delay (1-3s) to prevent all agents from responding simultaneously. Use this instead of listen() when in group mode.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            timeout_seconds: { type: 'number', description: 'Max seconds to wait for messages (default 300)' },
+          },
+        },
+      },
     ],
   };
 });
@@ -1876,7 +2065,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolListAgents();
         break;
       case 'send_message':
-        result = toolSendMessage(args.content, args?.to, args?.reply_to);
+        result = await toolSendMessage(args.content, args?.to, args?.reply_to);
         break;
       case 'wait_for_reply':
         result = await toolWaitForReply(args?.timeout_seconds, args?.from);
@@ -1950,6 +2139,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'list_branches':
         result = toolListBranches();
         break;
+      case 'set_conversation_mode':
+        result = toolSetConversationMode(args.mode);
+        break;
+      case 'listen_group':
+        result = await toolListenGroup(args?.timeout_seconds);
+        break;
       default:
         return {
           content: [{ type: 'text', text: `Unknown tool: ${name}` }],
@@ -1977,6 +2172,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Clean up agent registration on exit for instant status updates
 process.on('exit', () => {
+  unlockAgentsFile(); // Clean up any held lock
   if (registeredName) {
     try {
       const agents = getAgents();
@@ -1994,7 +2190,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.4.4 running (27 tools)');
+  console.error('Agent Bridge MCP server v3.5.0 running (29 tools)');
 }
 
 main().catch(console.error);

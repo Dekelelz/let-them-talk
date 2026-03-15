@@ -1,5 +1,35 @@
 # Changelog
 
+## [3.5.0] - 2026-03-15
+
+### Added — Group Conversation Mode
+- **`set_conversation_mode("group")`** — enables free multi-agent collaboration with auto-broadcast
+- **`listen_group()`** — batch message receiver with random stagger (1-3s) to prevent simultaneous responses
+- Returns ALL unconsumed messages + last 20 messages of context + hints about silent agents
+- Auto-broadcast in group mode: every message is shared with all agents automatically
+- Cooldown enforcement: agents must wait 3s between sends to maintain conversation flow
+- Cascade prevention: broadcast copies don't trigger further broadcasts
+- MCP tools: 27 → 29
+
+### Added — Dashboard Features
+- **Notification panel** — bell icon with badge count, dropdown event feed (agent online/offline, listening status changes)
+- **Agent leaderboard** — performance scoring (0-100) with responsiveness, activity, reliability, collaboration dimensions
+- **Cross-project search** — "All Projects" toggle in search bar, searches across all registered projects
+- **Animated replay export** — Export conversation as self-playing HTML file with typing animations and play/pause controls
+- **Ollama integration** — `npx let-them-talk init --ollama` auto-detects Ollama, creates bridge script for local models
+
+### Fixed — PID & Registration Integrity
+- Registration file locking with try/finally (prevents race conditions when multiple agents register simultaneously)
+- PID stale detection uses `last_activity` with 30s threshold (prevents false "alive" from Windows PID reuse)
+- Lock file cleaned up on process exit
+- Dashboard inject/nudge snapshots project context at click time (prevents wrong-project race)
+
+### Security
+- `toolHandoff` and workflow auto-handoff now check `canSendTo` permissions
+- `lastSentAt` updated in `toolBroadcast` (prevents cooldown bypass)
+- `config.json` added to both server and dashboard reset cleanup
+- Auto-broadcast respects `canSendTo` per recipient
+
 ## [3.4.4] - 2026-03-15
 
 ### Fixed

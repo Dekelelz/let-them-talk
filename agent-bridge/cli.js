@@ -3,14 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execSync } = require('child_process');
 
 const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v3.4.4
+  Let Them Talk — Agent Bridge v3.5.0
   MCP message broker for inter-agent communication
-  Supports: Claude Code, Gemini CLI, Codex CLI
+  Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
   Usage:
     npx let-them-talk init              Auto-detect CLI and configure MCP
@@ -18,7 +19,8 @@ function printUsage() {
     npx let-them-talk init --gemini     Configure for Gemini CLI
     npx let-them-talk init --codex      Configure for Codex CLI
     npx let-them-talk init --all        Configure for all supported CLIs
-    npx let-them-talk init --template T  Initialize with a team template (pair, team, review, debate)
+    npx let-them-talk init --ollama    Setup Ollama agent bridge (local LLM)
+    npx let-them-talk init --template T  Initialize with a team template (pair, team, review, debate, ollama)
     npx let-them-talk templates         List available agent templates
     npx let-them-talk dashboard         Launch the web dashboard (http://localhost:3000)
     npx let-them-talk dashboard --lan   Launch dashboard accessible on LAN (phone/tablet)
@@ -50,6 +52,16 @@ function detectCLIs() {
   }
 
   return detected;
+}
+
+// Detect Ollama installation
+function detectOllama() {
+  try {
+    const version = execSync('ollama --version', { encoding: 'utf8', timeout: 5000 }).trim();
+    return { installed: true, version };
+  } catch {
+    return { installed: false };
+  }
 }
 
 // The data directory where all agents read/write — must be the same for server + dashboard
@@ -147,6 +159,131 @@ AGENT_BRIDGE_DATA_DIR = ${JSON.stringify(dataDir(cwd))}
   console.log('  [ok] Codex CLI: .codex/config.toml updated');
 }
 
+// Setup Ollama agent bridge script
+function setupOllama(serverPath, cwd) {
+  const dir = dataDir(cwd);
+  const scriptPath = path.join(cwd, '.agent-bridge', 'ollama-agent.js');
+
+  if (!fs.existsSync(path.join(cwd, '.agent-bridge'))) {
+    fs.mkdirSync(path.join(cwd, '.agent-bridge'), { recursive: true });
+  }
+
+  const script = `#!/usr/bin/env node
+// ollama-agent.js - bridges Ollama to Let Them Talk
+// Usage: node .agent-bridge/ollama-agent.js [agent-name] [model]
+const fs = require('fs'), path = require('path'), http = require('http');
+const DATA_DIR = path.join(__dirname);
+const name = process.argv[2] || 'Ollama';
+const model = process.argv[3] || 'llama3';
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+
+function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } }
+function readJsonl(f) { if (!fs.existsSync(f)) return []; return fs.readFileSync(f, 'utf8').split('\\n').filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); }
+
+// Register agent
+function register() {
+  const agentsFile = path.join(DATA_DIR, 'agents.json');
+  const agents = readJson(agentsFile);
+  agents[name] = { pid: process.pid, timestamp: new Date().toISOString(), last_activity: new Date().toISOString(), provider: 'Ollama (' + model + ')' };
+  fs.writeFileSync(agentsFile, JSON.stringify(agents, null, 2));
+  console.log('[' + name + '] Registered (PID ' + process.pid + ', model: ' + model + ')');
+}
+
+// Update heartbeat
+function heartbeat() {
+  const agentsFile = path.join(DATA_DIR, 'agents.json');
+  const agents = readJson(agentsFile);
+  if (agents[name]) {
+    agents[name].last_activity = new Date().toISOString();
+    agents[name].pid = process.pid;
+    fs.writeFileSync(agentsFile, JSON.stringify(agents, null, 2));
+  }
+}
+
+// Call Ollama API
+function callOllama(prompt) {
+  return new Promise(function(resolve, reject) {
+    const url = new URL(OLLAMA_URL + '/api/chat');
+    const body = JSON.stringify({ model: model, messages: [{ role: 'user', content: prompt }], stream: false });
+    const req = http.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, function(res) {
+      let data = '';
+      res.on('data', function(c) { data += c; });
+      res.on('end', function() {
+        try { const j = JSON.parse(data); resolve(j.message ? j.message.content : data); }
+        catch { resolve(data); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+// Send a message
+function sendMessage(to, content) {
+  const msgId = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const msg = { id: msgId, from: name, to: to, content: content, timestamp: new Date().toISOString() };
+  fs.appendFileSync(path.join(DATA_DIR, 'messages.jsonl'), JSON.stringify(msg) + '\\n');
+  fs.appendFileSync(path.join(DATA_DIR, 'history.jsonl'), JSON.stringify(msg) + '\\n');
+  console.log('[' + name + '] -> ' + to + ': ' + content.substring(0, 80) + (content.length > 80 ? '...' : ''));
+}
+
+// Listen for messages
+let lastOffset = 0;
+function checkMessages() {
+  const consumedFile = path.join(DATA_DIR, 'consumed-' + name + '.json');
+  const consumed = readJson(consumedFile);
+  lastOffset = consumed.offset || 0;
+
+  const messages = readJsonl(path.join(DATA_DIR, 'messages.jsonl'));
+  const newMsgs = messages.slice(lastOffset).filter(function(m) {
+    return m.to === name || (m.to === 'all' && m.from !== name);
+  });
+
+  if (newMsgs.length > 0) {
+    consumed.offset = messages.length;
+    fs.writeFileSync(consumedFile, JSON.stringify(consumed));
+  }
+
+  return newMsgs;
+}
+
+async function processMessages() {
+  const msgs = checkMessages();
+  for (const m of msgs) {
+    console.log('[' + name + '] <- ' + m.from + ': ' + m.content.substring(0, 80));
+    try {
+      const response = await callOllama(m.content);
+      sendMessage(m.from, response);
+    } catch (e) {
+      sendMessage(m.from, 'Error calling Ollama: ' + e.message);
+    }
+  }
+}
+
+// Main loop
+register();
+const hb = setInterval(heartbeat, 10000);
+hb.unref();
+console.log('[' + name + '] Listening for messages... (Ctrl+C to stop)');
+setInterval(processMessages, 2000);
+
+// Cleanup on exit
+process.on('SIGINT', function() { console.log('\\n[' + name + '] Shutting down.'); process.exit(0); });
+`;
+
+  fs.writeFileSync(scriptPath, script);
+  console.log('  [ok] Ollama agent script created: .agent-bridge/ollama-agent.js');
+  console.log('');
+  console.log('  Launch an Ollama agent with:');
+  console.log('    node .agent-bridge/ollama-agent.js <name> <model>');
+  console.log('');
+  console.log('  Examples:');
+  console.log('    node .agent-bridge/ollama-agent.js Ollama llama3');
+  console.log('    node .agent-bridge/ollama-agent.js Coder codellama');
+  console.log('    node .agent-bridge/ollama-agent.js Writer mistral');
+}
+
 function init() {
   const cwd = process.cwd();
   const serverPath = path.join(__dirname, 'server.js').replace(/\\/g, '/');
@@ -168,6 +305,18 @@ function init() {
     targets = ['codex'];
   } else if (flag === '--all') {
     targets = ['claude', 'gemini', 'codex'];
+  } else if (flag === '--ollama') {
+    const ollama = detectOllama();
+    if (!ollama.installed) {
+      console.log('  Ollama not found. Install it from: https://ollama.com/download');
+      console.log('  After installing, run: ollama pull llama3');
+      console.log('');
+    } else {
+      console.log('  Ollama detected: ' + ollama.version);
+      setupOllama(serverPath, cwd);
+    }
+    targets = detectCLIs();
+    if (targets.length === 0) targets = ['claude'];
   } else {
     // Auto-detect
     targets = detectCLIs();

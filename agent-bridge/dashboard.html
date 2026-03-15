@@ -2611,6 +2611,13 @@
     </div>
   </div>
   <div class="header-actions">
+    <div style="position:relative;display:inline-block">
+      <button class="notif-toggle" id="notif-bell" onclick="toggleNotifPanel()" title="Notifications" style="position:relative">&#x1f514;<span id="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;font-size:8px;font-weight:700;min-width:14px;height:14px;border-radius:7px;text-align:center;line-height:14px;padding:0 3px">0</span></button>
+      <div id="notif-panel" style="display:none;position:absolute;right:0;top:100%;margin-top:8px;background:var(--surface);border:1px solid var(--border-light);border-radius:12px;width:320px;max-height:400px;overflow-y:auto;z-index:300;box-shadow:var(--shadow-lg)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;justify-content:space-between;align-items:center">Notifications <button onclick="clearNotifications()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer">Clear</button></div>
+        <div id="notif-list" style="padding:4px 0"><div style="padding:16px;text-align:center;color:var(--text-muted);font-size:12px">No notifications yet</div></div>
+      </div>
+    </div>
     <button class="notif-toggle" id="notif-toggle" onclick="toggleNotifications()" title="Browser notifications">&#x1f514;</button>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light theme">&#x1f319;</button>
     <button class="sound-toggle" id="sound-toggle" onclick="toggleSound()" title="Toggle notification sound">&#x1f508;</button>
@@ -2623,6 +2630,7 @@
         <div style="padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='var(--surface-3)'" onmouseout="this.style.background=''" onclick="exportShareableHTML();toggleExportMenu()">HTML (shareable)</div>
         <div style="padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='var(--surface-3)'" onmouseout="this.style.background=''" onclick="exportConversation();toggleExportMenu()">Markdown (.md)</div>
         <div style="padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='var(--surface-3)'" onmouseout="this.style.background=''" onclick="exportJSON();toggleExportMenu()">JSON (.json)</div>
+        <div style="padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s;border-top:1px solid var(--border)" onmouseover="this.style.background='var(--surface-3)'" onmouseout="this.style.background=''" onclick="exportReplay();toggleExportMenu()">Animated Replay (.html)</div>
       </div>
     </div>
     <button class="btn btn-danger" onclick="doReset()">Reset</button>
@@ -2744,6 +2752,7 @@
     <div class="branch-tabs" id="branch-tabs"></div>
     <div class="search-bar" id="search-bar">
       <input class="search-input" id="search-input" placeholder="Search messages...  ( / )" oninput="onSearch()">
+      <button id="search-all-btn" onclick="toggleSearchAll()" title="Search across all projects" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted);white-space:nowrap;transition:all 0.2s">All Projects</button>
       <span class="search-count" id="search-count"></span>
       <button class="compact-toggle" id="compact-toggle" onclick="toggleCompactMode()" title="Toggle compact view">Compact</button>
     </div>
@@ -2778,7 +2787,7 @@
   </div>
 </div>
 <div class="app-footer">
-  <span>Let Them Talk v3.4.4</span>
+  <span>Let Them Talk v3.5.0</span>
 </div>
 <div class="profile-popup" id="profile-popup" onclick="event.stopPropagation()">
   <div class="profile-popup-header">
@@ -3182,8 +3191,10 @@ function renderAgents(agents) {
 }
 
 function sendNudge(agentName) {
+  var lockedProject = activeProject;
+  var pq = lockedProject ? '?project=' + encodeURIComponent(lockedProject) : '';
   var body = JSON.stringify({ to: agentName, content: 'Hey ' + agentName + ', the user is waiting for you. Please check for new messages and continue your work.' });
-  lttFetch('/api/inject' + projectParam(), {
+  lttFetch('/api/inject' + pq, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body
@@ -3240,8 +3251,11 @@ function doInject() {
   var content = document.getElementById('inject-content').value.trim();
   if (!target || !content) return;
 
+  // Lock project context at send time — prevents race if user switches project mid-type
+  var lockedProject = activeProject;
+  var pq = lockedProject ? '?project=' + encodeURIComponent(lockedProject) : '';
   var body = JSON.stringify({ to: target, content: content });
-  lttFetch('/api/inject' + projectParam(), {
+  lttFetch('/api/inject' + pq, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body
@@ -3558,6 +3572,10 @@ var searchQuery = '';
 
 function onSearch() {
   searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
+  if (searchAllMode && searchQuery.length >= 2) {
+    searchAllProjects(searchQuery);
+    return;
+  }
   lastMessageCount = 0;
   renderMessages(cachedHistory);
 }
@@ -4281,6 +4299,7 @@ function fetchStats() {
   lttFetch('/api/stats' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderStats(data);
   }).catch(function(e) { console.error('Stats fetch failed:', e); });
+  fetchScores();
 }
 
 function renderStats(data) {
@@ -4355,6 +4374,11 @@ function renderStats(data) {
     html += '<span>' + (hh % 6 === 0 ? hh + 'h' : '') + '</span>';
   }
   html += '</div></div>';
+
+  html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px">' +
+    '<h3 style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--accent)">Agent Leaderboard</h3>' +
+    '<div id="scores-area"><div style="color:var(--text-muted);font-size:12px">Loading scores...</div></div>' +
+  '</div>';
 
   el.innerHTML = html;
 }
@@ -4686,6 +4710,163 @@ function switchBranch(name) {
   poll();
 }
 
+// ==================== v3.5: NOTIFICATIONS PANEL ====================
+
+var notifData = [];
+var notifSeen = 0;
+
+function toggleNotifPanel() {
+  var panel = document.getElementById('notif-panel');
+  var isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    notifSeen = notifData.length;
+    updateNotifBadge();
+    fetchNotifications();
+  }
+}
+
+function fetchNotifications() {
+  var pq = projectParam();
+  lttFetch('/api/notifications' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    notifData = Array.isArray(data) ? data : [];
+    renderNotifList();
+    updateNotifBadge();
+  }).catch(function() {});
+}
+
+function renderNotifList() {
+  var el = document.getElementById('notif-list');
+  if (!notifData.length) { el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:12px">No notifications yet</div>'; return; }
+  var html = '';
+  for (var i = notifData.length - 1; i >= 0; i--) {
+    var n = notifData[i];
+    var icon = n.type === 'online' ? '&#x1f7e2;' : n.type === 'offline' ? '&#x1f534;' : n.type === 'listening' ? '&#x1f50a;' : '&#x1f515;';
+    var time = new Date(n.timestamp).toLocaleTimeString();
+    html += '<div style="padding:8px 16px;border-bottom:1px solid var(--border);font-size:12px;display:flex;gap:8px;align-items:center">' +
+      '<span>' + icon + '</span>' +
+      '<div style="flex:1"><div style="color:var(--text)">' + escapeHtml(n.message) + '</div><div style="color:var(--text-muted);font-size:10px">' + time + '</div></div>' +
+    '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function updateNotifBadge() {
+  var badge = document.getElementById('notif-badge');
+  var unseen = notifData.length - notifSeen;
+  if (unseen > 0) { badge.textContent = unseen; badge.style.display = 'block'; }
+  else { badge.style.display = 'none'; }
+}
+
+function clearNotifications() {
+  notifData = [];
+  notifSeen = 0;
+  renderNotifList();
+  updateNotifBadge();
+}
+
+// Close notif panel on outside click
+document.addEventListener('click', function(e) {
+  var panel = document.getElementById('notif-panel');
+  var bell = document.getElementById('notif-bell');
+  if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== bell && !bell.contains(e.target)) {
+    panel.style.display = 'none';
+  }
+});
+
+// ==================== v3.5: CROSS-PROJECT SEARCH ====================
+
+var searchAllMode = false;
+
+function toggleSearchAll() {
+  searchAllMode = !searchAllMode;
+  var btn = document.getElementById('search-all-btn');
+  btn.style.background = searchAllMode ? 'var(--accent-dim)' : 'var(--surface-2)';
+  btn.style.color = searchAllMode ? 'var(--accent)' : 'var(--text-muted)';
+  btn.style.borderColor = searchAllMode ? 'var(--accent)' : 'var(--border)';
+  if (searchAllMode) {
+    document.getElementById('search-input').placeholder = 'Search ALL projects...';
+  } else {
+    document.getElementById('search-input').placeholder = 'Search messages...  ( / )';
+  }
+  onSearch();
+}
+
+function searchAllProjects(query) {
+  if (!query || query.length < 2) return;
+  var countEl = document.getElementById('search-count');
+  countEl.textContent = 'Searching...';
+  lttFetch('/api/search-all?q=' + encodeURIComponent(query) + '&limit=30').then(function(r) { return r.json(); }).then(function(data) {
+    if (data.error) { countEl.textContent = data.error; return; }
+    countEl.textContent = data.total + ' results across ' + data.results.length + ' projects';
+    // Render results in the messages area
+    var area = document.getElementById('messages');
+    var html = '';
+    for (var i = 0; i < data.results.length; i++) {
+      var proj = data.results[i];
+      html += '<div class="date-sep">' + escapeHtml(proj.project) + ' (' + proj.messages.length + ')</div>';
+      for (var j = 0; j < proj.messages.length; j++) {
+        var m = proj.messages[j];
+        var time = new Date(m.timestamp).toLocaleString();
+        html += '<div class="message" style="opacity:0.85">' +
+          '<div class="msg-body"><div class="msg-header"><span class="msg-from" style="color:var(--accent)">' + escapeHtml(m.from) + '</span>' +
+          '<span class="msg-arrow">&rarr;</span><span class="msg-to">' + escapeHtml(m.to || 'all') + '</span>' +
+          '<span class="msg-time">' + time + '</span></div>' +
+          '<div class="msg-content">' + escapeHtml(m.content.substring(0, 300)) + (m.content.length > 300 ? '...' : '') + '</div></div></div>';
+      }
+    }
+    if (!html) html = '<div class="empty-state"><div class="empty-text">No results found</div></div>';
+    area.innerHTML = html;
+  }).catch(function() { countEl.textContent = 'Search failed'; });
+}
+
+// ==================== v3.5: REPLAY EXPORT ====================
+
+function exportReplay() {
+  var pq = projectParam();
+  window.location.href = '/api/export-replay' + (pq || '?') + (_lttToken ? '&token=' + encodeURIComponent(_lttToken) : '');
+}
+
+// ==================== v3.5: PERFORMANCE SCORES ====================
+
+function fetchScores() {
+  var pq = projectParam();
+  lttFetch('/api/scores' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderScores(data);
+  }).catch(function() {});
+}
+
+function renderScores(data) {
+  if (!data || !data.agents) return;
+  var el = document.getElementById('scores-area');
+  if (!el) return;
+  var agents = data.agents;
+  var names = Object.keys(agents).sort(function(a, b) { return agents[b].score - agents[a].score; });
+  if (!names.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:16px;text-align:center">No agent data yet</div>'; return; }
+
+  var html = '<div style="display:grid;gap:8px">';
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i];
+    var a = agents[n];
+    var medal = i === 0 ? '&#x1f947;' : i === 1 ? '&#x1f948;' : i === 2 ? '&#x1f949;' : '#' + (i + 1);
+    var scoreColor = a.score >= 80 ? 'var(--green)' : a.score >= 60 ? 'var(--accent)' : a.score >= 40 ? 'var(--orange)' : 'var(--red)';
+    html += '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px">' +
+      '<div style="font-size:18px;width:28px;text-align:center">' + medal + '</div>' +
+      '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">' + escapeHtml(n) + '</div>' +
+        '<div style="display:flex;gap:12px;margin-top:4px;font-size:10px;color:var(--text-muted)">' +
+          '<span>Resp: ' + a.responsiveness + '</span>' +
+          '<span>Act: ' + a.activity + '</span>' +
+          '<span>Rel: ' + a.reliability + '</span>' +
+          '<span>Collab: ' + a.collaboration + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:22px;font-weight:700;color:' + scoreColor + '">' + a.score + '</div>' +
+    '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
 // ==================== POLLING ====================
 
 function poll() {
@@ -4737,6 +4918,7 @@ function poll() {
     renderBookmarksSidebar();
     fetchActivity();
     fetchBranches();
+    fetchNotifications();
     updateTypingIndicator(cachedAgents);
     if (activeView === 'tasks') fetchTasks();
     if (activeView === 'workspaces') fetchWorkspaces();

@@ -138,8 +138,15 @@ function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
 
-function isPidAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+function isPidAlive(pid, lastActivity) {
+  try {
+    process.kill(pid, 0);
+    if (lastActivity) {
+      const stale = Date.now() - new Date(lastActivity).getTime();
+      if (stale > 30000) return false; // 30s = 3 missed heartbeats
+    }
+    return true;
+  } catch { return false; }
 }
 
 // --- Default avatar helpers ---
@@ -207,7 +214,7 @@ function apiAgents(query) {
   }
 
   for (const [name, info] of Object.entries(agents)) {
-    const alive = isPidAlive(info.pid);
+    const alive = isPidAlive(info.pid, info.last_activity);
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     const profile = profiles[name] || {};
@@ -240,9 +247,9 @@ function apiStatus(query) {
   history.forEach(m => { if (m.thread_id) threads.add(m.thread_id); });
 
   const agentEntries = Object.entries(agents);
-  const aliveCount = agentEntries.filter(([, a]) => isPidAlive(a.pid)).length;
+  const aliveCount = agentEntries.filter(([, a]) => isPidAlive(a.pid, a.last_activity)).length;
   const sleepingCount = agentEntries.filter(([, a]) => {
-    if (!isPidAlive(a.pid)) return false;
+    if (!isPidAlive(a.pid, a.last_activity)) return false;
     const lastActivity = a.last_activity || a.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     return idleSeconds > 60;
@@ -325,10 +332,252 @@ function apiStats(query) {
   };
 }
 
+// --- v3.4: Notification Tracking ---
+let notificationHistory = [];
+let prevAgentState = {};
+
+function generateNotifications(currentAgents) {
+  const crypto = require('crypto');
+  const now = new Date().toISOString();
+
+  for (const [name, agent] of Object.entries(currentAgents)) {
+    const prev = prevAgentState[name];
+    const isAlive = agent.pid ? isPidAlive(agent.pid, agent.last_activity) : false;
+    const isListening = !!agent.listening;
+
+    if (prev) {
+      if (!prev.alive && isAlive) {
+        notificationHistory.push({ id: crypto.randomBytes(8).toString('hex'), type: 'agent_online', agent: name, message: `${name} came online`, timestamp: now });
+      }
+      if (prev.alive && !isAlive) {
+        notificationHistory.push({ id: crypto.randomBytes(8).toString('hex'), type: 'agent_offline', agent: name, message: `${name} went offline`, timestamp: now });
+      }
+      if (!prev.listening && isListening) {
+        notificationHistory.push({ id: crypto.randomBytes(8).toString('hex'), type: 'agent_listening', agent: name, message: `${name} started listening`, timestamp: now });
+      }
+      if (prev.listening && !isListening) {
+        notificationHistory.push({ id: crypto.randomBytes(8).toString('hex'), type: 'agent_busy', agent: name, message: `${name} stopped listening`, timestamp: now });
+      }
+    } else if (isAlive) {
+      notificationHistory.push({ id: crypto.randomBytes(8).toString('hex'), type: 'agent_online', agent: name, message: `${name} came online`, timestamp: now });
+    }
+
+    prevAgentState[name] = { alive: isAlive, listening: isListening };
+  }
+
+  // Trim to max 50
+  if (notificationHistory.length > 50) {
+    notificationHistory = notificationHistory.slice(-50);
+  }
+}
+
+function apiNotifications() {
+  return notificationHistory;
+}
+
+// --- v3.4: Performance Scoring ---
+function apiScores(query) {
+  const projectPath = query.get('project') || null;
+  const history = readJsonl(filePath('history.jsonl', projectPath));
+  const agents = readJson(filePath('agents.json', projectPath));
+
+  const perAgent = {};
+  const totalMessages = history.length;
+  const allAgentNames = new Set();
+
+  // Gather per-agent data
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    const from = m.from || 'unknown';
+    allAgentNames.add(from);
+    if (m.to) allAgentNames.add(m.to);
+    if (!perAgent[from]) perAgent[from] = { messages: 0, responseTimes: [], peers: new Set() };
+    perAgent[from].messages++;
+    if (m.to) perAgent[from].peers.add(m.to);
+
+    if (m.reply_to) {
+      for (let j = i - 1; j >= Math.max(0, i - 50); j--) {
+        if (history[j].id === m.reply_to) {
+          const delta = new Date(m.timestamp).getTime() - new Date(history[j].timestamp).getTime();
+          if (delta > 0 && delta < 3600000) perAgent[from].responseTimes.push(delta / 1000);
+          break;
+        }
+      }
+    }
+  }
+
+  const totalAgents = allAgentNames.size;
+  const maxMessages = Math.max(1, ...Object.values(perAgent).map(d => d.messages));
+
+  const result = {};
+  const scores = [];
+
+  for (const [name, data] of Object.entries(perAgent)) {
+    const avgResponseSec = data.responseTimes.length
+      ? data.responseTimes.reduce((a, b) => a + b, 0) / data.responseTimes.length
+      : Infinity;
+
+    // Responsiveness (30 pts)
+    let responsiveness;
+    if (avgResponseSec < 10) responsiveness = 30;
+    else if (avgResponseSec < 30) responsiveness = 25;
+    else if (avgResponseSec < 60) responsiveness = 20;
+    else if (avgResponseSec < 120) responsiveness = 15;
+    else responsiveness = 10;
+
+    // Activity (30 pts) — linear scale relative to top agent
+    const activity = Math.round((data.messages / maxMessages) * 30);
+
+    // Reliability (20 pts) — uptime based on agent registration
+    let reliability = 10;
+    const agentInfo = agents[name];
+    if (agentInfo) {
+      const isAlive = agentInfo.pid ? isPidAlive(agentInfo.pid, agentInfo.last_activity) : false;
+      const registered = new Date(agentInfo.registered_at || agentInfo.last_activity).getTime();
+      const totalTime = Date.now() - registered;
+      if (totalTime > 0 && isAlive) {
+        const lastAct = new Date(agentInfo.last_activity).getTime();
+        const activeTime = lastAct - registered;
+        const uptime = Math.min(1, activeTime / totalTime);
+        if (uptime > 0.95) reliability = 20;
+        else if (uptime > 0.80) reliability = 15;
+        else if (uptime > 0.50) reliability = 10;
+        else reliability = 5;
+      } else if (!isAlive) {
+        reliability = 5;
+      }
+    }
+
+    // Collaboration (20 pts)
+    const collaboration = totalAgents > 1
+      ? Math.round((data.peers.size / (totalAgents - 1)) * 20)
+      : 20;
+
+    const score = responsiveness + activity + reliability + collaboration;
+    result[name] = { score, responsiveness, activity, reliability, collaboration };
+    scores.push({ name, score });
+  }
+
+  // Add ranks
+  scores.sort((a, b) => b.score - a.score);
+  scores.forEach((s, i) => { result[s.name].rank = i + 1; });
+
+  return { agents: result };
+}
+
+// --- v3.4: Cross-Project Search ---
+function apiSearchAll(query) {
+  const q = (query.get('q') || '').toLowerCase();
+  const limit = Math.min(parseInt(query.get('limit') || '50', 10), 200);
+  if (!q) return { error: 'Missing "q" parameter' };
+
+  const projects = getProjects();
+  // Add default project
+  const allProjects = [{ name: path.basename(process.cwd()), path: null }];
+  for (const p of projects) allProjects.push(p);
+
+  const results = [];
+  let total = 0;
+
+  for (const proj of allProjects) {
+    const history = readJsonl(filePath('history.jsonl', proj.path));
+    const matches = [];
+    for (const m of history) {
+      if (matches.length >= limit) break;
+      const content = (m.content || '').toLowerCase();
+      const from = (m.from || '').toLowerCase();
+      const to = (m.to || '').toLowerCase();
+      if (content.includes(q) || from.includes(q) || to.includes(q)) {
+        matches.push({ id: m.id, from: m.from, to: m.to, content: m.content, timestamp: m.timestamp });
+      }
+    }
+    if (matches.length > 0) {
+      results.push({ project: proj.name, path: proj.path || process.cwd(), messages: matches });
+      total += matches.length;
+    }
+  }
+
+  return { results, total };
+}
+
+// --- v3.4: Replay Export ---
+function apiExportReplay(query) {
+  const projectPath = query.get('project') || null;
+  const history = readJsonl(filePath('history.jsonl', projectPath));
+  const profiles = readJson(filePath('profiles.json', projectPath));
+
+  const colors = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f778ba','#ff7b72','#79c0ff','#7ee787'];
+  const agentColors = {};
+  let colorIdx = 0;
+  for (const m of history) {
+    if (!agentColors[m.from]) agentColors[m.from] = colors[colorIdx++ % colors.length];
+  }
+
+  const messagesJson = JSON.stringify(history.map(m => ({
+    from: m.from, to: m.to, content: m.content, timestamp: m.timestamp, color: agentColors[m.from] || '#58a6ff'
+  })));
+
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Let Them Talk — Replay</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--surface-2:#21262d;--border:#30363d;--text:#e6edf3;--dim:#8b949e}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.6}
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between}
+.title{font-size:16px;font-weight:700;color:var(--text)}
+.controls{display:flex;gap:8px;align-items:center}
+.controls button{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px}
+.controls button:hover{background:var(--border)}
+.controls select{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px}
+.messages{max-width:800px;margin:20px auto;padding:0 16px}
+.msg{opacity:0;transform:translateY(8px);transition:opacity 0.3s,transform 0.3s;margin-bottom:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.msg.visible{opacity:1;transform:translateY(0)}
+.msg-header{display:flex;gap:8px;align-items:baseline;margin-bottom:4px;font-size:13px}
+.msg-from{font-weight:700}
+.msg-to{color:var(--dim)}
+.msg-time{color:var(--dim);margin-left:auto;font-size:11px}
+.msg-content{font-size:14px;white-space:pre-wrap;word-break:break-word}
+.msg-content code{background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:0.9em}
+.msg-content strong{font-weight:700}
+.progress{font-size:12px;color:var(--dim)}
+</style></head><body>
+<div class="header">
+<span class="title">Let Them Talk — Replay</span>
+<div class="controls">
+<button id="btn" onclick="toggle()">Pause</button>
+<label><span style="color:var(--dim);font-size:12px">Speed:</span>
+<select id="speed" onchange="setSpeed(this.value)">
+<option value="2000">Slow</option><option value="1000" selected>Normal</option><option value="500">Fast</option><option value="200">Very Fast</option>
+</select></label>
+<span class="progress" id="progress">0 / 0</span>
+</div></div>
+<div class="messages" id="messages"></div>
+<script>
+var msgs=${messagesJson};
+var idx=0,playing=true,timer=null,speed=1000;
+function md(s){return s.replace(/\`\`\`[\\s\\S]*?\`\`\`/g,function(m){return '<pre><code>'+m.slice(3,-3).replace(/^\\w*\\n/,'')+'</code></pre>'}).replace(/\`([^\`]+)\`/g,'<code>$1</code>').replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>').replace(/^### (.+)$/gm,'<h4 style="margin:8px 0 4px;font-size:14px">$1</h4>').replace(/^## (.+)$/gm,'<h3 style="margin:8px 0 4px;font-size:15px">$1</h3>').replace(/^# (.+)$/gm,'<h2 style="margin:8px 0 4px;font-size:16px">$1</h2>')}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function showNext(){if(idx>=msgs.length){playing=false;document.getElementById('btn').textContent='Done';return}
+var m=msgs[idx],el=document.createElement('div');el.className='msg';
+var t=new Date(m.timestamp);var time=t.toLocaleTimeString();
+el.innerHTML='<div class="msg-header"><span class="msg-from" style="color:'+m.color+'">'+esc(m.from)+'</span><span class="msg-to">→ '+esc(m.to||'all')+'</span><span class="msg-time">'+time+'</span></div><div class="msg-content">'+md(esc(m.content))+'</div>';
+document.getElementById('messages').appendChild(el);
+requestAnimationFrame(function(){el.classList.add('visible')});
+el.scrollIntoView({behavior:'smooth',block:'end'});
+idx++;document.getElementById('progress').textContent=idx+' / '+msgs.length;
+if(playing)timer=setTimeout(showNext,speed)}
+function toggle(){if(idx>=msgs.length){idx=0;document.getElementById('messages').innerHTML='';playing=true;document.getElementById('btn').textContent='Pause';showNext();return}
+playing=!playing;document.getElementById('btn').textContent=playing?'Pause':'Play';if(playing)showNext();else clearTimeout(timer)}
+function setSpeed(v){speed=parseInt(v)}
+showNext();
+</script></body></html>`;
+}
+
 function apiReset(query) {
   const projectPath = query.get('project') || null;
   const dataDir = resolveDataDir(projectPath);
-  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'read_receipts.json', 'permissions.json'];
+  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'read_receipts.json', 'permissions.json', 'config.json'];
   for (const f of fixedFiles) {
     const p = path.join(dataDir, f);
     if (fs.existsSync(p)) fs.unlinkSync(p);
@@ -1397,6 +1646,31 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
+    // --- v3.4: Notifications ---
+    else if (url.pathname === '/api/notifications' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiNotifications()));
+    }
+    // --- v3.4: Performance Scores ---
+    else if (url.pathname === '/api/scores' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiScores(url.searchParams)));
+    }
+    // --- v3.4: Cross-Project Search ---
+    else if (url.pathname === '/api/search-all' && req.method === 'GET') {
+      const result = apiSearchAll(url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    // --- v3.4: Replay Export ---
+    else if (url.pathname === '/api/export-replay' && req.method === 'GET') {
+      const html = apiExportReplay(url.searchParams);
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="replay-' + new Date().toISOString().slice(0, 10) + '.html"',
+      });
+      res.end(html);
+    }
     // Server-Sent Events endpoint for real-time updates
     else if (url.pathname === '/api/events' && req.method === 'GET') {
       if (sseClients.size >= 100) {
@@ -1429,6 +1703,12 @@ const server = http.createServer(async (req, res) => {
 const sseClients = new Set();
 
 function sseNotifyAll() {
+  // Generate notifications from agent state changes
+  try {
+    const agents = readJson(filePath('agents.json'));
+    generateNotifications(agents);
+  } catch {}
+
   for (const res of sseClients) {
     try {
       res.write(`data: update\n\n`);
@@ -1472,7 +1752,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.4.4');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v3.5.0');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

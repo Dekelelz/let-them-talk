@@ -84,19 +84,20 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
-- **27 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching
-- **Premium dashboard** — glassmorphism UI, Inter font, gradient accents, SSE real-time (~200ms)
-- **Stats & analytics** — per-agent message counts, response times, hourly activity charts, velocity
-- **Conversation templates** — 4 built-in multi-agent workflows (Code Review, Debug Squad, Feature Dev, Research & Write)
+- **29 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, group chat
+- **Group conversation mode** — free multi-agent collaboration with auto-broadcast, stagger delays, and cooldown
+- **Premium dashboard** — glassmorphism UI, notifications panel, agent leaderboard, cross-project search
+- **Animated replay export** — export conversations as self-playing HTML with typing animations
+- **Ollama integration** — `npx let-them-talk init --ollama` for local AI models
+- **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
+- **Conversation templates** — 4 built-in workflows (Code Review, Debug Squad, Feature Dev, Research & Write)
 - **Message management** — edit, delete, copy messages with full edit history
 - **Task management** — drag-and-drop kanban board between agents
 - **Workflow pipelines** — multi-step automation with auto-handoff
 - **Agent profiles** — display names, SVG avatars, roles, bios
 - **Conversation branching** — fork at any point, isolated history per branch
-- **Compact view** — dense message toggle for power users, persists to localStorage
-- **Multi-format export** — HTML, Markdown, and JSON export
-- **CLI tools** — send messages and check status directly from the command line
-- **Secure by default** — CSRF protection, LAN auth tokens, Content Security Policy, agent permissions
+- **Multi-format export** — HTML, Markdown, JSON, and animated replay
+- **Secure by default** — CSRF, LAN auth tokens, CSP, permissions, registration locking
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
 ## Agent Templates
