@@ -425,94 +425,87 @@ export function updateTVScreen(time) {
   var cvs = tv.canvas, ctx = cvs.getContext('2d');
   var W = cvs.width, H = cvs.height;
 
-  // Background gradient
+  // Clear
   ctx.fillStyle = '#0a0e1a';
   ctx.fillRect(0, 0, W, H);
 
   // Top bar
   ctx.fillStyle = '#111830';
-  ctx.fillRect(0, 0, W, 24);
+  ctx.fillRect(0, 0, W, 40);
   ctx.fillStyle = '#58a6ff';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('OFFICE DASHBOARD', 8, 16);
-  // Clock
+  ctx.font = 'bold 20px monospace';
+  ctx.fillText('OFFICE DASHBOARD', 16, 27);
   var now = new Date();
   var timeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0') + ':' + now.getSeconds().toString().padStart(2, '0');
   ctx.fillStyle = '#7ee787';
   ctx.textAlign = 'right';
-  ctx.fillText(timeStr, W - 8, 16);
+  ctx.fillText(timeStr, W - 16, 27);
   ctx.textAlign = 'left';
 
-  // Agent count + message stats
+  // Data
   var agents = window.cachedAgents || {};
   var history = window.cachedHistory || [];
   var agentNames = Object.keys(agents);
   var activeCount = 0, sleepCount = 0;
   agentNames.forEach(function(n) {
-    var st = agents[n].status || 'dead';
-    if (st === 'active') activeCount++;
-    else if (st === 'sleeping') sleepCount++;
+    if (agents[n].status === 'active') activeCount++;
+    else if (agents[n].status === 'sleeping') sleepCount++;
   });
 
-  ctx.font = '10px monospace';
-  var y = 42;
+  var y = 68;
+  ctx.font = '16px monospace';
 
-  // Stats section
-  ctx.fillStyle = '#546178';
-  ctx.fillText('AGENTS', 8, y);
-  ctx.fillStyle = '#d2a8ff';
-  ctx.fillText(String(agentNames.length), 70, y);
-  ctx.fillStyle = '#4ade80';
-  ctx.fillText(activeCount + ' active', 90, y);
-  ctx.fillStyle = '#facc15';
-  ctx.fillText(sleepCount + ' idle', 160, y);
-  y += 18;
+  // Stats row 1
+  ctx.fillStyle = '#546178'; ctx.fillText('AGENTS', 16, y);
+  ctx.fillStyle = '#d2a8ff'; ctx.fillText(String(agentNames.length), 110, y);
+  ctx.fillStyle = '#4ade80'; ctx.fillText(activeCount + ' active', 140, y);
+  ctx.fillStyle = '#facc15'; ctx.fillText(sleepCount + ' idle', 280, y);
+  y += 26;
 
-  ctx.fillStyle = '#546178';
-  ctx.fillText('MESSAGES', 8, y);
-  ctx.fillStyle = '#79c0ff';
-  ctx.fillText(String(history.length), 80, y);
-  y += 18;
+  // Stats row 2
+  ctx.fillStyle = '#546178'; ctx.fillText('MESSAGES', 16, y);
+  ctx.fillStyle = '#79c0ff'; ctx.fillText(String(history.length), 130, y);
+  y += 26;
 
-  // Separator line
-  ctx.strokeStyle = '#1a2744';
-  ctx.beginPath(); ctx.moveTo(8, y); ctx.lineTo(W - 8, y); ctx.stroke();
-  y += 14;
+  // Separator
+  ctx.strokeStyle = '#1a2744'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(16, y); ctx.lineTo(W - 16, y); ctx.stroke();
+  y += 20;
 
-  // Recent activity feed (last 5 messages)
-  ctx.fillStyle = '#546178';
-  ctx.font = '9px monospace';
-  ctx.fillText('RECENT ACTIVITY', 8, y);
-  y += 14;
+  // Activity header
+  ctx.fillStyle = '#546178'; ctx.font = '14px monospace';
+  ctx.fillText('RECENT ACTIVITY', 16, y);
+  y += 22;
 
-  var recentMsgs = history.slice(-5);
+  // Messages
+  ctx.font = '13px monospace';
+  var recentMsgs = history.slice(-7);
   for (var i = 0; i < recentMsgs.length; i++) {
+    if (y > H - 50) break;
     var msg = recentMsgs[i];
     var from = msg.from || '?';
-    var to = msg.to || 'all';
-    var snippet = (msg.content || msg.message || '').substring(0, 30);
-    if ((msg.content || msg.message || '').length > 30) snippet += '..';
-    ctx.fillStyle = '#7ee787';
-    ctx.fillText(from, 8, y);
-    ctx.fillStyle = '#546178';
-    ctx.fillText(' > ', 8 + from.length * 5.5, y);
-    ctx.fillStyle = '#d2a8ff';
-    ctx.fillText(to, 8 + from.length * 5.5 + 18, y);
-    y += 12;
-    ctx.fillStyle = '#8892b0';
-    ctx.fillText('  ' + snippet, 8, y);
-    y += 14;
-    if (y > H - 30) break;
+    var to2 = msg.to || 'all';
+    var content = msg.content || msg.message || '';
+    var maxLen = Math.floor((W - 40) / 7.5);
+    var snippet = content.length > maxLen ? content.substring(0, maxLen - 2) + '..' : content;
+
+    // From > To
+    ctx.fillStyle = '#7ee787'; ctx.fillText(from, 16, y);
+    var fromW = ctx.measureText(from).width;
+    ctx.fillStyle = '#546178'; ctx.fillText(' > ', 16 + fromW, y);
+    ctx.fillStyle = '#d2a8ff'; ctx.fillText(to2, 16 + fromW + ctx.measureText(' > ').width, y);
+    y += 18;
+    // Snippet
+    ctx.fillStyle = '#8892b0'; ctx.fillText('  ' + snippet, 16, y);
+    y += 22;
   }
   if (recentMsgs.length === 0) {
-    ctx.fillStyle = '#3d4663';
-    ctx.fillText('  Waiting for messages...', 8, y);
+    ctx.fillStyle = '#3d4663'; ctx.fillText('  Waiting for messages...', 16, y);
   }
 
-  // Bottom ticker bar
+  // Bottom ticker
   ctx.fillStyle = '#111830';
-  ctx.fillRect(0, H - 20, W, 20);
-  // Scrolling ticker
+  ctx.fillRect(0, H - 32, W, 32);
   var tickerParts = [];
   agentNames.forEach(function(n) {
     var info = agents[n];
@@ -520,13 +513,13 @@ export function updateTVScreen(time) {
     tickerParts.push(st + ' ' + (info.display_name || n));
   });
   var tickerText = tickerParts.length > 0 ? tickerParts.join('    \u2022    ') + '    \u2022    ' : 'No agents online';
-  tv.tickerOffset = (tv.tickerOffset + 1) % (tickerText.length * 6);
+  ctx.font = '15px monospace';
+  var charW = 9;
+  tv.tickerOffset = (tv.tickerOffset + 1.5) % (tickerText.length * charW);
   ctx.fillStyle = '#58a6ff';
-  ctx.font = '10px monospace';
-  // Draw twice for seamless loop
-  var fullW = tickerText.length * 6;
-  ctx.fillText(tickerText, -tv.tickerOffset, H - 6);
-  ctx.fillText(tickerText, -tv.tickerOffset + fullW, H - 6);
+  var fullTW = tickerText.length * charW;
+  ctx.fillText(tickerText, -tv.tickerOffset, H - 10);
+  ctx.fillText(tickerText, -tv.tickerOffset + fullTW, H - 10);
 
   // Scanline overlay
   ctx.fillStyle = 'rgba(0,0,0,0.04)';

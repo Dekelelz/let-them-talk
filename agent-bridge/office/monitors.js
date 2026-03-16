@@ -3,7 +3,7 @@ import { S } from './state.js';
 
 export function updateMonitorScreen(deskIdx, agentName, time) {
   var desk = S.deskMeshes[deskIdx];
-  if (!desk) return;
+  if (!desk || !desk.screen) return;
   var W = 256, H = 160;
   if (!S.monitorCanvases[deskIdx]) {
     var cvs = document.createElement('canvas');
@@ -109,7 +109,7 @@ export function updateMonitorScreen(deskIdx, agentName, time) {
 
 export function setMonitorDim(deskIdx) {
   var desk = S.deskMeshes[deskIdx];
-  if (!desk) return;
+  if (!desk || !desk.screen) return;
   if (S.monitorCanvases[deskIdx]) {
     S.monitorCanvases[deskIdx].texture.dispose();
     if (desk.screen.material !== desk.screenMat) desk.screen.material.dispose();

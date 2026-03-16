@@ -368,4 +368,5 @@ function disposeAgent(agent) {
   if (agent.parts.zzzObjects) {
     agent.parts.zzzObjects.forEach(function(z) { if (z.div.parentElement) z.div.remove(); });
   }
+  if (agent._listenLostDiv && agent._listenLostDiv.parentElement) agent._listenLostDiv.remove();
 }

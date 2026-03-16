@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 
+// Reusable Vector3s for onMouseMove (avoid per-frame allocation)
+var _panRight = new THREE.Vector3();
+var _panUp = new THREE.Vector3();
+
 // Spectator / fly camera — Unreal Engine style free movement
 // Left-drag: look around (rotate)
 // Right-drag: pan (strafe)
@@ -28,6 +32,7 @@ export function SpectatorCamera(camera, domElement) {
   var velocity = new THREE.Vector3();
   var moveDir = new THREE.Vector3();
   var keys = {};
+  self.keys = keys; // expose for player mode
   var isLeftDrag = false;
   var isRightDrag = false;
   var isMiddleDrag = false;
@@ -35,11 +40,11 @@ export function SpectatorCamera(camera, domElement) {
 
   // Initialize euler from camera
   euler.setFromQuaternion(camera.quaternion, 'YXZ');
+  self._euler = euler; // expose for player mode camera orbit
 
   // --- Event handlers ---
   function onMouseDown(e) {
-    if (!self.enabled) return;
-    // Only capture if click is on the 3D canvas area
+    // Allow mouse input in both spectator and player modes
     if (e.target !== domElement) return;
     // Take focus away from any text input so WASD works
     if (document.activeElement && document.activeElement !== document.body) {
@@ -60,42 +65,45 @@ export function SpectatorCamera(camera, domElement) {
   }
 
   function onMouseMove(e) {
-    if (!self.enabled) return;
     var dx = e.clientX - lastMouse.x;
     var dy = e.clientY - lastMouse.y;
     lastMouse.x = e.clientX;
     lastMouse.y = e.clientY;
 
     if (isRightDrag) {
-      // Look around (rotate)
+      // Look around (rotate) — always update euler, but only apply to camera in spectator mode
       euler.y -= dx * self.lookSpeed;
       euler.x -= dy * self.lookSpeed;
       euler.x = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, euler.x));
-      camera.quaternion.setFromEuler(euler);
+      if (self.enabled) {
+        camera.quaternion.setFromEuler(euler);
+      }
+      // In player mode, euler is read by player.js for orbit camera
     }
 
-    if (isLeftDrag || isMiddleDrag) {
-      // Pan (strafe)
-      var right = new THREE.Vector3();
-      var up = new THREE.Vector3();
-      camera.getWorldDirection(new THREE.Vector3());
-      right.setFromMatrixColumn(camera.matrixWorld, 0);
-      up.setFromMatrixColumn(camera.matrixWorld, 1);
-      camera.position.addScaledVector(right, -dx * self.panSpeed);
-      camera.position.addScaledVector(up, dy * self.panSpeed);
+    if ((isLeftDrag || isMiddleDrag) && self.enabled) {
+      // Pan (strafe) — only in spectator mode
+      _panRight.setFromMatrixColumn(camera.matrixWorld, 0);
+      _panUp.setFromMatrixColumn(camera.matrixWorld, 1);
+      camera.position.addScaledVector(_panRight, -dx * self.panSpeed);
+      camera.position.addScaledVector(_panUp, dy * self.panSpeed);
     }
   }
 
   function onWheel(e) {
-    if (!self.enabled) return;
-    // Check if scroll is over the 3D container
     var rect = domElement.getBoundingClientRect();
     if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
-    var forward = new THREE.Vector3();
-    camera.getWorldDirection(forward);
-    var amount = -e.deltaY * 0.01 * self.scrollSpeed;
-    camera.position.addScaledVector(forward, amount);
     e.preventDefault();
+    if (self.enabled) {
+      // Spectator mode: dolly forward/back
+      var forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      var amount = -e.deltaY * 0.01 * self.scrollSpeed;
+      camera.position.addScaledVector(forward, amount);
+    } else if (self._playerZoomCb) {
+      // Player mode: adjust orbit distance
+      self._playerZoomCb(e.deltaY);
+    }
   }
 
   function isTyping() {
@@ -106,7 +114,8 @@ export function SpectatorCamera(camera, domElement) {
   }
 
   function onKeyDown(e) {
-    if (!self.enabled || isTyping()) return;
+    // Always track keys (player mode reads them) — only block when typing in inputs
+    if (isTyping()) return;
     keys[e.code] = true;
   }
 

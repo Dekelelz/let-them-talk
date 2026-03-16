@@ -3313,6 +3313,7 @@
           <option value="modern">Modern Office</option>
           <option value="startup">Startup Garage</option>
         </select>
+        <button id="player-mode-btn" onclick="togglePlayerMode()" style="background:var(--accent-dim);border:1px solid var(--accent);color:var(--accent);padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.2s" title="Enter the world as a character">Enter World</button>
         <div style="flex:1"></div>
         <label style="font-size:10px;color:var(--text-muted)">Speed:</label>
         <input type="range" id="office-cam-speed" min="1" max="20" value="4" step="1" style="width:80px;accent-color:var(--accent);vertical-align:middle" oninput="officeCamSpeed(this.value)" title="Camera movement speed">
@@ -5688,6 +5689,24 @@ function saveProfile() {
   var avatarUrl = document.getElementById('pe-avatar-url').value.trim();
   var avatar = avatarUrl || selectedAvatar;
   var app = cdGetAppearance();
+
+  // Player mode — save to localStorage and spawn, don't send to server
+  if (window._playerDesignMode) {
+    window._playerDesignMode = false;
+    if (window.office3dSavePlayerAppearance) window.office3dSavePlayerAppearance(app);
+    if (window.office3dIsPlayerMode && window.office3dIsPlayerMode()) {
+      // Already in world — rebuild character
+      if (window.office3dRebuildPlayer) window.office3dRebuildPlayer(app);
+    } else {
+      // Enter the world
+      if (window.office3dSavePlayerAppearance) window.office3dSavePlayerAppearance(app);
+      if (window.office3dEnterWorld) window.office3dEnterWorld();
+      var btn = document.getElementById('player-mode-btn');
+      if (btn) { btn.textContent = 'Exit World'; btn.style.background = 'var(--accent)'; btn.style.color = '#fff'; }
+    }
+    closeProfileEditor();
+    return;
+  }
   var body = {
     agent: editingAgent,
     display_name: document.getElementById('pe-display-name').value.trim() || editingAgent,
@@ -6858,9 +6877,9 @@ function renderDocs() {
       '</div>' +
     '</div>' +
 
-    // All 52 Tools
+    // All 53 Tools
     '<div class="docs-section">' +
-      '<h3>All 52 MCP Tools</h3>' +
+      '<h3>All 53 MCP Tools</h3>' +
       '<h4>Core Messaging</h4>' +
       '<div class="docs-tool-grid">' +
         '<div class="docs-tool-item"><code>register(name, provider?)</code><div class="desc">Register your agent identity. Must be called first.</div></div>' +
@@ -7127,6 +7146,68 @@ function officeCamSpeed(val) {
   document.getElementById('office-speed-val').textContent = val;
   if (window.office3dSetCamSpeed) window.office3dSetCamSpeed(Number(val));
 }
+
+// Player avatar mode
+function togglePlayerMode() {
+  var btn = document.getElementById('player-mode-btn');
+  if (window.office3dIsPlayerMode && window.office3dIsPlayerMode()) {
+    // Exit player mode
+    window.office3dExitWorld();
+    btn.textContent = 'Enter World';
+    btn.style.background = 'var(--accent-dim)';
+    btn.style.color = 'var(--accent)';
+  } else {
+    // Open character designer for the player first
+    window._playerDesignMode = true;
+    editingAgent = '_player_';
+    // Load saved player appearance
+    var pApp = window.office3dGetPlayerAppearance ? window.office3dGetPlayerAppearance() : {};
+    // Set up character designer with player appearance
+    document.getElementById('pe-display-name').value = 'You';
+    document.getElementById('pe-role').value = 'Explorer';
+    document.getElementById('pe-bio').value = '';
+    document.getElementById('pe-avatar-url').value = '';
+    selectedAvatar = '';
+    var defApp = typeof officeGetAppearance === 'function'
+      ? officeGetAppearance({ displayName: 'Player', appearance: pApp })
+      : pApp;
+    document.getElementById('pe-head-color').value = defApp.head_color || '#FFD5B8';
+    document.getElementById('pe-shirt-color').value = defApp.shirt_color || '#58a6ff';
+    document.getElementById('pe-hair-color').value = defApp.hair_color || '#4A3728';
+    document.getElementById('pe-pants-color').value = defApp.pants_color || '#2d3748';
+    document.getElementById('pe-shoe-color').value = defApp.shoe_color || '#1a1a2e';
+    document.getElementById('pe-glasses-color').value = defApp.glasses_color || '#555555';
+    document.getElementById('pe-headwear-color').value = defApp.headwear_color || '#333333';
+    document.getElementById('pe-neckwear-color').value = defApp.neckwear_color || '#c0392b';
+    cdAppearance.hair_style = defApp.hair_style || 'short';
+    cdAppearance.eye_style = defApp.eye_style || 'dots';
+    cdAppearance.mouth_style = defApp.mouth_style || 'smile';
+    cdAppearance.glasses = defApp.glasses || null;
+    cdAppearance.headwear = defApp.headwear || null;
+    cdAppearance.neckwear = defApp.neckwear || null;
+    cdAppearance.outfit = defApp.outfit || null;
+    cdAppearance.body_type = defApp.body_type || 'default';
+    cdActivateCard('cd-hair-styles', cdAppearance.hair_style);
+    cdActivateCard('cd-eye-styles', cdAppearance.eye_style);
+    cdActivateCard('cd-mouth-styles', cdAppearance.mouth_style);
+    cdActivateCard('cd-glasses-styles', cdAppearance.glasses || '');
+    cdActivateCard('cd-headwear-styles', cdAppearance.headwear || '');
+    cdActivateCard('cd-neckwear-styles', cdAppearance.neckwear || '');
+    cdActivateCard('cd-outfit-styles', cdAppearance.outfit || '');
+    cdActivateCard('cd-body-types', cdAppearance.body_type);
+    document.getElementById('cd-glasses-color-row').style.display = cdAppearance.glasses ? 'flex' : 'none';
+    document.getElementById('cd-headwear-color-row').style.display = cdAppearance.headwear ? 'flex' : 'none';
+    document.getElementById('cd-neckwear-color-row').style.display = cdAppearance.neckwear ? 'flex' : 'none';
+    cdSwitchTab('body', document.querySelector('.cd-tab'));
+    document.getElementById('char-designer').classList.add('open');
+    document.getElementById('cd-backdrop').classList.add('open');
+    cdOnChange();
+    if (window._cdInitPreview) window._cdInitPreview();
+  }
+}
+
+// Override saveProfile to handle player mode
+var _origSaveProfile = typeof saveProfile === 'function' ? saveProfile : null;
 
 // Hook into poll() to sync office state (3D module handles its own sync interval)
 // Visibility change for 3D mode is handled by the 3D module

@@ -8,6 +8,7 @@ import { updateAgent } from './animation.js';
 import { syncAgents, processMessages, walkTo, navigateTo, showBubble } from './agents.js';
 // Side-effect: registers window.officeGetAppearance
 import './appearance.js';
+import { spawnPlayer, despawnPlayer, isPlayerMode, updatePlayer, savePlayerAppearance, getPlayerAppearance, getPlayer, invalidateColliders } from './player.js';
 
 // Expose createCharacter + resolveAppearance for the character designer (Phase 3)
 export { createCharacter } from './character.js';
@@ -226,6 +227,11 @@ function animate() {
     updateAgent(S.agents3d[name], dt, time);
   }
 
+  // Player avatar mode
+  if (isPlayerMode() && S.controls && S.controls.keys) {
+    updatePlayer(dt, time, S.controls.keys);
+  }
+
   // Hide roof when camera is above ceiling height
   if (S._roofGroup) {
     S._roofGroup.visible = S.camera.position.y < 6.5;
@@ -243,6 +249,12 @@ function animate() {
         var adz = ag.pos.z - doorZ;
         if (Math.sqrt(adx * adx + adz * adz) < 3) { shouldOpen = true; break; }
       }
+    }
+    // Also open for player
+    if (!shouldOpen && S._player) {
+      var pdx = S._player.pos.x - doorX;
+      var pdz = S._player.pos.z - doorZ;
+      if (Math.sqrt(pdx * pdx + pdz * pdz) < 3) shouldOpen = true;
     }
     S._managerDoorOpen = shouldOpen ? 1 : 0;
     S._managerDoorLerp += (S._managerDoorOpen - S._managerDoorLerp) * Math.min(1, dt * 4);
@@ -345,7 +357,15 @@ window.office3dSetEnvironment = function(env) {
       });
     }
     S.agents3d = {};
+    S._tvScreen = null;
+    S._roofGroup = null;
+    S._managerDoor = null;
+    S._managerDoorOpen = 0;
+    S._managerDoorLerp = 0;
+    S._managerOfficePos = null;
+    S._campusDeskPositions = null;
     S.lastProcessedMsg = 0;
+    invalidateColliders();
     buildEnvironment();
     // syncAgents will recreate all agents with correct desk assignments
     syncAgents();
@@ -355,6 +375,36 @@ window.office3dSetEnvironment = function(env) {
 
 window.office3dSetCamSpeed = function(speed) {
   if (S.controls) S.controls.moveSpeed = speed;
+};
+
+// Player avatar API
+window.office3dEnterWorld = function() {
+  spawnPlayer();
+};
+window.office3dExitWorld = function() {
+  despawnPlayer();
+};
+window.office3dIsPlayerMode = function() {
+  return isPlayerMode();
+};
+window.office3dSavePlayerAppearance = function(app) {
+  savePlayerAppearance(app);
+};
+window.office3dGetPlayerAppearance = function() {
+  return getPlayerAppearance();
+};
+window.office3dRebuildPlayer = function(appearance) {
+  if (!S._player) return;
+  savePlayerAppearance(appearance);
+  // Rebuild: despawn and respawn with new appearance
+  var pos = { x: S._player.pos.x, z: S._player.pos.z };
+  var facing = S._player.facing;
+  despawnPlayer();
+  var p = spawnPlayer();
+  p.pos.x = pos.x;
+  p.pos.z = pos.z;
+  p.facing = facing;
+  p.parts.group.position.set(pos.x, 0, pos.z);
 };
 
 // Handle visibility change for 3D mode

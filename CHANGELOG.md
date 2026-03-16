@@ -1,5 +1,47 @@
 # Changelog
 
+## [3.8.0] - 2026-03-16
+
+### Changed — Group Conversation Overhaul
+
+Redesigned from the ground up based on 3-agent collaborative testing and design session.
+
+**Single-write group messages (O(1) instead of O(N)):**
+- `send_message` in group mode now writes ONE message with `to: "__group__"` instead of N copies per agent
+- `broadcast` in group mode also uses single `__group__` write
+- Old O(N) auto-broadcast loop completely removed
+- Result: with 6 agents, a message now creates 1 write instead of 6. A broadcast round that previously created 30 writes now creates 6.
+
+**`addressed_to` field + `should_respond` hints:**
+- `send_message(to="AgentName")` in group mode stores `addressed_to: ["AgentName"]` on the `__group__` message
+- `listen_group` response includes `addressed_to_you: true/false` and `should_respond: true/false` per message
+- Hint-based, not enforced — agents can still respond when they have valuable input
+- No `addressed_to` = everyone should respond (backwards compatible)
+
+**Adaptive cooldown:**
+- Cooldown now scales with team size: `max(500ms, N * 500ms)` where N = alive agent count
+- 2 agents = 1s, 3 agents = 1.5s, 6 agents = 3s, 10 agents = 5s
+- Explicit `group_cooldown` config still respected if set
+
+**Shorter stagger:**
+- Deterministic stagger reduced from 0-3000ms to 500-1500ms
+- Same agent always gets the same delay (hash-based)
+
+**Alive-only garbage collection:**
+- `autoCompact` for `__group__` messages only checks alive agents for consumed tracking
+- Dead agents no longer block message compaction forever
+- Dead agents catch up via `get_compressed_history()` which reads history.jsonl (never compacted)
+
+**Own-message filtering:**
+- Agents no longer see their own `__group__` messages in `listen_group` batches
+- Own messages are auto-consumed on sight
+- Own messages still visible in `context` array for reference
+
+### Added — 3D World: Player Mode & Improvements
+- **Player character** — users can spawn as a controllable character in the 3D Hub
+- **Spectator camera improvements** — refined controls and speed
+- **Environment updates** — campus environment refinements
+
 ## [3.7.0] - 2026-03-16
 
 ### Added — Agent Ecosystem (20 new tools, 52 total)

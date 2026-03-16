@@ -468,7 +468,7 @@ function buildLobby(marbleMat, chromeMat, goldMat, walnutMat) {
   tvFrame.castShadow = true;
   group.add(tvFrame);
   // Animated canvas
-  var tvW = 480, tvH = 300;
+  var tvW = 960, tvH = 600;
   var tvCvs = document.createElement('canvas');
   tvCvs.width = tvW; tvCvs.height = tvH;
   var tvTex = new THREE.CanvasTexture(tvCvs);

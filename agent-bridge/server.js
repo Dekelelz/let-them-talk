@@ -72,7 +72,13 @@ function isGroupMode() {
 }
 
 function getGroupCooldown() {
-  return getConfig().group_cooldown || 3000; // default 3s
+  // Adaptive cooldown: scales with online agent count — max(500, N * 500)
+  // 2 agents = 1s, 3 = 1.5s, 4 = 2s, 6 = 3s, 10 = 5s
+  const configured = getConfig().group_cooldown;
+  if (configured) return configured; // respect explicit config
+  const agents = getAgents();
+  const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+  return Math.max(500, aliveCount * 500);
 }
 
 // --- Managed conversation mode ---
@@ -364,21 +370,33 @@ function autoCompact() {
 
     const messages = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
-    // Collect ALL consumed IDs across all agents
+    // Collect consumed IDs — for __group__ messages, only check ALIVE agents
+    const agents = getAgents();
+    const aliveAgentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
     const allConsumed = new Set();
+    const perAgentConsumed = {};
     if (fs.existsSync(DATA_DIR)) {
       for (const f of fs.readdirSync(DATA_DIR)) {
         if (f.startsWith('consumed-') && f.endsWith('.json')) {
+          const agentName = f.replace('consumed-', '').replace('.json', '');
           try {
             const ids = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
+            perAgentConsumed[agentName] = new Set(ids);
             ids.forEach(id => allConsumed.add(id));
           } catch {}
         }
       }
     }
 
-    // Keep only unconsumed messages (for direct messages, only the recipient consumes)
+    // Keep messages that are NOT fully consumed
+    // For __group__ messages: consumed when ALL ALIVE agents have consumed it (dead agents don't block)
+    // For direct messages: consumed when the recipient has consumed it
     const active = messages.filter(m => {
+      if (m.to === '__group__') {
+        // __group__: check if all alive agents (except sender) have consumed
+        return !aliveAgentNames.every(n => n === m.from || (perAgentConsumed[n] && perAgentConsumed[n].has(m.id)));
+      }
+      // Direct: standard check
       if (!allConsumed.has(m.id)) return true;
       return false;
     });
@@ -451,7 +469,9 @@ function getUnconsumedMessages(agentName, fromFilter = null) {
   const consumed = getConsumedIds(agentName);
   const perms = getPermissions();
   return messages.filter(m => {
-    if (m.to !== agentName) return false;
+    if (m.to !== agentName && m.to !== '__group__' && m.to !== '__all__') return false;
+    // Skip own group messages
+    if (m.to === '__group__' && m.from === agentName) return false;
     if (consumed.has(m.id)) return false;
     if (fromFilter && m.from !== fromFilter && !m.system) return false;
     // Permission check: skip messages from senders this agent can't read
@@ -717,6 +737,10 @@ function setListening(isListening) {
     const agents = getAgents();
     if (agents[registeredName]) {
       agents[registeredName].listening_since = isListening ? new Date().toISOString() : null;
+      // Persist last_listened_at so other agents can detect unresponsive agents
+      if (isListening) {
+        agents[registeredName].last_listened_at = new Date().toISOString();
+      }
       saveAgents(agents);
     }
   } catch {}
@@ -739,6 +763,7 @@ function toolListAgents() {
       status: !alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active',
       listening_since: info.listening_since || null,
       is_listening: !!(info.listening_since && alive),
+      last_listened_at: info.last_listened_at || null,
       provider: info.provider || 'unknown',
       branch: info.branch || 'main',
       display_name: profile.display_name || name,
@@ -863,13 +888,16 @@ async function toolSendMessage(content, to = null, reply_to = null) {
   }
 
   messageSeq++;
+  // In group mode: rewrite to → __group__, original to becomes addressed_to
+  const isGroup = isGroupMode() && !isManagedMode();
   const msg = {
     id: generateId(),
     seq: messageSeq,
     from: registeredName,
-    to,
+    to: isGroup ? '__group__' : to,
     content,
     timestamp: new Date().toISOString(),
+    ...(isGroup && to && { addressed_to: [to] }),
     ...(reply_to && { reply_to }),
     ...(thread_id && { thread_id }),
   };
@@ -880,18 +908,8 @@ async function toolSendMessage(content, to = null, reply_to = null) {
   touchActivity();
   lastSentAt = Date.now();
 
-  // In group mode, auto-broadcast: also write to all other agents' queues
-  // Skip if this message is already a response to a broadcast (prevents cascade)
-  // NEVER auto-broadcast in managed mode — manager controls communication flow
-  if (isGroupMode() && !isManagedMode() && !reply_to && !msg.broadcast) {
-    const otherRecipients = Object.keys(getAgents()).filter(n => n !== registeredName && n !== to);
-    for (const other of otherRecipients) {
-      if (!canSendTo(registeredName, other)) continue; // respect permissions
-      const broadcastMsg = { ...msg, id: generateId(), to: other, broadcast: true, original_to: to };
-      fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(broadcastMsg) + '\n');
-      fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(broadcastMsg) + '\n');
-    }
-  }
+  // Group mode: O(N) auto-broadcast REMOVED. Messages now use __group__ single-write.
+  // The to→__group__ rewrite happens above when the message is created.
 
   // Managed mode: auto-advance turns after non-manager sends
   if (isManagedMode()) {
@@ -942,6 +960,12 @@ async function toolSendMessage(content, to = null, reply_to = null) {
     result.note = `Agent "${to}" is currently working (not in listen mode). Message queued — they'll see it when they finish their current task and call listen_group().`;
   }
 
+  // Mode awareness hint: warn if agent seems to be in wrong mode
+  const currentMode = getConfig().conversation_mode || 'direct';
+  if (currentMode === 'group' || currentMode === 'managed') {
+    result.mode_hint = `You're in ${currentMode} mode. Use listen_group() (or listen() — both auto-detect) to stay in the conversation.`;
+  }
+
   // Nudge: check if THIS agent has unread messages waiting
   const myPending = getUnconsumedMessages(registeredName);
   if (myPending.length > 0) {
@@ -978,6 +1002,32 @@ function toolBroadcast(content) {
   }
 
   ensureDataDir();
+
+  // In group mode: single __group__ write instead of per-agent copies
+  if (isGroupMode() && !isManagedMode()) {
+    messageSeq++;
+    const msg = {
+      id: generateId(),
+      seq: messageSeq,
+      from: registeredName,
+      to: '__group__',
+      content,
+      timestamp: new Date().toISOString(),
+      broadcast: true,
+    };
+    fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+    fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+    touchActivity();
+    lastSentAt = Date.now();
+    const aliveOthers = otherAgents.filter(n => { const a = agents[n]; return isPidAlive(a.pid, a.last_activity); });
+    const result = { success: true, messageId: msg.id, recipient_count: aliveOthers.length, sent_to: aliveOthers.map(n => ({ to: n, messageId: msg.id })) };
+    // Nudge for own unread messages
+    const myPending = getUnconsumedMessages(registeredName);
+    if (myPending.length > 0) { result.you_have_messages = myPending.length; result.urgent = `You have ${myPending.length} unread message(s). Call listen_group() soon.`; }
+    return result;
+  }
+
+  // Direct/managed mode: per-agent writes (original behavior)
   const ids = [];
   const skipped = [];
   for (const to of otherAgents) {
@@ -1125,6 +1175,12 @@ async function toolListen(from = null) {
     return { error: 'You must call register() first' };
   }
 
+  // Auto-detect group/managed mode and delegate to toolListenGroup
+  // This prevents agents from calling the "wrong" listen function
+  if (isGroupMode() || isManagedMode()) {
+    return toolListenGroup();
+  }
+
   setListening(true);
 
   // Check for existing unconsumed messages first
@@ -1268,6 +1324,11 @@ function toolSetConversationMode(mode) {
   }
   saveConfig(config);
 
+  // Notify all agents about mode change (managed mode already broadcasts above)
+  if (mode !== 'managed') {
+    broadcastSystemMessage(`[MODE] Conversation switched to ${mode} mode by ${registeredName}. ${mode === 'group' ? 'All messages are now shared with everyone.' : 'Messages are now point-to-point.'}`, registeredName);
+  }
+
   const messages = {
     group: 'Group mode enabled. Use listen_group() to receive batched messages. All messages are shared with everyone.',
     direct: 'Direct mode enabled. Use listen() for point-to-point messaging.',
@@ -1410,14 +1471,22 @@ function toolSetPhase(phase) {
   };
 }
 
+// Deterministic stagger delay based on agent name (500-1500ms)
+// Same agent always gets the same delay, making response ordering predictable
+function hashStagger(name) {
+  const hash = name.split('').reduce((h, c) => h + c.charCodeAt(0), 0);
+  return 500 + (hash * 137) % 1000; // 0.5-1.5s range
+}
+
 async function toolListenGroup() {
   if (!registeredName) return { error: 'You must call register() first' };
 
-  setListening(true);
+  // Auto-detect direct mode and delegate to toolListen (prevents wrong-function bugs)
+  if (!isGroupMode() && !isManagedMode()) {
+    return toolListen();
+  }
 
-  // Random stagger to prevent all agents from responding simultaneously (1-3s)
-  const stagger = 1000 + Math.random() * 2000;
-  await new Promise(r => setTimeout(r, stagger));
+  setListening(true);
 
   const consumed = getConsumedIds(registeredName);
 
@@ -1426,12 +1495,14 @@ async function toolListenGroup() {
     const chunkDeadline = Date.now() + 300000;
 
   while (Date.now() < chunkDeadline) {
-    // Collect ALL unconsumed messages addressed to us or broadcast
+    // Collect ALL unconsumed messages: direct to us, __group__ (everyone), __all__, or system
     const messages = readJsonl(getMessagesFile(currentBranch));
     const batch = [];
     for (const msg of messages) {
       if (consumed.has(msg.id)) continue;
-      if (msg.to !== registeredName && msg.to !== '__all__') continue;
+      // Skip own messages in group mode (agent already knows what it sent)
+      if (msg.to === '__group__' && msg.from === registeredName) { consumed.add(msg.id); continue; }
+      if (msg.to !== registeredName && msg.to !== '__all__' && msg.to !== '__group__') continue;
       // Permission check
       const perms = getPermissions();
       if (perms[registeredName] && perms[registeredName].can_read) {
@@ -1447,6 +1518,42 @@ async function toolListenGroup() {
       saveConsumedIds(registeredName, consumed);
       touchActivity();
       setListening(false);
+
+      // Post-receive stagger: deterministic delay based on agent name
+      // Prevents all agents from responding simultaneously to the same batch
+      const staggerMs = hashStagger(registeredName);
+      if (staggerMs > 0) {
+        await new Promise(r => setTimeout(r, staggerMs));
+      }
+
+      // Sort batch by priority: system > threaded replies > direct > broadcast
+      // Within each category, maintain chronological order
+      function messagePriority(m) {
+        if (m.system || m.from === '__system__') return 0;
+        if (m.reply_to || m.thread_id) return 1;
+        if (!m.broadcast) return 2;
+        return 3;
+      }
+      batch.sort((a, b) => {
+        const pa = messagePriority(a), pb = messagePriority(b);
+        if (pa !== pb) return pa - pb;
+        return new Date(a.timestamp) - new Date(b.timestamp);
+      });
+
+      // Build batch summary for triage
+      const summaryCounts = {};
+      for (const m of batch) {
+        const type = m.system || m.from === '__system__' ? 'system'
+          : m.broadcast ? 'broadcast' : (m.reply_to || m.thread_id) ? 'thread' : 'direct';
+        const key = `${m.from}:${type}`;
+        summaryCounts[key] = (summaryCounts[key] || 0) + 1;
+      }
+      const summaryParts = [];
+      for (const [key, count] of Object.entries(summaryCounts)) {
+        const [from, type] = key.split(':');
+        summaryParts.push(`${count} ${type} from ${from}`);
+      }
+      const batchSummary = `${batch.length} messages: ${summaryParts.join(', ')}`;
 
       // Get recent history for context
       const history = readJsonl(getHistoryFile(currentBranch));
@@ -1473,14 +1580,33 @@ async function toolListenGroup() {
             ...(ageSec > 30 && { delayed: true }),
             ...(m.reply_to && { reply_to: m.reply_to }),
             ...(m.thread_id && { thread_id: m.thread_id }),
+            // addressed_to hint for group messages
+            ...(m.addressed_to && { addressed_to: m.addressed_to }),
+            ...(m.to === '__group__' && {
+              addressed_to_you: !m.addressed_to || m.addressed_to.includes(registeredName),
+              should_respond: !m.addressed_to || m.addressed_to.includes(registeredName),
+            }),
           };
         }),
         message_count: batch.length,
+        batch_summary: batchSummary,
         context: recentHistory,
         agents_online: agentNames.length,
         agents_silent: silent,
         agents_status: agentNames.reduce(function(acc, n) {
-          acc[n] = agents[n].listening_since ? 'listening' : 'working';
+          if (agents[n].listening_since) {
+            acc[n] = 'listening';
+          } else {
+            // Check for unresponsive: not listening, >2min since last listen, has pending messages
+            const lastListened = agents[n].last_listened_at;
+            const sinceLastListen = lastListened ? Date.now() - new Date(lastListened).getTime() : Infinity;
+            const pendingForAgent = getUnconsumedMessages(n);
+            if (sinceLastListen > 120000 && pendingForAgent.length > 0) {
+              acc[n] = 'unresponsive';
+            } else {
+              acc[n] = 'working';
+            }
+          }
           return acc;
         }, {}),
         hint: silent.length > 0
@@ -2862,7 +2988,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.7.0' },
+  { name: 'agent-bridge', version: '3.8.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -2950,7 +3076,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'listen',
-        description: 'Listen for messages indefinitely. Unlike wait_for_reply, this never times out — it blocks until a message arrives. The agent should call listen() after finishing any task to stay available. After receiving a message, process it, respond, then call listen() again.',
+        description: 'Listen for messages indefinitely. Auto-detects conversation mode: in group/managed mode, behaves like listen_group() (returns batched messages with agent statuses). In direct mode, returns one message at a time. Either listen() or listen_group() works in any mode — they auto-delegate to the correct behavior.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -3273,7 +3399,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'listen_group',
-        description: 'Listen for messages in group or managed conversation mode. Blocks indefinitely until messages arrive — never times out. Returns ALL unconsumed messages as a batch, plus conversation context, agent statuses, and hints. After processing messages and responding, call listen_group() again immediately. This is how you stay in the conversation.',
+        description: 'Listen for messages in group or managed conversation mode. Auto-detects mode: in direct mode, behaves like listen(). Returns ALL unconsumed messages as a sorted batch (system > threaded > direct > broadcast), plus batch_summary, agent statuses, and hints. Either listen() or listen_group() works in any mode — they auto-delegate. Call again immediately after responding.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -3610,14 +3736,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // Global hook: on non-listen tools, check for pending messages and nudge the agent
+    // Global hook: on non-listen tools, check for pending messages and nudge with escalating urgency
     const listenTools = ['listen', 'listen_group', 'listen_codex', 'wait_for_reply', 'check_messages'];
     if (registeredName && !listenTools.includes(name) && (isGroupMode() || isManagedMode())) {
       try {
         const pending = getUnconsumedMessages(registeredName);
         if (pending.length > 0 && !result.you_have_messages) {
           result._pending_messages = pending.length;
-          result._nudge = `You have ${pending.length} unread message(s) from the team. Finish your current task quickly, then call listen_group() to read them.`;
+          // Escalate urgency based on oldest pending message age
+          const oldestAge = pending.reduce((max, m) => {
+            const age = Date.now() - new Date(m.timestamp).getTime();
+            return age > max ? age : max;
+          }, 0);
+          const ageSec = Math.round(oldestAge / 1000);
+          if (ageSec > 120) {
+            result._nudge = `CRITICAL: ${pending.length} message(s) waiting ${Math.round(ageSec / 60)}+ min. Team is likely blocked on you. Call listen_group() NOW.`;
+          } else if (ageSec > 30) {
+            result._nudge = `URGENT: ${pending.length} message(s) waiting ${ageSec}s. Team may be blocked. Call listen_group() soon.`;
+          } else {
+            result._nudge = `You have ${pending.length} unread message(s). Call listen_group() after this to read them.`;
+          }
         }
       } catch {}
     }
@@ -3675,7 +3813,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.7.0 running (53 tools)');
+  console.error('Agent Bridge MCP server v3.8.0 running (53 tools)');
 }
 
 main().catch(console.error);

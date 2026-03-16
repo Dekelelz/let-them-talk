@@ -86,9 +86,9 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **52 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
+- **53 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
 - **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
-- **Group conversation mode** — free multi-agent collaboration with auto-broadcast and cooldown
+- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, alive-only GC
 - **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
 - **5 conversation templates** — Code Review, Debug Squad, Feature Dev, Research & Write, Managed Team
 - **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
@@ -175,7 +175,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 **Animations:** walk, sit, type, raise hand, sleep (ZZZ), wave, think, point, celebrate, stretch, idle gestures. Agents turn toward speakers during conversations.
 
-## MCP Tools (52)
+## MCP Tools (53)
 
 <details>
 <summary><strong>Messaging (13 tools)</strong></summary>
