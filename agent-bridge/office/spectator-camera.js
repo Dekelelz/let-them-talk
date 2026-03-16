@@ -131,7 +131,7 @@ export function SpectatorCamera(camera, domElement) {
     if (keys['KeyA'] || keys['ArrowLeft']) moveDir.x -= 1;
     if (keys['KeyD'] || keys['ArrowRight']) moveDir.x += 1;
     if (keys['KeyE'] || keys['Space']) moveDir.y += 1;
-    if (keys['KeyQ'] || keys['ControlLeft']) moveDir.y -= 1;
+    if (keys['KeyQ']) moveDir.y -= 1;
 
     if (moveDir.lengthSq() > 0) {
       moveDir.normalize();
