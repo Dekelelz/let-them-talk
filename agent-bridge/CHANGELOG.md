@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.6.1] - 2026-03-16
+
+### Fixed
+- **3D Hub black screen on page load** — the office module loads asynchronously, but the initial `switchView('office')` fired before `office3dStart` was defined. Added auto-start at end of module so the 3D Hub loads immediately on refresh.
+
 ## [3.6.0] - 2026-03-16
 
 ### Added — Managed Conversation Mode
