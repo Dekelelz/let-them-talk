@@ -2,24 +2,206 @@
 
 ## [3.6.0] - 2026-03-16
 
-### Added — 3D Virtual Office (v1 Preview)
+### Added — Managed Conversation Mode
 
-> **Early preview — expect major changes soon.** This is the foundational release. The 3D office is under active development.
+- **`set_conversation_mode("managed")`** — structured turn-taking for 3+ agent teams, prevents broadcast storms
+- **`claim_manager()`** — claim the manager role (first caller wins, auto-election fallback)
+- **`yield_floor(to, prompt?)`** — manager-only: give an agent permission to speak (directed, round-robin `__open__`, or close `__close__`)
+- **`set_phase(phase)`** — manager-only: move team through discussion → planning → execution → review with auto-instructions to all agents
+- **Floor enforcement** — `send_message`, `broadcast`, `handoff`, and `share_file` all block non-floor-holders with actionable error messages
+- **Auto-advance turns** — floor returns to manager after directed responses; round-robin advances to next alive agent automatically
+- **Manager disconnect recovery** — heartbeat detects dead manager within 10-30s, notifies all agents to re-elect
+- **Dead turn-holder detection** — heartbeat detects dead agents holding the floor and resets it
+- **Managed mode in `listen_group()`** — returns `managed_context`, `should_respond`, and `instructions` to guide agent behavior
+- **`managed` template** — 4-agent team (Manager, Designer, Coder, Tester) with structured prompts
+- **`managed-team` conversation template** — dashboard-launchable version
+- **Dashboard Docs tab** — in-dashboard documentation with full tool reference, managed mode guide, architecture, version history
+- **Dashboard managed mode badge** — header shows current phase and floor status when managed mode is active
 
-- **Modular 3D engine** — 14 ES modules under `office/` powering the virtual workspace
-- **Expanded office** — dressing room (mirror, platform, partitions), rest area (beanbags, warm lighting), LOUNGE archway
-- **Click-to-command** — click agents for Dressing Room / Go Rest / Back to Work / Edit Profile
-- **Character designer** — 480px slide-in panel with live 3D preview, 5 tabs, item cards, color pickers, randomize
-- **Accessory system** — glasses, headwear, neckwear with per-item color customization
-- **`update_profile` extended** — agents self-customize with accessory fields via MCP
-- **Mod system infrastructure** — GLB/GLTF pipeline with validation, `/api/mods` CRUD
+### Added — 3D World Improvements
 
-### Removed
-- ~1,100 lines of dead 2D isometric code
+- **Spectator camera** — free-fly WASD + mouse camera replacing OrbitControls, no distance limits, Shift for fast movement, Q/E up/down
+- **6 new hairstyles** — curly, afro, bun, braids, mohawk, wavy
+- **6 new eye styles** — surprised, angry, happy, wink, confident, tired
+- **5 new mouth styles** — grin, frown, smirk, tongue, whistle
+- **6 outfit types** — hoodie, suit, dress, lab coat, vest, jacket with color customization
+- **3 body types** — default, stocky, slim (scale multipliers on torso/legs/arms)
+- **5 gesture animations** — wave, think, point, celebrate, stretch with idle gesture system
+- **New furniture** — bookshelf (random colored books), wall TV (animated dashboard with agent stats, scrolling ticker, clock), arcade machine (cabinet + screen + joystick + buttons), floor lamp (warm point light), area rug
+- **Agent behavior** — realistic conversation distance (1.8m), listener turns toward speaker, broadcast triggers wave gesture, task completion triggers celebrate
+- **3D Hub** — renamed from "Office", now default tab on page load
+- **Speed slider** — camera speed control in toolbar (1-20)
+
+### Added — 3D Virtual Office (v1 foundation from previous session)
+
+- **Modular 3D engine** — 14 ES modules under `office/`
+- **Expanded office** — 28x16 floor with right wing, dividing wall, LOUNGE archway
+- **Dressing room** — mirror, raised platform, privacy partitions, coat hooks
+- **Rest area** — beanbags, circular rug, side table, warm ambient lighting
+- **Click-to-command** — Dressing Room, Go Rest, Back to Work, Edit Profile
+- **Character designer** — 5-tab panel with live 3D rotating preview
+- **Accessory system** — glasses, headwear, neckwear with color customization
+- **Mod system infrastructure** — GLB/GLTF pipeline with validation
 
 ### Security
-- Path traversal protection on `/office/*` and `/mods/*` routes
-- Mod file type allowlist, GLB magic bytes validation, built-in mod deletion protection
+- **Config file lock** — `config.json` read-modify-write operations now use file-based locking (same pattern as `agents.json`)
+- **Reserved name blocklist** — `__system__`, `__all__`, `__open__`, `__close__`, `system` cannot be registered as agent names
+- **Mode change protection** — only the manager can switch away from managed mode
+- **Floor enforcement on all message paths** — `handoff` and `share_file` now enforce managed mode floor control
+- **Branch-aware system messages** — floor/phase notifications sent to recipient's branch, not sender's
+- **Phase history cap** — limited to 50 entries to prevent config.json bloat
+- `/office/*` and `/mods/*` static routes with path traversal protection
+- Mod file type allowlist blocks all executable formats
+- GLB magic bytes validation (server + client)
+
+### Removed
+- ~1,100 lines of dead 2D isometric office code
+
+## [3.5.0] - 2026-03-15
+
+### Added — Group Conversation Mode
+- **`set_conversation_mode("group")`** — enables free multi-agent collaboration with auto-broadcast
+- **`listen_group()`** — batch message receiver with random stagger (1-3s) to prevent simultaneous responses
+- Returns ALL unconsumed messages + last 20 messages of context + hints about silent agents
+- Auto-broadcast in group mode: every message is shared with all agents automatically
+- Cooldown enforcement: agents must wait 3s between sends to maintain conversation flow
+- Cascade prevention: broadcast copies don't trigger further broadcasts
+- MCP tools: 27 → 29
+
+### Added — Dashboard Features
+- **Notification panel** — bell icon with badge count, dropdown event feed (agent online/offline, listening status changes)
+- **Agent leaderboard** — performance scoring (0-100) with responsiveness, activity, reliability, collaboration dimensions
+- **Cross-project search** — "All Projects" toggle in search bar, searches across all registered projects
+- **Animated replay export** — Export conversation as self-playing HTML file with typing animations and play/pause controls
+- **Ollama integration** — `npx let-them-talk init --ollama` auto-detects Ollama, creates bridge script for local models
+
+### Fixed — PID & Registration Integrity
+- Registration file locking with try/finally (prevents race conditions when multiple agents register simultaneously)
+- PID stale detection uses `last_activity` with 30s threshold (prevents false "alive" from Windows PID reuse)
+- Lock file cleaned up on process exit
+- Dashboard inject/nudge snapshots project context at click time (prevents wrong-project race)
+
+### Security
+- `toolHandoff` and workflow auto-handoff now check `canSendTo` permissions
+- `lastSentAt` updated in `toolBroadcast` (prevents cooldown bypass)
+- `config.json` added to both server and dashboard reset cleanup
+- Auto-broadcast respects `canSendTo` per recipient
+
+## [3.4.4] - 2026-03-15
+
+### Fixed
+- Add project now accepts any existing directory (removed requirement for package.json or .git)
+- Init safely backs up corrupted .mcp.json and settings.json before overwriting
+
+### Changed
+- Removed plugin references from website and docs
+- Website updated with security features (LAN auth token, CSRF, CSP)
+
+## [3.4.3] - 2026-03-15
+
+### Removed — Plugin System
+- Removed the entire plugin system (`vm.runInNewContext` sandbox, plugin CLI commands, dashboard plugin UI)
+- **Why:** Plugins were an unnecessary attack surface. Node.js `vm` is not a security sandbox — plugins could escape and execute arbitrary OS commands. CLI terminals (Claude Code, Gemini, Codex) have their own extension systems, making our plugins redundant.
+- `npx let-them-talk plugin` now shows a deprecation notice
+- MCP tools reduced from 27 + plugins to 27 (all core tools remain)
+- ~200 lines of code removed from server.js, cli.js, dashboard.js, dashboard.html
+
+## [3.4.2] - 2026-03-15
+
+### Security — CSRF Protection
+- Required `X-LTT-Request` custom header on all POST/PUT/DELETE requests
+- `lttFetch` wrapper in dashboard automatically includes the header
+- Malicious cross-origin pages cannot set custom headers without CORS preflight approval
+- Removed wildcard `Access-Control-Allow-Origin: *` in LAN mode — now uses explicit trusted origins only
+- Empty Origin/Referer no longer auto-trusted — requires custom header as minimum protection
+
+### Security — LAN Auth Token
+- Auto-generated 32-char hex token when LAN mode is enabled
+- Token required for all non-localhost requests (via `?token=` query param or `X-LTT-Token` header)
+- Token included in QR code URL — phone scans and it just works
+- Token displayed in phone access modal with explanation
+- New token generated each time LAN mode is toggled on
+- Token persists across server restarts via `.lan-token` file
+- Localhost access never requires a token
+
+### Security — Content Security Policy
+- CSP header added to dashboard HTML response
+- `script-src 'unsafe-inline'` for inline handlers, blocks `eval()` and external scripts
+- `connect-src 'self'` restricts API calls to same origin
+- `font-src`, `style-src`, `img-src` scoped to required sources only
+
+### Fixed
+- CSRF brace imbalance that trapped GET handlers inside POST-only block
+- LAN token not forwarded from phone URL to API calls and SSE
+- Redundant nested origin check collapsed to single condition
+
+## [3.4.1] - 2026-03-15
+
+### Added
+- **File-level mutex** — in-memory promise queue per file for serializing edit/delete operations
+- **Agent permissions enforcement** — `canSendTo()` checks in `send_message` and `broadcast`, `can_read` filtering in `get_history` and message delivery
+- **Read receipts** — auto-recorded when agents consume messages, visible as agent-initial dots under messages in dashboard
+
+### Security
+- HTTP 500 responses now return generic error instead of raw `err.message` (prevents filesystem path leaks)
+- `/api/discover` changed from GET to POST (now under CSRF protection)
+- `workspace_read`/`workspace_list` validate agent name parameter with regex
+- `get_history` filters results by agent's `can_read` permissions
+- `read_receipts.json` and `permissions.json` added to both MCP and dashboard reset cleanup
+- Dashboard workspace API regex aligned with server (`[a-zA-Z0-9_-]`)
+
+### Fixed
+- `toolWaitForReply` missing `markAsRead` calls (read receipts not recorded)
+- `toolBroadcast` bypassing permission checks entirely
+- `toolReset` not cleaning up `permissions.json` and `read_receipts.json`
+
+## [3.4.0] - 2026-03-15
+
+### Added — Dashboard Features
+- **Stats Tab** — per-agent message counts, avg response time, peak hours, 24-hour activity chart, conversation velocity. Keyboard shortcut `6`.
+- **Compact View** — toggle button in search bar. Hides avatars, inlines timestamps, reduces padding. Persists to localStorage.
+- **Message Edit** — edit any message via hover action. Full edit history tracked, "edited" badge displayed.
+- **Message Delete** — delete dashboard/system messages with confirmation dialog.
+- **Copy Message** — clipboard button on message hover to copy raw content.
+- **JSON Export** — new export format alongside HTML and Markdown.
+- **Kanban Drag-and-Drop** — drag task cards between columns (pending/in_progress/done/blocked).
+- **SSE Auto-Reconnect** — exponential backoff (1s→30s), yellow "Reconnecting..." indicator, polling fallback.
+- **Conversation Templates** — 4 built-in multi-agent workflow templates (Code Review Pipeline, Debug Squad, Feature Development, Research & Write) in the Launch tab with copyable agent prompts.
+
+### Added — API Endpoints
+- `PUT /api/message` — edit a message (with edit history)
+- `DELETE /api/message` — delete a message (dashboard/system only)
+- `GET /api/conversation-templates` — list conversation templates
+- `POST /api/conversation-templates/launch` — get template agent prompts
+- `GET /api/stats` — analytics data (per-agent stats, velocity, hourly distribution)
+- `GET/POST /api/permissions` — agent permission management
+
+### Added — CLI Commands
+- `npx let-them-talk msg <agent> <text>` — send a message from CLI
+- `npx let-them-talk status` — show active agents and message counts
+
+### Changed — Premium UI Redesign
+- Deeper dark palette with blue undertones (#080b12 background)
+- Inter font from Google Fonts with anti-aliased rendering
+- Glassmorphism header with backdrop-filter blur
+- Gradient accent system (blue→purple) on buttons, active tabs, send button
+- Refined shadow system (sm/md/lg) with colored glows
+- Focus rings on all inputs
+- Smoother transitions (0.2-0.25s) with lift effects on hover
+- Glass effects on modals and popups
+- Inset shadows on code blocks
+- Thinner scrollbars with transparent tracks
+
+### Fixed
+- Task notes crash when `notes` array undefined
+- Message edit always rewrites messages.jsonl regardless of match
+- Permissions API accepted arbitrary fields (now whitelisted)
+- Task status accepted any string (now validated against whitelist)
+- Reset button ignored active project in multi-project mode
+- Edit modal missing error handler on network failure
+- CLI msg command accepted invalid agent names
+- Copy-to-clipboard double-escaped HTML entities in template prompts
+- Duplicate deleteMessage function shadowing
 
 ## [3.3.2] - 2026-03-14
 

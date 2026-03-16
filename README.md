@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Multi-agent collaboration for AI CLI terminals.</strong><br>
-  Let your AI agents talk, delegate, review, and build together.
+  Let your AI agents talk, delegate, review, and build together — in a 3D virtual office.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ---
 
-Let Them Talk is an MCP server that connects multiple AI CLI terminals through a shared filesystem. Open Claude Code, Gemini CLI, or Codex CLI in separate terminals — they discover each other, exchange messages, share files, assign tasks, and coordinate through workflows. A real-time web dashboard lets you watch everything unfold, inject messages, and manage the conversation.
+Let Them Talk is an MCP server that connects multiple AI CLI terminals through a shared filesystem. Open Claude Code, Gemini CLI, or Codex CLI in separate terminals — they discover each other, exchange messages, share files, assign tasks, and coordinate through workflows. A real-time web dashboard with a **3D virtual office** lets you watch chibi agent characters walk between desks, wave during broadcasts, celebrate completed tasks, and sleep when idle.
 
 If you want your AI agents to stop working in isolation and start collaborating like a team, this is it.
 
@@ -72,7 +72,7 @@ Run `npx let-them-talk init --all` to configure all three at once.
        |                       |                       |
        +----------- .agent-bridge/ directory ----------+
                     messages · agents · tasks
-                    profiles · workflows · plugins
+                    profiles · workflows · permissions
                               |
                               v
                     Web Dashboard :3000
@@ -84,15 +84,19 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
-- **27 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, plugins
-- **Real-time dashboard** — SSE-powered (~200ms latency), markdown rendering, dark/light theme
-- **Multi-agent** — 2 agents auto-route, 3+ agents specify recipients, broadcast to all
-- **Task management** — kanban board with create/assign/track between agents
+- **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
+- **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
+- **32 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode
+- **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
+- **Group conversation mode** — free multi-agent collaboration with auto-broadcast and cooldown
+- **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
+- **5 conversation templates** — Code Review, Debug Squad, Feature Dev, Research & Write, Managed Team
+- **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
+- **Task management** — drag-and-drop kanban board between agents
 - **Workflow pipelines** — multi-step automation with auto-handoff
-- **Agent profiles** — display names, SVG avatars, roles, bios
 - **Conversation branching** — fork at any point, isolated history per branch
-- **File sharing** — send code, diffs, and results directly between agents
-- **Plugin system** — extend with custom tools, 30s sandboxed execution
+- **Ollama integration** — `npx let-them-talk init --ollama` for local AI models
+- **Secure by default** — CSRF, LAN auth tokens, CSP, config locking, reserved name blocklist
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
 ## Agent Templates
@@ -100,11 +104,12 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 Pre-built team configurations. Each template gives you ready-to-paste prompts for every terminal.
 
 ```bash
-npx let-them-talk init --template pair     # A + B
-npx let-them-talk init --template team     # Coordinator + Researcher + Coder
-npx let-them-talk init --template review   # Author + Reviewer
-npx let-them-talk init --template debate   # Pro + Con
-npx let-them-talk templates                # List all available templates
+npx let-them-talk init --template pair      # A + B
+npx let-them-talk init --template team      # Coordinator + Researcher + Coder
+npx let-them-talk init --template review    # Author + Reviewer
+npx let-them-talk init --template debate    # Pro + Con
+npx let-them-talk init --template managed   # Manager + Designer + Coder + Tester
+npx let-them-talk templates                 # List all available templates
 ```
 
 | Template | Agents | Best For |
@@ -113,55 +118,64 @@ npx let-them-talk templates                # List all available templates
 | **team** | Coordinator, Researcher, Coder | Complex features needing research + implementation |
 | **review** | Author, Reviewer | Code review with structured feedback loops |
 | **debate** | Pro, Con | Evaluating trade-offs, architecture decisions |
+| **managed** | Manager, Designer, Coder, Tester | Structured teams with floor control — no chaos with 3+ agents |
 
 ## Web Dashboard
 
 Launch with `npx let-them-talk dashboard` — opens at `http://localhost:3000`.
 
-**4 main tabs:**
+**8 tabs:**
 
-- **Messages** — live feed with full markdown, message grouping, search, bookmarks, pins, emoji reactions, conversation replay
-- **Tasks** — kanban board (pending / in progress / done / blocked), update status from dashboard
+- **3D Hub** — real-time 3D virtual office with chibi agent characters (default view)
+- **Messages** — live feed with full markdown, search, bookmarks, pins, emoji reactions, replay
+- **Tasks** — drag-and-drop kanban board (pending / in progress / done / blocked)
 - **Workspaces** — per-agent key-value storage browser
 - **Workflows** — horizontal pipeline visualization, advance or skip steps
+- **Launch** — spawn new agents with templates, 5 conversation templates with copyable prompts
+- **Stats** — per-agent message counts, avg response times, hourly activity charts, conversation velocity
+- **Docs** — in-dashboard documentation with full tool reference and managed mode guide
 
 **Plus:**
 
 - Agent monitoring with active / sleeping / dead / listening status
 - Profile popups with avatars and role badges
-- Activity heatmap and per-agent stats
+- Message edit, delete, and copy actions on hover
+- SSE auto-reconnect with exponential backoff and visual indicator
 - Message injection and broadcast from browser
 - Conversation branching with branch tabs
-- Export as shareable HTML or Markdown
+- Export as shareable HTML, Markdown, or JSON
 - Multi-project support with auto-discover
+- Premium glassmorphism UI with gradient accents
 - Dark / light theme toggle
 - Mobile responsive with hamburger sidebar
 - Browser notifications and sound alerts
 - LAN mode for phone access
 
-## 3D Virtual Office (v1 Preview)
+## 3D Hub
 
-> **This is v1 — an early preview.** The 3D office is under active development. Expect significant changes, new features, and visual improvements in upcoming releases. What you see today is the foundation.
+The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub") where AI agents come to life as chibi characters. Watch them walk to each other's desks to deliver messages, sit and type, wave during broadcasts, celebrate completed tasks, and sleep when idle.
 
-The dashboard includes a **real-time 3D virtual office** where your AI agents come to life as chibi characters. Watch them walk to each other's desks to deliver messages, sit and type at their workstations, and sleep when idle. It's not just a visualization — it's interactive.
+**Office:**
+- Expanded floor with desks, reception area, **dressing room** (mirror + platform), **rest area** (beanbags)
+- Furniture: bookshelves, wall-mounted TV (animated dashboard with agent stats + ticker), arcade machine, floor lamps, area rugs
+- Real-time terminal screens on each desk showing agent status and recent messages
 
-**What you'll see:**
-- An expanded office with desks, reception area, a **dressing room** with mirror and platform, and a **rest area** with beanbags
-- Chibi characters with unique appearances — hair styles, eye types, outfits, glasses, headwear, and neckwear
-- Real-time terminal screens on each desk showing actual agent data (status, message counts, recent messages)
-- Agents walk, sit, raise hands, sleep with ZZZ animations, and celebrate completed tasks
+**Characters:**
+- 11 hair styles (short, spiky, long, ponytail, bob, curly, afro, bun, braids, mohawk, wavy)
+- 10 eye styles (dots, anime, glasses, sleepy, surprised, angry, happy, wink, confident, tired)
+- 8 mouth styles (smile, neutral, open, grin, frown, smirk, tongue, whistle)
+- 6 outfit types (hoodie, suit, dress, lab coat, vest, jacket)
+- 3 body types (default, stocky, slim)
+- Accessories: glasses, headwear, neckwear with color customization
 
-**Click any agent** to open a command menu:
-- **Dressing Room** — agent walks to the dressing room; a character designer opens with a live 3D preview where you can customize their entire appearance, then they walk back
-- **Go Rest** — agent walks to the rest area beanbags and falls asleep
-- **Back to Work** — agent wakes up and returns to their desk
-- **Edit Profile** — opens the character designer directly
+**Interactions:**
+- Click any agent → command menu (Dressing Room, Go Rest, Back to Work, Edit Profile)
+- Character designer: 5-tab panel with live 3D preview, color pickers, randomize
+- Free-fly spectator camera: WASD + mouse, Q/E up/down, Shift for speed, scroll to dolly, speed slider in toolbar
 
-**Character Designer** includes 5 tabs (Body, Hair, Face, Outfit, Accessories) with item cards, color pickers, a randomize button, and a live rotating 3D preview that updates instantly.
+**Animations:** walk, sit, type, raise hand, sleep (ZZZ), wave, think, point, celebrate, stretch, idle gestures. Agents turn toward speakers during conversations.
 
-**Mod System (infrastructure ready):** A safe GLB/GLTF asset pipeline is in place for future community-created accessories, hairstyles, and outfits. GLB files contain only geometry — no executable code.
-
-## MCP Tools (27 + plugins)
+## MCP Tools (32)
 
 <details>
 <summary><strong>Messaging (13 tools)</strong></summary>
@@ -203,7 +217,7 @@ The dashboard includes a **real-time 3D virtual office** where your AI agents co
 
 | Tool | Description |
 |------|-------------|
-| `update_profile` | Set display name, avatar, bio, role |
+| `update_profile` | Set display name, avatar, bio, role, appearance |
 | `workspace_write` | Write key-value data (50 keys, 100KB/value) |
 | `workspace_read` | Read your workspace or another agent's |
 | `workspace_list` | List workspace keys |
@@ -221,37 +235,19 @@ The dashboard includes a **real-time 3D virtual office** where your AI agents co
 
 </details>
 
-## Plugins
+<details>
+<summary><strong>Conversation Modes (6 tools)</strong></summary>
 
-Extend Let Them Talk with custom tools. Drop a `.js` file in `.agent-bridge/plugins/`.
+| Tool | Description |
+|------|-------------|
+| `set_conversation_mode` | Switch between "direct", "group", or "managed" |
+| `listen_group` | Batch receiver for group/managed mode with context + hints |
+| `listen_codex` | Codex CLI compatible listen — returns after 90s with retry flag |
+| `claim_manager` | Claim the manager role in managed mode |
+| `yield_floor` | Manager-only: give an agent permission to speak |
+| `set_phase` | Manager-only: set team phase (discussion/planning/execution/review) |
 
-```javascript
-module.exports = {
-  name: 'my-tool',
-  description: 'What this tool does',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      query: { type: 'string', description: 'Input text' }
-    },
-    required: ['query']
-  },
-  handler(args, ctx) {
-    // ctx: sendMessage, getAgents, getHistory, readFile, registeredName, dataDir
-    return { result: 'done', query: args.query };
-  }
-};
-```
-
-```bash
-npx let-them-talk plugin add my-tool.js    # install
-npx let-them-talk plugin list              # list installed
-npx let-them-talk plugin remove my-tool    # remove
-npx let-them-talk plugin enable my-tool    # enable
-npx let-them-talk plugin disable my-tool   # disable
-```
-
-Plugins run sandboxed with a 30-second timeout. Manage via CLI or dashboard.
+</details>
 
 ## CLI Reference
 
@@ -262,7 +258,8 @@ npx let-them-talk init --template <name>   # use a team template
 npx let-them-talk templates                # list templates
 npx let-them-talk dashboard                # launch web dashboard
 npx let-them-talk reset                    # clear conversation data
-npx let-them-talk plugin <subcommand>      # manage plugins
+npx let-them-talk msg <agent> <text>       # send a message from CLI
+npx let-them-talk status                   # show active agents
 npx let-them-talk help                     # show help
 ```
 
@@ -282,7 +279,7 @@ Let Them Talk is a **local message broker**. It passes text messages between CLI
 
 **Does not:** access the internet, store API keys, run cloud services, or grant new filesystem access.
 
-**Built-in protections:** CORS restriction, XSS prevention, path traversal protection, symlink validation, origin enforcement, SSE connection limits, input validation, message size limits (1MB), plugin sandboxing (30s timeout).
+**Built-in protections:** CSRF custom header, LAN auth tokens, Content Security Policy, CORS restriction, XSS prevention, path traversal protection, symlink validation, origin enforcement, SSE connection limits, input validation, message size limits (1MB), agent permissions, config file locking, reserved name blocklist.
 
 **LAN mode:** Optional phone access exposes the dashboard to your local WiFi only. Requires explicit activation.
 
