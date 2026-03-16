@@ -446,23 +446,45 @@ function buildLobby(marbleMat, chromeMat, goldMat, walnutMat) {
   kb.position.set(-0.8, 1.2, lz - 0.4);
   group.add(kb);
 
-  // --- Company logo wall (behind reception) ---
+  // --- Feature wall with big TV monitor (behind reception) ---
   var logoWallMat = new THREE.MeshStandardMaterial({ color: 0x15181f, roughness: 0.7 });
-  var logoWall = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.15), logoWallMat);
-  logoWall.position.set(0, 2, lz + 1.5);
+  var logoWall = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 0.15), logoWallMat);
+  logoWall.position.set(0, 2.5, lz + 1.5);
   logoWall.castShadow = true;
   group.add(logoWall);
-  // Backlit logo text
+
+  // "LET THEM TALK" logo text above the TV
   var logoDiv = document.createElement('div');
   logoDiv.textContent = 'LET THEM TALK';
-  logoDiv.style.cssText = 'color:#ffffff;font-size:16px;font-weight:900;font-family:Inter,sans-serif;letter-spacing:6px;text-shadow:0 0 20px rgba(88,166,255,0.6),0 0 40px rgba(88,166,255,0.3);';
+  logoDiv.style.cssText = 'color:#ffffff;font-size:14px;font-weight:900;font-family:Inter,sans-serif;letter-spacing:6px;text-shadow:0 0 20px rgba(88,166,255,0.6),0 0 40px rgba(88,166,255,0.3);';
   var logoLabel = new CSS2DObject(logoDiv);
-  logoLabel.position.set(0, 2.8, lz + 1.6);
+  logoLabel.position.set(0, 4.3, lz + 1.6);
   group.add(logoLabel);
-  // Accent light behind logo wall
-  var logoLight = new THREE.RectAreaLight ? null : null; // not available without addon
+
+  // Big TV screen (dynamic canvas dashboard) — facing INTO the room (-z)
+  var tvFrame = new THREE.Mesh(new THREE.BoxGeometry(5, 2.8, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.2 }));
+  tvFrame.position.set(0, 2.2, lz + 1.4);
+  tvFrame.castShadow = true;
+  group.add(tvFrame);
+  // Animated canvas
+  var tvW = 480, tvH = 300;
+  var tvCvs = document.createElement('canvas');
+  tvCvs.width = tvW; tvCvs.height = tvH;
+  var tvTex = new THREE.CanvasTexture(tvCvs);
+  tvTex.minFilter = THREE.LinearFilter;
+  var tvScreenMat = new THREE.MeshStandardMaterial({
+    map: tvTex, emissive: 0x58a6ff, emissiveIntensity: 0.2, roughness: 0.1
+  });
+  var tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 2.5), tvScreenMat);
+  tvScreen.position.set(0, 2.2, lz + 1.36);
+  tvScreen.rotation.y = Math.PI;
+  group.add(tvScreen);
+  S._tvScreen = { canvas: tvCvs, texture: tvTex, tickerOffset: 0 };
+
+  // Accent light on the wall
   var logoSpot = new THREE.PointLight(0x58a6ff, 0.5, 6);
-  logoSpot.position.set(0, 3.5, lz + 1);
+  logoSpot.position.set(0, 4.2, lz + 1);
   group.add(logoSpot);
 
   // --- Water feature (low rectangular pool) ---
@@ -1241,25 +1263,16 @@ function buildRecCenter(x, z, walnutMat, chromeMat, carpetMat) {
     S.furnitureGroup.add(bot);
   });
 
-  // Big TV on the back — animated canvas dashboard
+  // Static decorative TV (smaller, no dashboard — main TV is at reception)
   var tvMat2 = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.2 });
-  var tvBody = new THREE.Mesh(new THREE.BoxGeometry(3, 1.8, 0.08), tvMat2);
-  tvBody.position.set(x, 2.5, z - 3.8);
+  var tvBody = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.5, 0.08), tvMat2);
+  tvBody.position.set(x, 2.3, z - 3.8);
   tvBody.castShadow = true;
   S.furnitureGroup.add(tvBody);
-  // Dynamic canvas screen
-  var tvW = 480, tvH = 300;
-  var tvCvs = document.createElement('canvas');
-  tvCvs.width = tvW; tvCvs.height = tvH;
-  var tvTex = new THREE.CanvasTexture(tvCvs);
-  tvTex.minFilter = THREE.LinearFilter;
-  var tvScreenMat = new THREE.MeshStandardMaterial({
-    map: tvTex, emissive: 0x58a6ff, emissiveIntensity: 0.2, roughness: 0.1
-  });
-  var tvScreen2 = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.6), tvScreenMat);
-  tvScreen2.position.set(x, 2.5, z - 3.75);
-  S.furnitureGroup.add(tvScreen2);
-  S._tvScreen = { canvas: tvCvs, texture: tvTex, tickerOffset: 0 };
+  var tvScr = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 1.3),
+    new THREE.MeshStandardMaterial({ color: 0x0a1520, emissive: 0x22c55e, emissiveIntensity: 0.15, roughness: 0.1 }));
+  tvScr.position.set(x, 2.3, z - 3.75);
+  S.furnitureGroup.add(tvScr);
 
   // "REC ZONE" sign
   var signDiv = document.createElement('div');

@@ -86,7 +86,7 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **32 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode
+- **52 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
 - **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
 - **Group conversation mode** — free multi-agent collaboration with auto-broadcast and cooldown
 - **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
@@ -175,7 +175,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 **Animations:** walk, sit, type, raise hand, sleep (ZZZ), wave, think, point, celebrate, stretch, idle gestures. Agents turn toward speakers during conversations.
 
-## MCP Tools (32)
+## MCP Tools (52)
 
 <details>
 <summary><strong>Messaging (13 tools)</strong></summary>
@@ -246,6 +246,90 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 | `claim_manager` | Claim the manager role in managed mode |
 | `yield_floor` | Manager-only: give an agent permission to speak |
 | `set_phase` | Manager-only: set team phase (discussion/planning/execution/review) |
+
+</details>
+
+<details>
+<summary><strong>Briefing & Recovery (1 tool)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `get_briefing` | Full project onboarding — agents, tasks, decisions, KB, locks, progress, files |
+
+</details>
+
+<details>
+<summary><strong>File Locking (2 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `lock_file` | Lock a file for exclusive editing. Auto-releases on death |
+| `unlock_file` | Unlock a file or all your locked files |
+
+</details>
+
+<details>
+<summary><strong>Decision Log (2 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `log_decision` | Log a team decision with reasoning and topic |
+| `get_decisions` | Get all decisions, optionally filtered by topic |
+
+</details>
+
+<details>
+<summary><strong>Knowledge Base (3 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `kb_write` | Write to shared team knowledge base |
+| `kb_read` | Read KB entries (one or all) |
+| `kb_list` | List all KB keys with metadata |
+
+</details>
+
+<details>
+<summary><strong>Progress & Compression (3 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `update_progress` | Update feature-level completion percentage |
+| `get_progress` | Get all feature progress with overall % |
+| `get_compressed_history` | Compressed old messages + recent verbatim |
+
+</details>
+
+<details>
+<summary><strong>Voting (3 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `call_vote` | Start a team vote with options |
+| `cast_vote` | Cast your vote (auto-resolves when all vote) |
+| `vote_status` | Check vote results |
+
+</details>
+
+<details>
+<summary><strong>Code Review (2 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `request_review` | Request a code review from the team |
+| `submit_review` | Approve or request changes with feedback |
+
+</details>
+
+<details>
+<summary><strong>Dependencies & Reputation (4 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `declare_dependency` | Declare task dependency (auto-notifies on resolve) |
+| `check_dependencies` | Check blocked/resolved dependencies |
+| `get_reputation` | Agent leaderboard with strengths |
+| `suggest_task` | Get next task suggestion based on your skills |
 
 </details>
 
