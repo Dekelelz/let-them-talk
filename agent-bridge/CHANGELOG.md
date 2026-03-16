@@ -1,5 +1,34 @@
 # Changelog
 
+## [3.7.0] - 2026-03-16
+
+### Added — Agent Ecosystem (20 new tools, 52 total)
+
+**Tier 1 — Critical Infrastructure:**
+- **`get_briefing()`** — full project onboarding in one call: agents, tasks, decisions, KB, locked files, progress, project file tree
+- **`lock_file(path)` / `unlock_file(path?)`** — exclusive file editing with auto-release on agent death
+- **`log_decision(decision, reasoning?, topic?)` / `get_decisions(topic?)`** — persistent decision log, prevents re-debating
+- **Agent recovery on rejoin** — `register()` returns active tasks, workspace keys, recent messages for returning agents
+
+**Tier 2 — Quality of Life:**
+- **`kb_write(key, content)` / `kb_read(key?)` / `kb_list()`** — shared team knowledge base (any agent reads/writes)
+- **Event hooks** — auto-fires system messages on `agent_join`, `task_complete`, `all_tasks_done`, `dependency_met`
+- **`update_progress(feature, percent, notes)` / `get_progress()`** — feature-level progress tracking with overall %
+- **`get_compressed_history()`** — auto-compresses old messages into summary segments, keeps recent verbatim
+- **`listen_group()` now blocks indefinitely** — no more timeout, agents never drop out
+
+**Tier 3 — Advanced Collaboration:**
+- **`call_vote(question, options)` / `cast_vote(vote_id, choice)` / `vote_status(vote_id?)`** — team voting with auto-resolve when all vote
+- **`request_review(file, desc)` / `submit_review(review_id, status, feedback)`** — code review pipeline with approve/changes_requested
+- **`declare_dependency(task_id, depends_on)` / `check_dependencies(task_id?)`** — task dependency tracking with auto-notify on resolve
+- **`get_reputation(agent?)` / `suggest_task()`** — agent reputation tracking (auto-detects strengths), task suggestions based on skills
+- **Auto-reputation tracking** — global hook tracks every action (messages, tasks, reviews, decisions, KB writes) without manual calls
+
+### Fixed
+- **Monitor screens stay red** when agent stops listening — persistent color state instead of 300ms flash
+- **"NOT LISTENING" warning** shown prominently on desk monitor canvas
+- **Status color logic** — green = listening, red = active but not listening, yellow = sleeping, dim = dead
+
 ## [3.6.2] - 2026-03-16
 
 ### Added — Message Awareness System
