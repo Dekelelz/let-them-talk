@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.9.0] - 2026-03-17
+
+### Added — Channels & Split Cooldown
+
+- **`join_channel(name, description?)`** — create or join a channel for sub-team communication
+- **`leave_channel(name)`** — leave a channel (can't leave #general, empty channels auto-delete)
+- **`list_channels()`** — list all channels with members, message counts, membership status
+- **`send_message` channel parameter** — send to specific channel (`channel-{name}-messages.jsonl`)
+- **`listen_group` reads all subscribed channels** — merges messages from general + channel files, sorted by timestamp
+- **Channel validation** — sending to nonexistent channel returns error with hint to create it
+- **Ghost member cleanup** — heartbeat auto-removes dead agents from channel membership
+- **#general auto-created** — `members: ["*"]` (everyone), uses existing messages.jsonl for backward compat
+- **Split cooldown (reply_to-based)** — fast lane (500ms) for addressed agents, slow lane (max 2000, N*1000) for unaddressed, incentivizes threading
+
+### Fixed
+- Task race condition — `update_task` now rejects claiming a task already in_progress by another agent, auto-assigns on claim
+
 ## [3.8.0] - 2026-03-16
 
 ### Changed — Group Conversation Overhaul

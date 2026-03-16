@@ -652,6 +652,7 @@ function toolRegister(name, provider = null) {
       }
       // Clean up file locks held by dead agents
       cleanStaleLocks();
+      cleanStaleChannelMembers();
     } catch {}
   }, 10000);
   heartbeatInterval.unref(); // Don't prevent process exit
@@ -775,7 +776,7 @@ function toolListAgents() {
   return { agents: result };
 }
 
-async function toolSendMessage(content, to = null, reply_to = null) {
+async function toolSendMessage(content, to = null, reply_to = null, channel = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
@@ -783,9 +784,23 @@ async function toolSendMessage(content, to = null, reply_to = null) {
   const rateErr = checkRateLimit();
   if (rateErr) return rateErr;
 
-  // Group mode cooldown — prevent agents from responding too fast
+  // Group mode cooldown — split by addressing (fast lane / slow lane)
   if (isGroupMode()) {
-    const cooldown = getGroupCooldown();
+    let cooldown = getGroupCooldown(); // default: adaptive max(500, N*500)
+    // Split cooldown: if replying to a message that addressed us, use fast lane (500ms)
+    // If not addressed or no reply_to, use slow lane (higher friction)
+    if (reply_to) {
+      const allMsgs = readJsonl(getMessagesFile(currentBranch));
+      const refMsg = allMsgs.find(m => m.id === reply_to);
+      if (refMsg && refMsg.addressed_to && refMsg.addressed_to.includes(registeredName)) {
+        cooldown = 500; // fast lane: I was addressed
+      } else {
+        // Slow lane: heavier friction for unaddressed responses
+        const agents = getAgents();
+        const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+        cooldown = Math.max(2000, aliveCount * 1000);
+      }
+    }
     const elapsed = Date.now() - lastSentAt;
     if (elapsed < cooldown) {
       await sleep(cooldown - elapsed);
@@ -898,13 +913,25 @@ async function toolSendMessage(content, to = null, reply_to = null) {
     content,
     timestamp: new Date().toISOString(),
     ...(isGroup && to && { addressed_to: [to] }),
+    ...(channel && { channel }),
     ...(reply_to && { reply_to }),
     ...(thread_id && { thread_id }),
   };
 
+  // Validate channel exists (prevents orphan files from typos)
+  if (channel && channel !== 'general') {
+    const channels = getChannelsData();
+    if (!channels[channel]) {
+      return { error: `Channel "#${channel}" does not exist. Use join_channel("${channel}") to create it first.` };
+    }
+  }
+
   ensureDataDir();
-  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+  // Write to channel-specific file if channel specified, otherwise default
+  const msgFile = channel ? getChannelMessagesFile(channel) : getMessagesFile(currentBranch);
+  const histFile = channel ? getChannelHistoryFile(channel) : getHistoryFile(currentBranch);
+  fs.appendFileSync(msgFile, JSON.stringify(msg) + '\n');
+  fs.appendFileSync(histFile, JSON.stringify(msg) + '\n');
   touchActivity();
   lastSentAt = Date.now();
 
@@ -1495,8 +1522,20 @@ async function toolListenGroup() {
     const chunkDeadline = Date.now() + 300000;
 
   while (Date.now() < chunkDeadline) {
-    // Collect ALL unconsumed messages: direct to us, __group__ (everyone), __all__, or system
-    const messages = readJsonl(getMessagesFile(currentBranch));
+    // Collect ALL unconsumed messages from general + all subscribed channels
+    const myChannels = getAgentChannels(registeredName);
+    let messages = readJsonl(getMessagesFile(currentBranch));
+    // Also read from channel-specific files
+    for (const ch of myChannels) {
+      if (ch === 'general') continue; // general uses the main messages file
+      const chFile = getChannelMessagesFile(ch);
+      if (fs.existsSync(chFile)) {
+        const chMsgs = readJsonl(chFile);
+        messages = messages.concat(chMsgs);
+      }
+    }
+    // Sort by timestamp for consistent ordering
+    messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     const batch = [];
     for (const msg of messages) {
       if (consumed.has(msg.id)) continue;
@@ -1895,6 +1934,15 @@ function toolUpdateTask(taskId, status, notes = null) {
   const task = tasks.find(t => t.id === taskId);
   if (!task) {
     return { error: `Task not found: ${taskId}` };
+  }
+
+  // Prevent race condition: can't claim a task already in_progress by another agent
+  if (status === 'in_progress' && task.status === 'in_progress' && task.assignee && task.assignee !== registeredName) {
+    return { error: `Task already claimed by ${task.assignee}. Use suggest_task() to find another task.` };
+  }
+  // Auto-assign on claim
+  if (status === 'in_progress' && !task.assignee) {
+    task.assignee = registeredName;
   }
 
   task.status = status;
@@ -2349,6 +2397,112 @@ function getProgressData() { return readJsonFile(PROGRESS_FILE) || {}; }
 function getVotes() { return readJsonFile(VOTES_FILE) || []; }
 function getReviews() { return readJsonFile(REVIEWS_FILE) || []; }
 function getDeps() { return readJsonFile(DEPS_FILE) || []; }
+
+// --- Channel helpers ---
+const CHANNELS_FILE_PATH = path.join(DATA_DIR, 'channels.json');
+
+function getChannelsData() {
+  const data = readJsonFile(CHANNELS_FILE_PATH);
+  if (!data) return { general: { description: 'General channel — all agents', members: ['*'], created_by: 'system', created_at: new Date().toISOString() } };
+  return data;
+}
+
+function saveChannelsData(channels) { writeJsonFile(CHANNELS_FILE_PATH, channels); }
+
+function getChannelMessagesFile(channelName) {
+  if (!channelName || channelName === 'general') return getMessagesFile(currentBranch);
+  return path.join(DATA_DIR, 'channel-' + sanitizeName(channelName) + '-messages.jsonl');
+}
+
+function getChannelHistoryFile(channelName) {
+  if (!channelName || channelName === 'general') return getHistoryFile(currentBranch);
+  return path.join(DATA_DIR, 'channel-' + sanitizeName(channelName) + '-history.jsonl');
+}
+
+function isChannelMember(channelName, agentName) {
+  const channels = getChannelsData();
+  if (!channels[channelName]) return false;
+  return channels[channelName].members.includes('*') || channels[channelName].members.includes(agentName);
+}
+
+function getAgentChannels(agentName) {
+  const channels = getChannelsData();
+  return Object.keys(channels).filter(ch => channels[ch].members.includes('*') || channels[ch].members.includes(agentName));
+}
+
+// Cleanup dead agents from channel membership (called from heartbeat)
+function cleanStaleChannelMembers() {
+  const channels = getChannelsData();
+  const agents = getAgents();
+  let changed = false;
+  for (const [name, ch] of Object.entries(channels)) {
+    if (name === 'general') continue; // general uses '*', no cleanup needed
+    const before = ch.members.length;
+    ch.members = ch.members.filter(m => m === '*' || (agents[m] && isPidAlive(agents[m].pid, agents[m].last_activity)));
+    if (ch.members.length !== before) changed = true;
+  }
+  if (changed) saveChannelsData(channels);
+}
+
+function toolJoinChannel(channelName, description) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof channelName !== 'string' || channelName.length < 1 || channelName.length > 30) return { error: 'Channel name must be 1-30 chars' };
+  sanitizeName(channelName);
+
+  const channels = getChannelsData();
+  if (!channels[channelName]) {
+    // Create new channel
+    channels[channelName] = {
+      description: (description || '').substring(0, 200),
+      members: [registeredName],
+      created_by: registeredName,
+      created_at: new Date().toISOString(),
+    };
+  } else if (!isChannelMember(channelName, registeredName)) {
+    channels[channelName].members.push(registeredName);
+  } else {
+    return { success: true, channel: channelName, message: 'Already a member of #' + channelName };
+  }
+  saveChannelsData(channels);
+  touchActivity();
+  return { success: true, channel: channelName, members: channels[channelName].members, message: 'Joined #' + channelName };
+}
+
+function toolLeaveChannel(channelName) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (channelName === 'general') return { error: 'Cannot leave #general' };
+
+  const channels = getChannelsData();
+  if (!channels[channelName]) return { error: 'Channel not found: #' + channelName };
+  channels[channelName].members = channels[channelName].members.filter(m => m !== registeredName);
+  // Auto-delete empty channels (except general)
+  if (channels[channelName].members.length === 0) delete channels[channelName];
+  saveChannelsData(channels);
+  touchActivity();
+  return { success: true, channel: channelName, message: 'Left #' + channelName };
+}
+
+function toolListChannels() {
+  const channels = getChannelsData();
+  const result = {};
+  for (const [name, ch] of Object.entries(channels)) {
+    const msgFile = getChannelMessagesFile(name);
+    let msgCount = 0;
+    if (fs.existsSync(msgFile)) {
+      const content = fs.readFileSync(msgFile, 'utf8').trim();
+      if (content) msgCount = content.split('\n').length;
+    }
+    result[name] = {
+      description: ch.description || '',
+      members: ch.members,
+      member_count: ch.members.includes('*') ? 'all' : ch.members.length,
+      created_by: ch.created_by,
+      message_count: msgCount,
+      you_are_member: isChannelMember(name, registeredName),
+    };
+  }
+  return { channels: result, your_channels: getAgentChannels(registeredName) };
+}
 
 // Auto-cleanup dead agent locks (called from heartbeat)
 function cleanStaleLocks() {
@@ -2988,7 +3142,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.8.0' },
+  { name: 'agent-bridge', version: '3.9.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -3038,6 +3192,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             reply_to: {
               type: 'string',
               description: 'ID of a previous message to thread this reply under (optional)',
+            },
+            channel: {
+              type: 'string',
+              description: 'Channel to send to (optional — omit for #general). Use join_channel() first to create channels.',
             },
           },
           required: ['content'],
@@ -3405,6 +3563,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      // --- Channels ---
+      {
+        name: 'join_channel',
+        description: 'Join or create a channel. Channels let sub-teams communicate without flooding the main conversation. Auto-joined to #general on register. Use channels when team size > 4.',
+        inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Channel name (1-30 chars, e.g. "backend", "testing")' }, description: { type: 'string', description: 'Channel description (optional, max 200 chars)' } }, required: ['name'] },
+      },
+      {
+        name: 'leave_channel',
+        description: 'Leave a channel. You will stop receiving messages from it. Cannot leave #general.',
+        inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Channel to leave' } }, required: ['name'] },
+      },
+      {
+        name: 'list_channels',
+        description: 'List all channels with members, message counts, and your membership status.',
+        inputSchema: { type: 'object', properties: {} },
+      },
       // --- Briefing & Recovery ---
       {
         name: 'get_guide',
@@ -3570,7 +3744,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolListAgents();
         break;
       case 'send_message':
-        result = await toolSendMessage(args.content, args?.to, args?.reply_to);
+        result = await toolSendMessage(args.content, args?.to, args?.reply_to, args?.channel);
         break;
       case 'wait_for_reply':
         result = await toolWaitForReply(args?.timeout_seconds, args?.from);
@@ -3649,6 +3823,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'listen_group':
         result = await toolListenGroup();
+        break;
+      case 'join_channel':
+        result = toolJoinChannel(args.name, args?.description);
+        break;
+      case 'leave_channel':
+        result = toolLeaveChannel(args.name);
+        break;
+      case 'list_channels':
+        result = toolListChannels();
         break;
       case 'get_guide':
         result = toolGetGuide();
@@ -3813,7 +3996,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.8.0 running (53 tools)');
+  console.error('Agent Bridge MCP server v3.9.0 running (56 tools)');
 }
 
 main().catch(console.error);
