@@ -18,6 +18,15 @@ const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
 const WORKFLOWS_FILE = path.join(DATA_DIR, 'workflows.json');
 const WORKSPACES_DIR = path.join(DATA_DIR, 'workspaces');
 const BRANCHES_FILE = path.join(DATA_DIR, 'branches.json');
+const DECISIONS_FILE = path.join(DATA_DIR, 'decisions.json');
+const KB_FILE = path.join(DATA_DIR, 'kb.json');
+const LOCKS_FILE = path.join(DATA_DIR, 'locks.json');
+const PROGRESS_FILE = path.join(DATA_DIR, 'progress.json');
+const VOTES_FILE = path.join(DATA_DIR, 'votes.json');
+const REVIEWS_FILE = path.join(DATA_DIR, 'reviews.json');
+const DEPS_FILE = path.join(DATA_DIR, 'dependencies.json');
+const REPUTATION_FILE = path.join(DATA_DIR, 'reputation.json');
+const COMPRESSED_FILE = path.join(DATA_DIR, 'compressed.json');
 // Plugins removed in v3.4.3 — unnecessary attack surface, CLIs have their own extension systems
 
 // In-memory state for this process
@@ -621,11 +630,33 @@ function toolRegister(name, provider = null) {
           }
         }
       }
+      // Clean up file locks held by dead agents
+      cleanStaleLocks();
     } catch {}
   }, 10000);
   heartbeatInterval.unref(); // Don't prevent process exit
 
-    return { success: true, message: `Registered as Agent ${name} (PID ${process.pid})` };
+    // Fire join event + recovery data for returning agents
+    const result = { success: true, message: `Registered as Agent ${name} (PID ${process.pid})` };
+
+    // Recovery: if this agent has prior data, include it
+    const myTasks = getTasks().filter(t => t.assignee === name && t.status !== 'done');
+    const myWorkspace = getWorkspace(name);
+    const recentHistory = readJsonl(getHistoryFile(currentBranch));
+    const myRecentMsgs = recentHistory.filter(m => m.to === name || m.from === name).slice(-5);
+
+    if (myTasks.length > 0 || Object.keys(myWorkspace).length > 0 || myRecentMsgs.length > 0) {
+      result.recovery = {};
+      if (myTasks.length > 0) result.recovery.your_active_tasks = myTasks.map(t => ({ id: t.id, title: t.title, status: t.status }));
+      if (Object.keys(myWorkspace).length > 0) result.recovery.your_workspace_keys = Object.keys(myWorkspace);
+      if (myRecentMsgs.length > 0) result.recovery.recent_messages = myRecentMsgs.map(m => ({ from: m.from, to: m.to, preview: m.content.substring(0, 100), timestamp: m.timestamp }));
+      result.recovery.hint = 'You have prior context from a previous session. Call get_briefing() for a full project summary.';
+    }
+
+    // Notify other agents
+    fireEvent('agent_join', { agent: name });
+
+    return result;
   } finally {
     unlockAgentsFile();
   }
@@ -1343,9 +1374,8 @@ function toolSetPhase(phase) {
   };
 }
 
-async function toolListenGroup(timeout_seconds = 300) {
+async function toolListenGroup() {
   if (!registeredName) return { error: 'You must call register() first' };
-  const timeoutMs = Math.min(Math.max(1, timeout_seconds || 300), 3600) * 1000;
 
   setListening(true);
 
@@ -1353,10 +1383,13 @@ async function toolListenGroup(timeout_seconds = 300) {
   const stagger = 1000 + Math.random() * 2000;
   await new Promise(r => setTimeout(r, stagger));
 
-  const deadline = Date.now() + timeoutMs;
   const consumed = getConsumedIds(registeredName);
 
-  while (Date.now() < deadline) {
+  // Poll indefinitely (in 5-min chunks to stay within any MCP limits, same as listen())
+  while (true) {
+    const chunkDeadline = Date.now() + 300000;
+
+  while (Date.now() < chunkDeadline) {
     // Collect ALL unconsumed messages addressed to us or broadcast
     const messages = readJsonl(getMessagesFile(currentBranch));
     const batch = [];
@@ -1455,15 +1488,8 @@ async function toolListenGroup(timeout_seconds = 300) {
 
     await adaptiveSleep(0);
   }
-
-  setListening(false);
-  return {
-    timeout: true,
-    retry: true,
-    message: 'No messages yet. Call listen_group() again immediately to keep listening. Do NOT stop — you must stay in the conversation.',
-    messages: [],
-    message_count: 0,
-  };
+    // No message in this 5-min chunk — loop again (stay listening forever)
+  }
 }
 
 function toolGetHistory(limit = 50, thread_id = null) {
@@ -1718,6 +1744,23 @@ function toolUpdateTask(taskId, status, notes = null) {
   saveTasks(tasks);
   touchActivity();
 
+  // Event hooks: task completion
+  if (status === 'done') {
+    fireEvent('task_complete', { title: task.title, created_by: task.created_by });
+    // Check if this resolves any dependencies
+    const deps = getDeps();
+    for (const dep of deps) {
+      if (dep.depends_on === taskId && !dep.resolved) {
+        dep.resolved = true;
+        const blockedTask = tasks.find(t => t.id === dep.task_id);
+        if (blockedTask && blockedTask.assignee) {
+          fireEvent('dependency_met', { task_title: task.title, notify: blockedTask.assignee });
+        }
+      }
+    }
+    writeJsonFile(DEPS_FILE, deps);
+  }
+
   return { success: true, task_id: task.id, status: task.status, title: task.title };
 }
 
@@ -1800,8 +1843,8 @@ function toolReset() {
       }
     }
   }
-  // Remove profiles, workflows, branches, permissions, read receipts
-  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE, CONFIG_FILE]) {
+  // Remove profiles, workflows, branches, permissions, read receipts, and new ecosystem files
+  for (const f of [PROFILES_FILE, WORKFLOWS_FILE, BRANCHES_FILE, PERMISSIONS_FILE, READ_RECEIPTS_FILE, CONFIG_FILE, DECISIONS_FILE, KB_FILE, LOCKS_FILE, PROGRESS_FILE, VOTES_FILE, REVIEWS_FILE, DEPS_FILE, REPUTATION_FILE, COMPRESSED_FILE]) {
     if (fs.existsSync(f)) fs.unlinkSync(f);
   }
   // Remove workspaces dir
@@ -2129,6 +2172,627 @@ function toolListBranches() {
     result[name] = { ...info, message_count: msgCount, is_current: name === currentBranch };
   }
   return { branches: result, current: currentBranch };
+}
+
+// --- Tier 1: Briefing, File Locking, Decisions, Recovery ---
+
+// Helpers for new data files
+function readJsonFile(file) { if (!fs.existsSync(file)) return null; try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
+function writeJsonFile(file, data) { ensureDataDir(); fs.writeFileSync(file, JSON.stringify(data, null, 2)); }
+
+function getDecisions() { return readJsonFile(DECISIONS_FILE) || []; }
+function getKB() { return readJsonFile(KB_FILE) || {}; }
+function getLocks() { return readJsonFile(LOCKS_FILE) || {}; }
+function getProgressData() { return readJsonFile(PROGRESS_FILE) || {}; }
+function getVotes() { return readJsonFile(VOTES_FILE) || []; }
+function getReviews() { return readJsonFile(REVIEWS_FILE) || []; }
+function getDeps() { return readJsonFile(DEPS_FILE) || []; }
+
+// Auto-cleanup dead agent locks (called from heartbeat)
+function cleanStaleLocks() {
+  const locks = getLocks();
+  const agents = getAgents();
+  let changed = false;
+  for (const [filePath, lock] of Object.entries(locks)) {
+    if (!agents[lock.agent] || !isPidAlive(agents[lock.agent].pid, agents[lock.agent].last_activity)) {
+      delete locks[filePath];
+      changed = true;
+    }
+  }
+  if (changed) writeJsonFile(LOCKS_FILE, locks);
+}
+
+// Event hook: fire system messages based on events
+function fireEvent(eventName, data) {
+  const agents = getAgents();
+  const aliveAgents = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+
+  switch (eventName) {
+    case 'agent_join': {
+      // Notify existing agents
+      for (const name of aliveAgents) {
+        if (name === data.agent) continue;
+        sendSystemMessage(name, `[EVENT] ${data.agent} has joined the team. They are now online.`);
+      }
+      break;
+    }
+    case 'task_complete': {
+      // Notify task creator
+      if (data.created_by && data.created_by !== registeredName && agents[data.created_by]) {
+        sendSystemMessage(data.created_by, `[EVENT] Task "${data.title}" completed by ${registeredName}.`);
+      }
+      // Check if all tasks done
+      const allTasks = getTasks();
+      const pending = allTasks.filter(t => t.status !== 'done');
+      if (pending.length === 0 && allTasks.length > 0) {
+        broadcastSystemMessage(`[EVENT] All ${allTasks.length} tasks are complete! Consider starting a review phase.`);
+      }
+      break;
+    }
+    case 'dependency_met': {
+      if (data.notify && agents[data.notify]) {
+        sendSystemMessage(data.notify, `[EVENT] Dependency resolved: "${data.task_title}" is done. You can now proceed with your blocked task.`);
+      }
+      break;
+    }
+  }
+}
+
+function toolGetBriefing() {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const agents = getAgents();
+  const profiles = getProfiles();
+  const tasks = getTasks();
+  const decisions = getDecisions();
+  const kb = getKB();
+  const progress = getProgressData();
+  const history = readJsonl(getHistoryFile(currentBranch));
+  const locks = getLocks();
+  const config = getConfig();
+
+  // Agent roster
+  const roster = {};
+  for (const [name, info] of Object.entries(agents)) {
+    const alive = isPidAlive(info.pid, info.last_activity);
+    const profile = profiles[name] || {};
+    roster[name] = {
+      status: !alive ? 'offline' : info.listening_since ? 'listening' : 'working',
+      role: profile.role || '',
+      provider: info.provider || 'unknown',
+    };
+  }
+
+  // Recent messages summary (last 15)
+  const recentMsgs = history.slice(-15).map(m => ({
+    from: m.from, to: m.to,
+    preview: m.content.substring(0, 150),
+    timestamp: m.timestamp,
+  }));
+
+  // Active tasks
+  const activeTasks = tasks.filter(t => t.status !== 'done').map(t => ({
+    id: t.id, title: t.title, status: t.status, assignee: t.assignee, created_by: t.created_by,
+  }));
+  const doneTasks = tasks.filter(t => t.status === 'done').length;
+
+  // Locked files
+  const lockedFiles = {};
+  for (const [fp, lock] of Object.entries(locks)) {
+    lockedFiles[fp] = { locked_by: lock.agent, since: lock.since };
+  }
+
+  // Project files summary (scan cwd for key files)
+  const projectFiles = [];
+  try {
+    const cwd = process.cwd();
+    const scan = function(dir, depth) {
+      if (depth > 2) return;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+        const rel = path.relative(cwd, path.join(dir, e.name));
+        if (e.isDirectory()) { projectFiles.push(rel + '/'); scan(path.join(dir, e.name), depth + 1); }
+        else if (e.isFile()) projectFiles.push(rel);
+      }
+    };
+    scan(cwd, 0);
+  } catch {}
+
+  return {
+    briefing: true,
+    conversation_mode: config.conversation_mode || 'direct',
+    agents: roster,
+    your_name: registeredName,
+    total_messages: history.length,
+    recent_messages: recentMsgs,
+    tasks: { active: activeTasks, completed_count: doneTasks, total: tasks.length },
+    decisions: decisions.slice(-10),
+    knowledge_base_keys: Object.keys(kb),
+    locked_files: lockedFiles,
+    progress,
+    project_files: projectFiles.slice(0, 80),
+    hint: 'You are now fully briefed. Check active tasks, read recent messages for context, and start contributing.',
+  };
+}
+
+function toolLockFile(filePath) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof filePath !== 'string' || filePath.length < 1 || filePath.length > 200) return { error: 'Invalid file path' };
+
+  const normalized = filePath.replace(/\\/g, '/');
+  const locks = getLocks();
+
+  if (locks[normalized]) {
+    const holder = locks[normalized].agent;
+    if (holder === registeredName) return { success: true, message: 'You already hold this lock.', file: normalized };
+    // Check if holder is still alive
+    const agents = getAgents();
+    if (agents[holder] && isPidAlive(agents[holder].pid, agents[holder].last_activity)) {
+      return { error: `File "${normalized}" is locked by ${holder} since ${locks[normalized].since}. Wait for them to unlock it or message them.` };
+    }
+    // Dead holder — take over
+  }
+
+  locks[normalized] = { agent: registeredName, since: new Date().toISOString() };
+  writeJsonFile(LOCKS_FILE, locks);
+  touchActivity();
+  return { success: true, file: normalized, message: `File locked. Other agents cannot edit "${normalized}" until you call unlock_file().` };
+}
+
+function toolUnlockFile(filePath) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  const normalized = (filePath || '').replace(/\\/g, '/');
+  const locks = getLocks();
+
+  if (!filePath) {
+    // Unlock ALL files held by this agent
+    let count = 0;
+    for (const [fp, lock] of Object.entries(locks)) {
+      if (lock.agent === registeredName) { delete locks[fp]; count++; }
+    }
+    writeJsonFile(LOCKS_FILE, locks);
+    return { success: true, unlocked: count, message: `Unlocked ${count} file(s).` };
+  }
+
+  if (!locks[normalized]) return { success: true, message: 'File was not locked.' };
+  if (locks[normalized].agent !== registeredName) return { error: `File is locked by ${locks[normalized].agent}, not you.` };
+
+  delete locks[normalized];
+  writeJsonFile(LOCKS_FILE, locks);
+  return { success: true, file: normalized, message: 'File unlocked.' };
+}
+
+function toolLogDecision(decision, reasoning, topic) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof decision !== 'string' || decision.length < 1 || decision.length > 500) return { error: 'Decision must be 1-500 chars' };
+
+  const decisions = getDecisions();
+  const entry = {
+    id: 'dec_' + generateId(),
+    decision,
+    reasoning: (reasoning || '').substring(0, 1000),
+    topic: (topic || 'general').substring(0, 50),
+    decided_by: registeredName,
+    decided_at: new Date().toISOString(),
+  };
+  decisions.push(entry);
+  if (decisions.length > 200) decisions.splice(0, decisions.length - 200); // cap
+  writeJsonFile(DECISIONS_FILE, decisions);
+  touchActivity();
+  return { success: true, decision_id: entry.id, message: 'Decision logged. Other agents can see it via get_decisions() or get_briefing().' };
+}
+
+function toolGetDecisions(topic) {
+  let decisions = getDecisions();
+  if (topic) decisions = decisions.filter(d => d.topic === topic);
+  return { count: decisions.length, decisions: decisions.slice(-30) };
+}
+
+// --- Tier 2: Knowledge Base, Progress, Event hooks ---
+
+function toolKBWrite(key, content) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof key !== 'string' || key.length < 1 || key.length > 50) return { error: 'Key must be 1-50 chars' };
+  if (!/^[a-zA-Z0-9_\-\.]+$/.test(key)) return { error: 'Key must be alphanumeric/underscore/hyphen/dot' };
+  if (typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > 102400) return { error: 'Content exceeds 100KB' };
+
+  const kb = getKB();
+  kb[key] = { content, updated_by: registeredName, updated_at: new Date().toISOString() };
+  if (Object.keys(kb).length > 100) return { error: 'Knowledge base full (max 100 keys)' };
+  writeJsonFile(KB_FILE, kb);
+  touchActivity();
+  return { success: true, key, size: content.length, total_keys: Object.keys(kb).length };
+}
+
+function toolKBRead(key) {
+  const kb = getKB();
+  if (key) {
+    if (!kb[key]) return { error: `Key "${key}" not found in knowledge base` };
+    return { key, content: kb[key].content, updated_by: kb[key].updated_by, updated_at: kb[key].updated_at };
+  }
+  // Return all entries
+  const entries = {};
+  for (const [k, v] of Object.entries(kb)) {
+    entries[k] = { content: v.content, updated_by: v.updated_by, updated_at: v.updated_at };
+  }
+  return { entries, total_keys: Object.keys(kb).length };
+}
+
+function toolKBList() {
+  const kb = getKB();
+  return {
+    keys: Object.keys(kb).map(k => ({ key: k, updated_by: kb[k].updated_by, updated_at: kb[k].updated_at, size: kb[k].content.length })),
+    total: Object.keys(kb).length,
+  };
+}
+
+function toolUpdateProgress(feature, percent, notes) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof feature !== 'string' || feature.length < 1 || feature.length > 100) return { error: 'Feature name must be 1-100 chars' };
+  if (typeof percent !== 'number' || percent < 0 || percent > 100) return { error: 'Percent must be 0-100' };
+
+  const progress = getProgressData();
+  progress[feature] = {
+    percent,
+    notes: (notes || '').substring(0, 500),
+    updated_by: registeredName,
+    updated_at: new Date().toISOString(),
+  };
+  writeJsonFile(PROGRESS_FILE, progress);
+  touchActivity();
+  return { success: true, feature, percent, message: `Progress updated: ${feature} is ${percent}% complete.` };
+}
+
+function toolGetProgress() {
+  const progress = getProgressData();
+  const features = Object.entries(progress).map(([name, p]) => ({
+    feature: name, percent: p.percent, notes: p.notes, updated_by: p.updated_by, updated_at: p.updated_at,
+  }));
+  const avg = features.length > 0 ? Math.round(features.reduce((s, f) => s + f.percent, 0) / features.length) : 0;
+  return { features, overall_percent: avg, feature_count: features.length };
+}
+
+// --- Tier 3: Voting, Code Review, Dependencies ---
+
+function toolCallVote(question, options) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof question !== 'string' || question.length < 1 || question.length > 200) return { error: 'Question must be 1-200 chars' };
+  if (!Array.isArray(options) || options.length < 2 || options.length > 10) return { error: 'Need 2-10 options' };
+
+  const votes = getVotes();
+  const vote = {
+    id: 'vote_' + generateId(),
+    question,
+    options: options.map(o => String(o).substring(0, 50)),
+    votes: {},
+    status: 'open',
+    created_by: registeredName,
+    created_at: new Date().toISOString(),
+  };
+  votes.push(vote);
+  writeJsonFile(VOTES_FILE, votes);
+
+  // Notify all agents
+  broadcastSystemMessage(`[VOTE] ${registeredName} started a vote: "${question}" — Options: ${vote.options.join(', ')}. Call cast_vote("${vote.id}", "your_choice") to vote.`, registeredName);
+  touchActivity();
+  return { success: true, vote_id: vote.id, question, options: vote.options, message: 'Vote created. All agents have been notified.' };
+}
+
+function toolCastVote(voteId, choice) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const votes = getVotes();
+  const vote = votes.find(v => v.id === voteId);
+  if (!vote) return { error: `Vote not found: ${voteId}` };
+  if (vote.status !== 'open') return { error: 'Vote is already closed.' };
+  if (!vote.options.includes(choice)) return { error: `Invalid choice. Options: ${vote.options.join(', ')}` };
+
+  vote.votes[registeredName] = { choice, voted_at: new Date().toISOString() };
+
+  // Check if all online agents have voted
+  const agents = getAgents();
+  const onlineAgents = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+  const allVoted = onlineAgents.every(n => vote.votes[n]);
+
+  if (allVoted) {
+    vote.status = 'closed';
+    vote.closed_at = new Date().toISOString();
+    // Count results
+    const results = {};
+    for (const opt of vote.options) results[opt] = 0;
+    for (const v of Object.values(vote.votes)) results[v.choice]++;
+    vote.results = results;
+    const winner = Object.entries(results).sort((a, b) => b[1] - a[1])[0];
+    broadcastSystemMessage(`[VOTE RESULT] "${vote.question}" — Winner: ${winner[0]} (${winner[1]} votes). Full results: ${JSON.stringify(results)}`);
+  }
+
+  writeJsonFile(VOTES_FILE, votes);
+  touchActivity();
+  return { success: true, vote_id: voteId, your_vote: choice, status: vote.status, votes_cast: Object.keys(vote.votes).length, agents_online: onlineAgents.length };
+}
+
+function toolVoteStatus(voteId) {
+  const votes = getVotes();
+  if (voteId) {
+    const vote = votes.find(v => v.id === voteId);
+    if (!vote) return { error: `Vote not found: ${voteId}` };
+    return { vote };
+  }
+  return { votes: votes.map(v => ({ id: v.id, question: v.question, status: v.status, votes_cast: Object.keys(v.votes).length, results: v.results || null })) };
+}
+
+function toolRequestReview(filePath, description) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof filePath !== 'string' || filePath.length < 1) return { error: 'File path required' };
+
+  const reviews = getReviews();
+  const review = {
+    id: 'rev_' + generateId(),
+    file: filePath.replace(/\\/g, '/'),
+    description: (description || '').substring(0, 500),
+    status: 'pending',
+    requested_by: registeredName,
+    requested_at: new Date().toISOString(),
+    reviewer: null,
+    feedback: null,
+  };
+  reviews.push(review);
+  writeJsonFile(REVIEWS_FILE, reviews);
+
+  // Notify all other agents
+  broadcastSystemMessage(`[REVIEW] ${registeredName} requests review of "${review.file}": ${review.description || 'No description'}. Call submit_review("${review.id}", "approved"/"changes_requested", "your feedback") to review.`, registeredName);
+  touchActivity();
+  return { success: true, review_id: review.id, file: review.file, message: 'Review requested. Team has been notified.' };
+}
+
+function toolSubmitReview(reviewId, status, feedback) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const validStatuses = ['approved', 'changes_requested'];
+  if (!validStatuses.includes(status)) return { error: `Status must be: ${validStatuses.join(' or ')}` };
+
+  const reviews = getReviews();
+  const review = reviews.find(r => r.id === reviewId);
+  if (!review) return { error: `Review not found: ${reviewId}` };
+  if (review.requested_by === registeredName) return { error: 'Cannot review your own code.' };
+
+  review.status = status;
+  review.reviewer = registeredName;
+  review.feedback = (feedback || '').substring(0, 2000);
+  review.reviewed_at = new Date().toISOString();
+  writeJsonFile(REVIEWS_FILE, reviews);
+
+  // Notify requester
+  const agents = getAgents();
+  if (agents[review.requested_by]) {
+    sendSystemMessage(review.requested_by, `[REVIEW] ${registeredName} ${status === 'approved' ? 'approved' : 'requested changes on'} "${review.file}": ${review.feedback || 'No feedback'}`);
+  }
+  touchActivity();
+  return { success: true, review_id: reviewId, status, message: `Review submitted: ${status}` };
+}
+
+function toolDeclareDependency(taskId, dependsOnTaskId) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const tasks = getTasks();
+  const task = tasks.find(t => t.id === taskId);
+  const depTask = tasks.find(t => t.id === dependsOnTaskId);
+  if (!task) return { error: `Task not found: ${taskId}` };
+  if (!depTask) return { error: `Dependency task not found: ${dependsOnTaskId}` };
+
+  const deps = getDeps();
+  deps.push({
+    id: 'dep_' + generateId(),
+    task_id: taskId,
+    depends_on: dependsOnTaskId,
+    declared_by: registeredName,
+    declared_at: new Date().toISOString(),
+    resolved: depTask.status === 'done',
+  });
+  writeJsonFile(DEPS_FILE, deps);
+  touchActivity();
+
+  if (depTask.status === 'done') {
+    return { success: true, message: `Dependency declared but already resolved — "${depTask.title}" is done. You can proceed.` };
+  }
+  return { success: true, message: `Dependency declared: "${task.title}" is blocked until "${depTask.title}" is done. You'll be notified when it completes.` };
+}
+
+function toolCheckDependencies(taskId) {
+  const deps = getDeps();
+  const tasks = getTasks();
+
+  if (taskId) {
+    const taskDeps = deps.filter(d => d.task_id === taskId);
+    return {
+      task_id: taskId,
+      dependencies: taskDeps.map(d => {
+        const t = tasks.find(t2 => t2.id === d.depends_on);
+        return { depends_on: d.depends_on, title: t ? t.title : 'unknown', status: t ? t.status : 'unknown', resolved: t ? t.status === 'done' : false };
+      }),
+    };
+  }
+  // All unresolved deps
+  const unresolved = deps.filter(d => {
+    const t = tasks.find(t2 => t2.id === d.depends_on);
+    return t && t.status !== 'done';
+  });
+  return { unresolved_count: unresolved.length, unresolved: unresolved.map(d => ({ task_id: d.task_id, blocked_by: d.depends_on })) };
+}
+
+// --- Conversation Compression ---
+
+function getCompressed() { return readJsonFile(COMPRESSED_FILE) || { segments: [], last_compressed_at: null }; }
+
+// Compress old messages into summary segments
+// Keeps last 20 verbatim, groups older messages into topic summaries
+function autoCompress() {
+  const history = readJsonl(getHistoryFile(currentBranch));
+  if (history.length <= 50) return; // only compress when conversation is long
+
+  const compressed = getCompressed();
+  const cutoff = history.length - 20; // keep last 20 verbatim
+  const toCompress = history.slice(compressed.segments.length > 0 ? compressed.segments.reduce((s, seg) => s + seg.message_count, 0) : 0, cutoff);
+  if (toCompress.length < 10) return; // not enough new messages to compress
+
+  // Group messages into chunks of ~10 and create summaries
+  const chunkSize = 10;
+  for (let i = 0; i < toCompress.length; i += chunkSize) {
+    const chunk = toCompress.slice(i, i + chunkSize);
+    const speakers = [...new Set(chunk.map(m => m.from))];
+    const topics = chunk.map(m => {
+      const preview = m.content.substring(0, 80).replace(/\n/g, ' ');
+      return `${m.from}: ${preview}`;
+    });
+    const segment = {
+      id: 'seg_' + generateId(),
+      from_time: chunk[0].timestamp,
+      to_time: chunk[chunk.length - 1].timestamp,
+      message_count: chunk.length,
+      speakers,
+      summary: topics.join(' | '),
+      first_msg_id: chunk[0].id,
+      last_msg_id: chunk[chunk.length - 1].id,
+    };
+    compressed.segments.push(segment);
+  }
+
+  // Cap segments at 100
+  if (compressed.segments.length > 100) compressed.segments = compressed.segments.slice(-100);
+  compressed.last_compressed_at = new Date().toISOString();
+  compressed.total_original_messages = history.length;
+  writeJsonFile(COMPRESSED_FILE, compressed);
+}
+
+function toolGetCompressedHistory() {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const compressed = getCompressed();
+  const history = readJsonl(getHistoryFile(currentBranch));
+  const recent = history.slice(-20);
+
+  return {
+    compressed_segments: compressed.segments.slice(-20).map(s => ({
+      time_range: s.from_time + ' to ' + s.to_time,
+      speakers: s.speakers,
+      message_count: s.message_count,
+      summary: s.summary,
+    })),
+    recent_messages: recent.map(m => ({
+      id: m.id, from: m.from, to: m.to,
+      content: m.content.substring(0, 300),
+      timestamp: m.timestamp,
+    })),
+    total_messages: history.length,
+    compressed_count: compressed.segments.reduce((s, seg) => s + seg.message_count, 0),
+    recent_count: recent.length,
+    hint: 'Compressed segments summarize older messages. Recent messages are shown verbatim.',
+  };
+}
+
+// --- Agent Reputation ---
+
+function getReputation() { return readJsonFile(REPUTATION_FILE) || {}; }
+
+function trackReputation(agent, action) {
+  const rep = getReputation();
+  if (!rep[agent]) {
+    rep[agent] = {
+      tasks_completed: 0, tasks_created: 0, reviews_done: 0, reviews_requested: 0,
+      bugs_found: 0, messages_sent: 0, decisions_made: 0, votes_cast: 0,
+      kb_contributions: 0, files_shared: 0, first_seen: new Date().toISOString(),
+      last_active: new Date().toISOString(), strengths: [],
+    };
+  }
+  const r = rep[agent];
+  r.last_active = new Date().toISOString();
+
+  switch (action) {
+    case 'task_complete': r.tasks_completed++; break;
+    case 'task_create': r.tasks_created++; break;
+    case 'review_submit': r.reviews_done++; break;
+    case 'review_request': r.reviews_requested++; break;
+    case 'message_send': r.messages_sent++; break;
+    case 'decision_log': r.decisions_made++; break;
+    case 'vote_cast': r.votes_cast++; break;
+    case 'kb_write': r.kb_contributions++; break;
+    case 'file_share': r.files_shared++; break;
+    case 'bug_found': r.bugs_found++; break;
+  }
+
+  // Auto-detect strengths based on stats
+  r.strengths = [];
+  if (r.tasks_completed >= 3) r.strengths.push('productive');
+  if (r.reviews_done >= 2) r.strengths.push('reviewer');
+  if (r.decisions_made >= 2) r.strengths.push('decision-maker');
+  if (r.kb_contributions >= 3) r.strengths.push('documenter');
+  if (r.tasks_created >= 3) r.strengths.push('organizer');
+  if (r.bugs_found >= 2) r.strengths.push('bug-hunter');
+
+  writeJsonFile(REPUTATION_FILE, rep);
+}
+
+function toolGetReputation(agent) {
+  const rep = getReputation();
+
+  if (agent) {
+    if (!rep[agent]) return { agent, message: 'No reputation data yet for this agent.' };
+    return { agent, reputation: rep[agent] };
+  }
+
+  // All agents with ranking
+  const leaderboard = Object.entries(rep).map(([name, r]) => ({
+    agent: name,
+    score: r.tasks_completed * 10 + r.reviews_done * 5 + r.decisions_made * 3 + r.kb_contributions * 2 + r.bugs_found * 8,
+    tasks_completed: r.tasks_completed,
+    reviews_done: r.reviews_done,
+    strengths: r.strengths,
+    last_active: r.last_active,
+  })).sort((a, b) => b.score - a.score);
+
+  return { leaderboard, total_agents: leaderboard.length };
+}
+
+function toolSuggestTask() {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const rep = getReputation();
+  const myRep = rep[registeredName];
+  const tasks = getTasks();
+  const pendingTasks = tasks.filter(t => t.status === 'pending' && !t.assignee);
+  const unassignedTasks = tasks.filter(t => t.status === 'pending');
+
+  if (pendingTasks.length === 0 && unassignedTasks.length === 0) {
+    // Check reviews
+    const reviews = getReviews();
+    const pendingReviews = reviews.filter(r => r.status === 'pending' && r.requested_by !== registeredName);
+    if (pendingReviews.length > 0) {
+      return { suggestion: 'review', review_id: pendingReviews[0].id, file: pendingReviews[0].file, message: `No pending tasks, but there's a code review waiting: "${pendingReviews[0].file}". Call submit_review() to review it.` };
+    }
+    // Check deps
+    const deps = getDeps();
+    const unresolved = deps.filter(d => !d.resolved);
+    if (unresolved.length > 0) {
+      return { suggestion: 'unblock', message: `No tasks available, but ${unresolved.length} task(s) are blocked by dependencies. Check if you can help resolve them.` };
+    }
+    return { suggestion: 'none', message: 'No pending tasks, reviews, or blocked items. Ask the team what needs doing next.' };
+  }
+
+  // Suggest based on reputation strengths
+  let suggested = pendingTasks[0] || unassignedTasks[0];
+  if (myRep && myRep.strengths.includes('reviewer')) {
+    const reviews = getReviews().filter(r => r.status === 'pending' && r.requested_by !== registeredName);
+    if (reviews.length > 0) return { suggestion: 'review', review_id: reviews[0].id, file: reviews[0].file, message: `Based on your strengths (reviewer), review "${reviews[0].file}".` };
+  }
+
+  return {
+    suggestion: 'task',
+    task_id: suggested.id,
+    title: suggested.title,
+    description: suggested.description,
+    message: `Suggested: "${suggested.title}". Call update_task("${suggested.id}", "in_progress") to claim it.`,
+  };
 }
 
 // --- MCP Server setup ---
@@ -2545,13 +3209,121 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'listen_group',
-        description: 'Listen for messages in group or managed conversation mode. Returns ALL unconsumed messages as a batch, plus conversation context and hints. IMPORTANT: After processing messages and responding, you MUST call listen_group() again immediately. If it times out with retry:true, call it again. Never stop listening — this is how you stay in the conversation.',
+        description: 'Listen for messages in group or managed conversation mode. Blocks indefinitely until messages arrive — never times out. Returns ALL unconsumed messages as a batch, plus conversation context, agent statuses, and hints. After processing messages and responding, call listen_group() again immediately. This is how you stay in the conversation.',
         inputSchema: {
           type: 'object',
-          properties: {
-            timeout_seconds: { type: 'number', description: 'Max seconds to wait for messages (default 300)' },
-          },
+          properties: {},
         },
+      },
+      // --- Briefing & Recovery ---
+      {
+        name: 'get_briefing',
+        description: 'Get a full project briefing: who is online, active tasks, recent decisions, knowledge base, locked files, progress, and project files. Call this when joining a project or after being away. One call = fully onboarded.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      // --- File Locking ---
+      {
+        name: 'lock_file',
+        description: 'Lock a file for exclusive editing. Other agents will be warned if they try to edit it. Call unlock_file() when done. Locks auto-release if you disconnect.',
+        inputSchema: { type: 'object', properties: { file_path: { type: 'string', description: 'Relative path to the file to lock' } }, required: ['file_path'] },
+      },
+      {
+        name: 'unlock_file',
+        description: 'Unlock a file you previously locked. Omit file_path to unlock all your files.',
+        inputSchema: { type: 'object', properties: { file_path: { type: 'string', description: 'File to unlock (optional — omit to unlock all)' } } },
+      },
+      // --- Decision Log ---
+      {
+        name: 'log_decision',
+        description: 'Log a team decision so it persists and other agents can reference it. Prevents re-debating the same choices.',
+        inputSchema: { type: 'object', properties: { decision: { type: 'string', description: 'The decision made (max 500 chars)' }, reasoning: { type: 'string', description: 'Why this was decided (optional, max 1000 chars)' }, topic: { type: 'string', description: 'Category like "architecture", "tech-stack", "design" (optional)' } }, required: ['decision'] },
+      },
+      {
+        name: 'get_decisions',
+        description: 'Get all logged decisions, optionally filtered by topic.',
+        inputSchema: { type: 'object', properties: { topic: { type: 'string', description: 'Filter by topic (optional)' } } },
+      },
+      // --- Knowledge Base ---
+      {
+        name: 'kb_write',
+        description: 'Write to the shared team knowledge base. Any agent can read, any agent can write. Use for API specs, conventions, shared data.',
+        inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Key name (1-50 alphanumeric chars)' }, content: { type: 'string', description: 'Content (max 100KB)' } }, required: ['key', 'content'] },
+      },
+      {
+        name: 'kb_read',
+        description: 'Read from the shared knowledge base. Omit key to read all entries.',
+        inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Key to read (optional — omit for all)' } } },
+      },
+      {
+        name: 'kb_list',
+        description: 'List all keys in the shared knowledge base with metadata.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      // --- Progress Tracking ---
+      {
+        name: 'update_progress',
+        description: 'Update feature-level progress. Higher level than tasks — tracks overall feature completion percentage.',
+        inputSchema: { type: 'object', properties: { feature: { type: 'string', description: 'Feature name (max 100 chars)' }, percent: { type: 'number', description: 'Completion percentage 0-100' }, notes: { type: 'string', description: 'Progress notes (optional)' } }, required: ['feature', 'percent'] },
+      },
+      {
+        name: 'get_progress',
+        description: 'Get progress on all features with completion percentages and overall project progress.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      // --- Voting ---
+      {
+        name: 'call_vote',
+        description: 'Start a vote for the team to decide something. All online agents are notified and can cast their vote.',
+        inputSchema: { type: 'object', properties: { question: { type: 'string', description: 'The question to vote on' }, options: { type: 'array', items: { type: 'string' }, description: 'Array of 2-10 options to choose from' } }, required: ['question', 'options'] },
+      },
+      {
+        name: 'cast_vote',
+        description: 'Cast your vote on an open vote. Vote auto-resolves when all online agents have voted.',
+        inputSchema: { type: 'object', properties: { vote_id: { type: 'string', description: 'Vote ID' }, choice: { type: 'string', description: 'Your choice (must match one of the options)' } }, required: ['vote_id', 'choice'] },
+      },
+      {
+        name: 'vote_status',
+        description: 'Check status of a specific vote or all votes.',
+        inputSchema: { type: 'object', properties: { vote_id: { type: 'string', description: 'Vote ID (optional — omit for all)' } } },
+      },
+      // --- Code Review ---
+      {
+        name: 'request_review',
+        description: 'Request a code review from the team. Creates a review request and notifies all agents.',
+        inputSchema: { type: 'object', properties: { file_path: { type: 'string', description: 'File to review' }, description: { type: 'string', description: 'What to focus on in the review' } }, required: ['file_path'] },
+      },
+      {
+        name: 'submit_review',
+        description: 'Submit a code review — approve or request changes with feedback.',
+        inputSchema: { type: 'object', properties: { review_id: { type: 'string', description: 'Review ID' }, status: { type: 'string', enum: ['approved', 'changes_requested'], description: 'Review result' }, feedback: { type: 'string', description: 'Your review feedback (max 2000 chars)' } }, required: ['review_id', 'status'] },
+      },
+      // --- Dependencies ---
+      {
+        name: 'declare_dependency',
+        description: 'Declare that a task depends on another task. You will be notified when the dependency is complete.',
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string', description: 'Your task that is blocked' }, depends_on: { type: 'string', description: 'Task ID that must complete first' } }, required: ['task_id', 'depends_on'] },
+      },
+      {
+        name: 'check_dependencies',
+        description: 'Check dependency status for a task or all unresolved dependencies.',
+        inputSchema: { type: 'object', properties: { task_id: { type: 'string', description: 'Task ID to check (optional — omit for all unresolved)' } } },
+      },
+      // --- Conversation Compression ---
+      {
+        name: 'get_compressed_history',
+        description: 'Get conversation history with automatic compression. Old messages are summarized into segments, recent messages shown verbatim. Use this when the conversation is long and you need to catch up without overflowing your context.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      // --- Reputation ---
+      {
+        name: 'get_reputation',
+        description: 'View agent reputation — tasks completed, reviews done, bugs found, strengths. Shows leaderboard when called without agent name.',
+        inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Agent name (optional — omit for leaderboard)' } } },
+      },
+      {
+        name: 'suggest_task',
+        description: 'Get a task suggestion based on your strengths, pending tasks, open reviews, and blocked dependencies. Helps you find the most useful thing to do next.',
+        inputSchema: { type: 'object', properties: {} },
       },
       // --- Managed mode tools ---
       {
@@ -2681,7 +3453,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolSetConversationMode(args.mode);
         break;
       case 'listen_group':
-        result = await toolListenGroup(args?.timeout_seconds);
+        result = await toolListenGroup();
+        break;
+      case 'get_briefing':
+        result = toolGetBriefing();
+        break;
+      case 'lock_file':
+        result = toolLockFile(args.file_path);
+        break;
+      case 'unlock_file':
+        result = toolUnlockFile(args?.file_path);
+        break;
+      case 'log_decision':
+        result = toolLogDecision(args.decision, args?.reasoning, args?.topic);
+        break;
+      case 'get_decisions':
+        result = toolGetDecisions(args?.topic);
+        break;
+      case 'kb_write':
+        result = toolKBWrite(args.key, args.content);
+        break;
+      case 'kb_read':
+        result = toolKBRead(args?.key);
+        break;
+      case 'kb_list':
+        result = toolKBList();
+        break;
+      case 'update_progress':
+        result = toolUpdateProgress(args.feature, args.percent, args?.notes);
+        break;
+      case 'get_progress':
+        result = toolGetProgress();
+        break;
+      case 'call_vote':
+        result = toolCallVote(args.question, args.options);
+        break;
+      case 'cast_vote':
+        result = toolCastVote(args.vote_id, args.choice);
+        break;
+      case 'vote_status':
+        result = toolVoteStatus(args?.vote_id);
+        break;
+      case 'request_review':
+        result = toolRequestReview(args.file_path, args?.description);
+        break;
+      case 'submit_review':
+        result = toolSubmitReview(args.review_id, args.status, args?.feedback);
+        break;
+      case 'declare_dependency':
+        result = toolDeclareDependency(args.task_id, args.depends_on);
+        break;
+      case 'check_dependencies':
+        result = toolCheckDependencies(args?.task_id);
+        break;
+      case 'get_compressed_history':
+        result = toolGetCompressedHistory();
+        break;
+      case 'get_reputation':
+        result = toolGetReputation(args?.agent);
+        break;
+      case 'suggest_task':
+        result = toolSuggestTask();
         break;
       case 'claim_manager':
         result = toolClaimManager();
@@ -2707,7 +3539,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // Global hook: on non-listen tools, check for pending messages and nudge the agent
-    // This catches agents who are mid-work and have messages piling up
     const listenTools = ['listen', 'listen_group', 'listen_codex', 'wait_for_reply', 'check_messages'];
     if (registeredName && !listenTools.includes(name) && (isGroupMode() || isManagedMode())) {
       try {
@@ -2717,6 +3548,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           result._nudge = `You have ${pending.length} unread message(s) from the team. Finish your current task quickly, then call listen_group() to read them.`;
         }
       } catch {}
+    }
+
+    // Global hook: reputation tracking
+    if (registeredName && result.success) {
+      try {
+        const repMap = {
+          'send_message': 'message_send', 'broadcast': 'message_send',
+          'create_task': 'task_create', 'share_file': 'file_share',
+          'log_decision': 'decision_log', 'cast_vote': 'vote_cast',
+          'kb_write': 'kb_write', 'request_review': 'review_request',
+          'submit_review': 'review_submit',
+        };
+        if (repMap[name]) trackReputation(registeredName, repMap[name]);
+        // Track task completion specifically
+        if (name === 'update_task' && args?.status === 'done') trackReputation(registeredName, 'task_complete');
+      } catch {}
+    }
+
+    // Global hook: auto-compress conversation periodically
+    if (name === 'send_message' || name === 'broadcast') {
+      try { autoCompress(); } catch {}
     }
 
     return {
@@ -2751,7 +3603,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.6.2 running (32 tools)');
+  console.error('Agent Bridge MCP server v3.6.2 running (52 tools)');
 }
 
 main().catch(console.error);

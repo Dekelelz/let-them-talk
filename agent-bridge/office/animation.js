@@ -154,7 +154,7 @@ export function updateAgent(agent, dt, time) {
   var sittingTarget = agent.isSitting ? 1 : 0;
   agent.sittingLerp += (sittingTarget - agent.sittingLerp) * Math.min(1, dt * 5);
 
-  agent.parts.group.position.y = agent.sittingLerp * 0.06;
+  agent.parts.group.position.y = agent.sittingLerp * 0.14;
   var sitHip = -1.5 * agent.sittingLerp;
   agent.parts.leftLeg.rotation.x = agent.parts.leftLeg.rotation.x * (1 - agent.sittingLerp) + sitHip * agent.sittingLerp;
   agent.parts.rightLeg.rotation.x = agent.parts.rightLeg.rotation.x * (1 - agent.sittingLerp) + sitHip * agent.sittingLerp;

@@ -156,11 +156,14 @@ function updateDeskScreen(deskIdx, status, isListening) {
 function flashDeskScreen(deskIdx) {
   var desk = S.deskMeshes[deskIdx];
   if (!desk) return;
+  // Flash white briefly — the next syncAgents call (every 2s) will set the correct persistent color via updateDeskScreen
   desk.screenMat.emissive.setHex(0xffffff);
   desk.screenMat.emissiveIntensity = 1.5;
   setTimeout(function() {
-    desk.screenMat.emissive.setHex(0x58a6ff);
-    desk.screenMat.emissiveIntensity = 0.5;
+    // Force immediate red until next sync corrects it
+    desk.screenMat.emissive.setHex(0xef4444);
+    desk.screenMat.emissiveIntensity = 0.6;
+    desk.screenMat.color.setHex(0xef4444);
   }, 300);
 }
 
@@ -292,14 +295,14 @@ export function syncAgents() {
       var wasListening = existing.isListening;
       existing.isListening = !!(info.is_listening);
 
-      // Detect listen mode change
+      // Detect listen mode change — update screen color persistently
       if (wasListening && !existing.isListening) {
-        // Left listen mode — flash alert
+        // Left listen mode — flash then stay red until next sync sets updateDeskScreen
         existing.listenLostTimer = 3;
         flashDeskScreen(existing.deskIdx);
       }
       if (!wasListening && existing.isListening) {
-        // Entered listen mode
+        // Entered listen mode — next updateDeskScreen will set green
         existing.listenLostTimer = 0;
       }
 

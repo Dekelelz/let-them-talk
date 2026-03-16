@@ -1241,16 +1241,25 @@ function buildRecCenter(x, z, walnutMat, chromeMat, carpetMat) {
     S.furnitureGroup.add(bot);
   });
 
-  // Big TV on the back
-  var tvMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.2 });
-  var tv = new THREE.Mesh(new THREE.BoxGeometry(3, 1.8, 0.08), tvMat);
-  tv.position.set(x, 2.5, z - 3.8);
-  tv.castShadow = true;
-  S.furnitureGroup.add(tv);
-  var tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.6),
-    new THREE.MeshStandardMaterial({ color: 0x1a2a4a, emissive: 0x1a2a4a, emissiveIntensity: 0.3, roughness: 0.1 }));
-  tvScreen.position.set(x, 2.5, z - 3.75);
-  S.furnitureGroup.add(tvScreen);
+  // Big TV on the back — animated canvas dashboard
+  var tvMat2 = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.2 });
+  var tvBody = new THREE.Mesh(new THREE.BoxGeometry(3, 1.8, 0.08), tvMat2);
+  tvBody.position.set(x, 2.5, z - 3.8);
+  tvBody.castShadow = true;
+  S.furnitureGroup.add(tvBody);
+  // Dynamic canvas screen
+  var tvW = 480, tvH = 300;
+  var tvCvs = document.createElement('canvas');
+  tvCvs.width = tvW; tvCvs.height = tvH;
+  var tvTex = new THREE.CanvasTexture(tvCvs);
+  tvTex.minFilter = THREE.LinearFilter;
+  var tvScreenMat = new THREE.MeshStandardMaterial({
+    map: tvTex, emissive: 0x58a6ff, emissiveIntensity: 0.2, roughness: 0.1
+  });
+  var tvScreen2 = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.6), tvScreenMat);
+  tvScreen2.position.set(x, 2.5, z - 3.75);
+  S.furnitureGroup.add(tvScreen2);
+  S._tvScreen = { canvas: tvCvs, texture: tvTex, tickerOffset: 0 };
 
   // "REC ZONE" sign
   var signDiv = document.createElement('div');

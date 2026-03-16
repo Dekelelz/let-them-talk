@@ -37,7 +37,16 @@ export function updateMonitorScreen(deskIdx, agentName, time) {
   var agentInfo = (window.cachedAgents || {})[agentName] || {};
   var lines = [];
 
-  var statusColor = agentInfo.status === 'active' ? '#28c840' : '#ffbd2e';
+  // Prominent warning when agent is NOT listening
+  if (agentInfo.status === 'active' && !agentInfo.is_listening) {
+    ctx.fillStyle = '#1a0808';
+    ctx.fillRect(0, 14, W, 14);
+    ctx.fillStyle = '#ef4444';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('\u26A0 NOT LISTENING', 6, 25);
+  }
+
+  var statusColor = agentInfo.is_listening ? '#28c840' : agentInfo.status === 'active' ? '#ef4444' : '#ffbd2e';
   lines.push({ color: '#546178', text: '$ agent status' });
   lines.push({ color: statusColor, text: '  ' + (agentInfo.status || 'unknown').toUpperCase() + (agentInfo.is_listening ? ' (listening)' : ' (working)') });
   lines.push({ color: '#546178', text: '' });
