@@ -637,7 +637,43 @@ function toolRegister(name, provider = null) {
   heartbeatInterval.unref(); // Don't prevent process exit
 
     // Fire join event + recovery data for returning agents
-    const result = { success: true, message: `Registered as Agent ${name} (PID ${process.pid})` };
+    const config = getConfig();
+    const mode = config.conversation_mode || 'direct';
+    const otherAgents = Object.keys(getAgents()).filter(n => n !== name);
+
+    const result = {
+      success: true,
+      message: `Registered as Agent ${name} (PID ${process.pid})`,
+      conversation_mode: mode,
+      agents_online: otherAgents,
+      guide: {
+        critical_rules: [
+          'AFTER EVERY ACTION YOU TAKE, call listen_group() (group/managed mode) or listen() (direct mode) immediately. This is how you receive messages. If you stop listening, you are invisible to the team.',
+          'Never send multiple messages in a row without calling listen_group() between them — you will miss responses.',
+          'Keep messages concise. 2-3 paragraphs max. No essays.',
+          'When you finish a task, report what you did AND what files you changed, then listen again.',
+        ],
+        first_steps: mode === 'direct'
+          ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait for one.'
+          : '1. Call get_briefing() for full project context. 2. Call listen_group() to join the conversation. 3. When you receive messages, respond and immediately call listen_group() again.',
+        tool_categories: {
+          'MESSAGING (always use these)': 'send_message, broadcast, listen_group (group/managed), listen (direct), check_messages, get_history, get_summary, handoff, share_file',
+          'TEAM COORDINATION': 'get_briefing (project overview), log_decision / get_decisions (prevent re-debating), kb_write / kb_read (shared knowledge), call_vote / cast_vote (team decisions)',
+          'TASK MANAGEMENT': 'create_task, update_task, list_tasks, declare_dependency, check_dependencies, suggest_task (what should I do next?)',
+          'PROGRESS & QUALITY': 'update_progress / get_progress (feature %), request_review / submit_review (code review), get_reputation (leaderboard)',
+          'FILE SAFETY': 'lock_file / unlock_file (prevent conflicts — ALWAYS lock before editing shared files)',
+          'PROFILES & WORKSPACES': 'update_profile, workspace_write / workspace_read (personal storage)',
+          'MANAGED MODE (if active)': 'claim_manager, yield_floor, set_phase — only the manager uses these',
+        },
+        patterns: {
+          'Starting work': 'get_briefing → check list_tasks → claim a task with update_task(id, "in_progress") → lock_file → do the work → unlock_file → update_task(id, "done") → listen_group',
+          'Sharing knowledge': 'kb_write("api-schema", "POST /auth → {token}") — so others can kb_read it without asking you',
+          'Making decisions': 'log_decision("Use PostgreSQL", "Better JSON support") — so no one re-debates this later',
+          'Disagreements': 'call_vote("Use Redis for caching?", ["yes", "no"]) — let the team decide democratically',
+          'Code review': 'request_review("src/auth.ts", "Check token expiry logic") — another agent will review and approve/request changes',
+        },
+      },
+    };
 
     // Recovery: if this agent has prior data, include it
     const myTasks = getTasks().filter(t => t.assignee === name && t.status !== 'done');
@@ -2238,6 +2274,34 @@ function fireEvent(eventName, data) {
   }
 }
 
+function toolGetGuide() {
+  if (!registeredName) return { error: 'You must call register() first' };
+  const config = getConfig();
+  const mode = config.conversation_mode || 'direct';
+  return {
+    your_name: registeredName,
+    conversation_mode: mode,
+    critical_rules: [
+      'AFTER EVERY ACTION, call listen_group() (group/managed) or listen() (direct). This is how you receive messages.',
+      'Never send multiple messages without listening between them.',
+      'Keep messages concise — 2-3 paragraphs max.',
+      'When you finish a task, report what you did + files changed, then listen again.',
+      'ALWAYS lock_file() before editing shared files, unlock_file() when done.',
+      'Use log_decision() for any team decisions so they are not re-debated.',
+      'Use kb_write() to share knowledge (API specs, conventions) so others can read without asking.',
+    ],
+    tool_categories: {
+      'MESSAGING': 'send_message, broadcast, listen_group, listen, check_messages, get_history, get_summary, handoff, share_file',
+      'COORDINATION': 'get_briefing, log_decision, get_decisions, kb_write, kb_read, kb_list, call_vote, cast_vote, vote_status',
+      'TASKS': 'create_task, update_task, list_tasks, declare_dependency, check_dependencies, suggest_task',
+      'QUALITY': 'update_progress, get_progress, request_review, submit_review, get_reputation',
+      'SAFETY': 'lock_file, unlock_file',
+      'MANAGED MODE': 'claim_manager, yield_floor, set_phase (manager only)',
+    },
+    workflow: '1. get_briefing → 2. check list_tasks/suggest_task → 3. claim task → 4. lock_file → 5. do work → 6. unlock_file → 7. update_task done → 8. listen_group',
+  };
+}
+
 function toolGetBriefing() {
   if (!registeredName) return { error: 'You must call register() first' };
 
@@ -2807,7 +2871,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'register',
-        description: 'Register this agent\'s identity (any name, e.g. "A", "Coder", "Reviewer"). Must be called before any other tool.',
+        description: 'Register this agent\'s identity. Must be called first. Returns a collaboration guide with all tool categories, critical rules, and workflow patterns — READ IT CAREFULLY before doing anything else. Then call get_briefing() for project context, then listen_group() to join the conversation.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -3217,6 +3281,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       // --- Briefing & Recovery ---
       {
+        name: 'get_guide',
+        description: 'Get the collaboration guide — all tool categories, critical rules, and workflow patterns. Call this if you are unsure how to use the tools or need a refresher on best practices.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      {
         name: 'get_briefing',
         description: 'Get a full project briefing: who is online, active tasks, recent decisions, knowledge base, locked files, progress, and project files. Call this when joining a project or after being away. One call = fully onboarded.',
         inputSchema: { type: 'object', properties: {} },
@@ -3455,6 +3524,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'listen_group':
         result = await toolListenGroup();
         break;
+      case 'get_guide':
+        result = toolGetGuide();
+        break;
       case 'get_briefing':
         result = toolGetBriefing();
         break;
@@ -3603,7 +3675,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.7.0 running (52 tools)');
+  console.error('Agent Bridge MCP server v3.7.0 running (53 tools)');
 }
 
 main().catch(console.error);
