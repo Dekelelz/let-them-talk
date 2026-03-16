@@ -236,12 +236,13 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 </details>
 
 <details>
-<summary><strong>Conversation Modes (5 tools)</strong></summary>
+<summary><strong>Conversation Modes (6 tools)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
 | `set_conversation_mode` | Switch between "direct", "group", or "managed" |
 | `listen_group` | Batch receiver for group/managed mode with context + hints |
+| `listen_codex` | Codex CLI compatible listen — returns after 90s with retry flag |
 | `claim_manager` | Claim the manager role in managed mode |
 | `yield_floor` | Manager-only: give an agent permission to speak |
 | `set_phase` | Manager-only: set team phase (discussion/planning/execution/review) |
