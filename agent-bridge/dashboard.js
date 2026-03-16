@@ -284,17 +284,22 @@ function apiStats(query) {
   const history = readJsonl(filePath('history.jsonl', projectPath));
   const agents = readJson(filePath('agents.json', projectPath));
 
-  // Per-agent stats
+  // Per-agent stats — only count messages from agents still in agents.json
   const perAgent = {};
-  let totalMessages = history.length;
+  const knownAgentNames = new Set(Object.keys(agents));
+  knownAgentNames.add('__system__');
+  knownAgentNames.add('Dashboard');
+  let totalMessages = 0;
   const hourBuckets = new Array(24).fill(0);
 
   for (let i = 0; i < history.length; i++) {
     const m = history[i];
     const from = m.from || 'unknown';
+    if (!knownAgentNames.has(from)) continue; // skip removed agents
     if (!perAgent[from]) {
       perAgent[from] = { messages: 0, responseTimes: [], hours: new Array(24).fill(0) };
     }
+    totalMessages++;
     perAgent[from].messages++;
     const ts = new Date(m.timestamp);
     const hour = ts.getHours();
@@ -313,7 +318,7 @@ function apiStats(query) {
     }
   }
 
-  // Build per-agent summary
+  // Build per-agent summary — only include agents currently in agents.json
   const agentStats = {};
   let busiestAgent = null;
   let busiestCount = 0;
