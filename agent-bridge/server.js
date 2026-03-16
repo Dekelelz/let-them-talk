@@ -1416,6 +1416,7 @@ async function toolListenGroup(timeout_seconds = 300) {
         }
       }
 
+      result.next_action = 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
       return result;
     }
 
@@ -1423,7 +1424,13 @@ async function toolListenGroup(timeout_seconds = 300) {
   }
 
   setListening(false);
-  return { timeout: true, message: 'No messages received within timeout.', messages: [], message_count: 0 };
+  return {
+    timeout: true,
+    retry: true,
+    message: 'No messages yet. Call listen_group() again immediately to keep listening. Do NOT stop — you must stay in the conversation.',
+    messages: [],
+    message_count: 0,
+  };
 }
 
 function toolGetHistory(limit = 50, thread_id = null) {
@@ -2505,7 +2512,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'listen_group',
-        description: 'Listen for messages in group or managed conversation mode. Returns ALL unconsumed messages as a batch (not just one), plus recent conversation context and hints about which agents are silent. In managed mode, also includes floor/phase context and instructions on whether you should respond. Use this instead of listen() when in group or managed mode.',
+        description: 'Listen for messages in group or managed conversation mode. Returns ALL unconsumed messages as a batch, plus conversation context and hints. IMPORTANT: After processing messages and responding, you MUST call listen_group() again immediately. If it times out with retry:true, call it again. Never stop listening — this is how you stay in the conversation.',
         inputSchema: {
           type: 'object',
           properties: {
