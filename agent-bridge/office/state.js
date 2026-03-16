@@ -12,7 +12,7 @@ export const S = {
   clock: null,
   agents3d: {},
   lastProcessedMsg: 0,
-  currentEnv: 'modern',
+  currentEnv: 'campus',
   furnitureGroup: null,
   deskMeshes: [],
   syncInterval: null,

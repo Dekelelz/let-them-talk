@@ -5,6 +5,34 @@ import { resolveAppearance } from './appearance.js';
 import { buildHair } from './hair.js';
 import { buildFaceSprite } from './face.js';
 import { buildOutfit, removeOutfit } from './outfits.js';
+import { getNavigationPath } from './navigation.js';
+
+// Navigate agent using waypoint pathfinding (campus) or direct walk (other envs)
+export function navigateTo(agent, tx, tz, callback) {
+  var path = getNavigationPath(agent.pos.x, agent.pos.z, tx, tz);
+  if (!path || path.length === 0) {
+    walkTo(agent, tx, tz, callback);
+    return;
+  }
+  // Queue all waypoints, put callback on the last one
+  agent.walkQueue = [];
+  for (var i = 1; i < path.length; i++) {
+    agent.walkQueue.push({ x: path[i].x, z: path[i].z, cb: null, triggerDoor: path[i].triggerDoor });
+  }
+  // Attach callback to last queued point (or first walk if only 1 point)
+  if (agent.walkQueue.length > 0) {
+    agent.walkQueue[agent.walkQueue.length - 1].cb = callback;
+  }
+  // Start walking to first point
+  var first = path[0];
+  walkTo(agent, first.x, first.z, first.triggerDoor ? function() { triggerManagerDoor(true); } : (path.length === 1 ? callback : null));
+}
+
+function triggerManagerDoor(open) {
+  if (S._managerDoor) {
+    S._managerDoorOpen = open ? 1 : 0;
+  }
+}
 
 export function walkTo(agent, tx, tz, callback) {
   var dx = tx - agent.pos.x;
@@ -25,13 +53,39 @@ export function showBubble(agent, text) {
   agent.bubbleText = display;
 }
 
+function getDeskPositions() {
+  return S._campusDeskPositions || DESK_POSITIONS;
+}
+
 function assignDesk(agentName) {
+  var desks = getDeskPositions();
   var used = {};
   for (var n in S.agents3d) used[S.agents3d[n].deskIdx] = true;
-  for (var i = 0; i < DESK_POSITIONS.length; i++) {
-    if (!used[i]) return i;
+
+  // If campus mode, check if agent has "Manager" role or name — assign last desk (manager office)
+  if (S.currentEnv === 'campus' && desks.length > 0) {
+    var info = (window.cachedAgents || {})[agentName] || {};
+    var role = (info.role || '').toLowerCase();
+    var dname = (info.display_name || agentName).toLowerCase();
+    var regName = agentName.toLowerCase();
+    var isManager = role === 'manager' || role === 'project lead' || role === 'ceo' || role === 'director' ||
+                    role.indexOf('project manager') >= 0 || role.indexOf('team lead') >= 0 ||
+                    dname === 'manager' || regName === 'manager';
+    var managerIdx = desks.length - 1; // last desk is manager office
+    if (isManager && !used[managerIdx]) {
+      return managerIdx;
+    }
+    // Non-manager agents skip the manager desk
+    for (var i = 0; i < desks.length - 1; i++) {
+      if (!used[i]) return i;
+    }
+    return Object.keys(S.agents3d).length % (desks.length - 1);
   }
-  return Object.keys(S.agents3d).length % DESK_POSITIONS.length;
+
+  for (var j = 0; j < desks.length; j++) {
+    if (!used[j]) return j;
+  }
+  return Object.keys(S.agents3d).length % desks.length;
 }
 
 function fetchTasks() {
@@ -75,13 +129,19 @@ function updateLabel(agent) {
   }
 }
 
-function updateDeskScreen(deskIdx, status) {
+function updateDeskScreen(deskIdx, status, isListening) {
   var desk = S.deskMeshes[deskIdx];
   if (!desk) return;
-  if (status === 'active') {
-    desk.screenMat.emissive.setHex(0x58a6ff);
+  if (status === 'active' && isListening) {
+    // Listening — green screen
+    desk.screenMat.emissive.setHex(0x22c55e);
     desk.screenMat.emissiveIntensity = 0.5;
-    desk.screenMat.color.setHex(0x58a6ff);
+    desk.screenMat.color.setHex(0x22c55e);
+  } else if (status === 'active' && !isListening) {
+    // Active but NOT listening — red screen
+    desk.screenMat.emissive.setHex(0xef4444);
+    desk.screenMat.emissiveIntensity = 0.6;
+    desk.screenMat.color.setHex(0xef4444);
   } else if (status === 'sleeping') {
     desk.screenMat.emissive.setHex(0x1a2744);
     desk.screenMat.emissiveIntensity = 0.15;
@@ -151,7 +211,8 @@ export function syncAgents() {
     var info = window.cachedAgents[name];
     if (!S.agents3d[name]) {
       var deskIdx = assignDesk(name);
-      var deskPos = DESK_POSITIONS[deskIdx] || DESK_POSITIONS[0];
+      var allDesks = getDeskPositions();
+      var deskPos = allDesks[deskIdx] || allDesks[0];
       var parts = createCharacter(info.display_name || name, info.appearance || {});
       var agent = {
         name: name,
@@ -189,6 +250,7 @@ export function syncAgents() {
         celebrateTimer: 0,
         stretchTimer: 0,
         idleGestureTimer: 5 + Math.random() * 10,
+        listenLostTimer: 0,
         lastMessageTime: 0,
         monitorTimer: 0,
         location: 'desk', // 'desk', 'dressing_room', 'rest', 'walking'
@@ -203,10 +265,10 @@ export function syncAgents() {
       showBubble(agent, 'Checking in...');
       (function(a) {
         setTimeout(function() {
-          walkTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
+          navigateTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
             a.registered = true;
             showBubble(a, 'Ready to work!');
-            updateDeskScreen(a.deskIdx, a.state);
+            updateDeskScreen(a.deskIdx, a.state, a.isListening);
           });
         }, 800);
       })(agent);
@@ -227,7 +289,19 @@ export function syncAgents() {
       }
 
       existing.displayName = info.display_name || name;
+      var wasListening = existing.isListening;
       existing.isListening = !!(info.is_listening);
+
+      // Detect listen mode change
+      if (wasListening && !existing.isListening) {
+        // Left listen mode — flash alert
+        existing.listenLostTimer = 3;
+        flashDeskScreen(existing.deskIdx);
+      }
+      if (!wasListening && existing.isListening) {
+        // Entered listen mode
+        existing.listenLostTimer = 0;
+      }
 
       var task = getAgentTask(name);
       if (task) {
@@ -248,7 +322,7 @@ export function syncAgents() {
       }
 
       updateLabel(existing);
-      if (existing.registered) updateDeskScreen(existing.deskIdx, existing.state);
+      if (existing.registered) updateDeskScreen(existing.deskIdx, existing.state, existing.isListening);
     }
   }
 
@@ -309,7 +383,7 @@ export function processMessages() {
             stopX = tx + 1.5;
             stopZ = tz;
           }
-          walkTo(f, stopX, stopZ, function() {
+          navigateTo(f, stopX, stopZ, function() {
             // Sender faces target
             var dx2 = t.pos.x - f.pos.x;
             var dz2 = t.pos.z - f.pos.z;
@@ -325,7 +399,7 @@ export function processMessages() {
 
             setTimeout(function() {
               // Sender walks back to desk
-              walkTo(f, f.deskPos.x, f.deskPos.z + 0.7);
+              navigateTo(f, f.deskPos.x, f.deskPos.z + 0.7);
               // Target turns back to desk after a short delay
               setTimeout(function() {
                 if (t._listeningTo === f.name) {
@@ -342,7 +416,7 @@ export function processMessages() {
       (function(f, txt) {
         setTimeout(function() {
           f.walkQueue = [];
-          walkTo(f, 0, 0, function() {
+          navigateTo(f, 0, 0, function() {
             showBubble(f, txt);
             // All nearby agents turn toward the broadcaster
             for (var an in S.agents3d) {
@@ -355,7 +429,7 @@ export function processMessages() {
               a._listeningTo = f.name;
             }
             setTimeout(function() {
-              walkTo(f, f.deskPos.x, f.deskPos.z + 0.7);
+              navigateTo(f, f.deskPos.x, f.deskPos.z + 0.7);
               // All listeners turn back
               setTimeout(function() {
                 for (var an2 in S.agents3d) {

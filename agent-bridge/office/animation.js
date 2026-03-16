@@ -1,4 +1,6 @@
 import { S } from './state.js';
+import * as THREE from 'three';
+import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { updateMonitorScreen, setMonitorDim } from './monitors.js';
 
 export function easeInOutQuad(t) {
@@ -35,6 +37,10 @@ export function updateAgent(agent, dt, time) {
       agent.walkProgress = 0;
       if (agent.walkQueue && agent.walkQueue.length > 0) {
         var next = agent.walkQueue.shift();
+        // Trigger door animation if waypoint requires it
+        if (next.triggerDoor && S._managerDoor) {
+          S._managerDoorOpen = 1;
+        }
         walkTo(agent, next.x, next.z, next.cb);
       } else if (cb) {
         cb();
@@ -249,6 +255,34 @@ export function updateAgent(agent, dt, time) {
   // Listening head-tilt
   if (agent.isListening && !isWalking && !isSleeping) {
     agent.parts.head.rotation.z = Math.sin(time * 1.5) * 0.08;
+  }
+
+  // Listen-lost alert (head shake + warning indicator)
+  if (agent.listenLostTimer > 0) {
+    agent.listenLostTimer -= dt;
+    // Head shake animation (rapid left-right)
+    var shakeT = agent.listenLostTimer;
+    if (shakeT > 1.5) {
+      agent.parts.head.rotation.y = Math.sin(time * 20) * 0.15;
+    }
+    // Show warning indicator above head
+    if (!agent._listenLostDiv) {
+      agent._listenLostDiv = document.createElement('div');
+      agent._listenLostDiv.className = 'office3d-listen-lost';
+      agent._listenLostDiv.innerHTML = '<span style="color:#ef4444;font-size:14px;font-weight:bold;text-shadow:0 0 6px rgba(239,68,68,0.6);animation:office3d-pulse 0.5s infinite">&#x26A0; NOT LISTENING</span>';
+      agent._listenLostLabel = new CSS2DObject(agent._listenLostDiv);
+      agent._listenLostLabel.position.set(0, 1.9, 0);
+      agent.parts.group.add(agent._listenLostLabel);
+    }
+    agent._listenLostDiv.style.display = 'block';
+    agent._listenLostDiv.style.opacity = String(Math.min(1, agent.listenLostTimer));
+    if (agent.listenLostTimer <= 0) {
+      agent._listenLostDiv.style.display = 'none';
+      agent.listenLostTimer = 0;
+      agent.parts.head.rotation.y = 0;
+    }
+  } else if (agent._listenLostDiv) {
+    agent._listenLostDiv.style.display = 'none';
   }
 
   // Typing dots

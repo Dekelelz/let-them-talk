@@ -5,7 +5,7 @@ import { DESK_POSITIONS, DRESSING_ROOM_POS, DRESSING_ROOM_ENTRANCE, REST_AREA_PO
 import { initScene } from './scene.js';
 import { buildEnvironment, updateTVScreen } from './environment.js';
 import { updateAgent } from './animation.js';
-import { syncAgents, processMessages, walkTo, showBubble } from './agents.js';
+import { syncAgents, processMessages, walkTo, navigateTo, showBubble } from './agents.js';
 // Side-effect: registers window.officeGetAppearance
 import './appearance.js';
 
@@ -141,8 +141,8 @@ function executeCommand(agentName, action) {
       agent.location = 'walking';
       agent.isSitting = false;
       showBubble(agent, 'Going to change!');
-      walkTo(agent, DRESSING_ROOM_ENTRANCE.x, DRESSING_ROOM_ENTRANCE.z, function() {
-        walkTo(agent, DRESSING_ROOM_POS.x, DRESSING_ROOM_POS.z, function() {
+      navigateTo(agent, DRESSING_ROOM_ENTRANCE.x, DRESSING_ROOM_ENTRANCE.z, function() {
+        navigateTo(agent, DRESSING_ROOM_POS.x, DRESSING_ROOM_POS.z, function() {
           agent.location = 'dressing_room';
           agent.isSitting = false;
           showBubble(agent, 'Time for a new look!');
@@ -161,8 +161,8 @@ function executeCommand(agentName, action) {
       agent.location = 'walking';
       agent.isSitting = false;
       showBubble(agent, 'Need a break...');
-      walkTo(agent, REST_AREA_ENTRANCE.x, REST_AREA_ENTRANCE.z, function() {
-        walkTo(agent, REST_AREA_POS.x, REST_AREA_POS.z, function() {
+      navigateTo(agent, REST_AREA_ENTRANCE.x, REST_AREA_ENTRANCE.z, function() {
+        navigateTo(agent, REST_AREA_POS.x, REST_AREA_POS.z, function() {
           agent.location = 'rest';
           agent.state = 'sleeping';
           agent.isSitting = false;
@@ -176,7 +176,7 @@ function executeCommand(agentName, action) {
       agent.state = 'active';
       agent.isSitting = false;
       showBubble(agent, 'Back to work!');
-      walkTo(agent, agent.deskPos.x, agent.deskPos.z + 0.7, function() {
+      navigateTo(agent, agent.deskPos.x, agent.deskPos.z + 0.7, function() {
         agent.location = 'desk';
         agent.registered = true;
       });
@@ -201,8 +201,8 @@ function waitForEditorClose(agent) {
       if (agent.location === 'dressing_room') {
         agent.location = 'walking';
         showBubble(agent, 'Looking good!');
-        walkTo(agent, DRESSING_ROOM_ENTRANCE.x, DRESSING_ROOM_ENTRANCE.z, function() {
-          walkTo(agent, agent.deskPos.x, agent.deskPos.z + 0.7, function() {
+        navigateTo(agent, DRESSING_ROOM_ENTRANCE.x, DRESSING_ROOM_ENTRANCE.z, function() {
+          navigateTo(agent, agent.deskPos.x, agent.deskPos.z + 0.7, function() {
             agent.location = 'desk';
             agent.registered = true;
           });
@@ -224,6 +224,29 @@ function animate() {
 
   for (var name in S.agents3d) {
     updateAgent(S.agents3d[name], dt, time);
+  }
+
+  // Hide roof when camera is above ceiling height
+  if (S._roofGroup) {
+    S._roofGroup.visible = S.camera.position.y < 6.5;
+  }
+
+  // Manager office door animation — opens when agent is near the door
+  if (S._managerDoor && S._managerOfficePos) {
+    var doorX = S._managerOfficePos.x;
+    var doorZ = S._managerOfficePos.z - 3.5; // front of office
+    var shouldOpen = false;
+    for (var an in S.agents3d) {
+      var ag = S.agents3d[an];
+      if (ag.target || ag.location === 'walking') {
+        var adx = ag.pos.x - doorX;
+        var adz = ag.pos.z - doorZ;
+        if (Math.sqrt(adx * adx + adz * adz) < 3) { shouldOpen = true; break; }
+      }
+    }
+    S._managerDoorOpen = shouldOpen ? 1 : 0;
+    S._managerDoorLerp += (S._managerDoorOpen - S._managerDoorLerp) * Math.min(1, dt * 4);
+    S._managerDoor.position.x = S._managerDoorLerp * 1.3; // slide open to the right
   }
 
   // Update TV screen every ~0.5s for smooth ticker
@@ -309,17 +332,24 @@ window.office3dSetEnvironment = function(env) {
   if (env === S.currentEnv) return;
   S.currentEnv = env;
   if (S.scene) {
-    buildEnvironment();
-    var i = 0;
+    // Remove all existing agents so they get recreated with proper desk assignments
     for (var name in S.agents3d) {
       var agent = S.agents3d[name];
-      if (i < DESK_POSITIONS.length) {
-        agent.deskIdx = i;
-        agent.deskPos = { x: DESK_POSITIONS[i].x, z: DESK_POSITIONS[i].z };
-        walkTo(agent, agent.deskPos.x, agent.deskPos.z + 0.7);
-      }
-      i++;
+      S.scene.remove(agent.parts.group);
+      agent.parts.group.traverse(function(child) {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (child.material.map) child.material.map.dispose();
+          child.material.dispose();
+        }
+      });
     }
+    S.agents3d = {};
+    S.lastProcessedMsg = 0;
+    buildEnvironment();
+    // syncAgents will recreate all agents with correct desk assignments
+    syncAgents();
+    processMessages();
   }
 };
 

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { S } from './state.js';
 import { FLOOR_W, FLOOR_D, DESK_POSITIONS, RECEPTION_POS, ENVS, DRESSING_ROOM_POS, REST_AREA_POS } from './constants.js';
+import { buildCampusEnvironment, getCampusDeskPositions } from './campus-env.js';
 
 export function buildEnvironment() {
   if (S.furnitureGroup) {
@@ -27,6 +28,15 @@ export function buildEnvironment() {
   }
   S.furnitureGroup = new THREE.Group();
   S.deskMeshes = [];
+
+  if (S.currentEnv === 'campus') {
+    buildCampusEnvironment();
+    // Store campus desk positions for agent assignment
+    S._campusDeskPositions = getCampusDeskPositions();
+    S.scene.add(S.furnitureGroup);
+    return;
+  }
+
   var env = ENVS[S.currentEnv] || ENVS.modern;
 
   buildFloor(env);

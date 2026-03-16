@@ -9,10 +9,10 @@ export function initScene() {
 
   S.scene = new THREE.Scene();
   S.scene.background = new THREE.Color(0x0d1117);
-  S.scene.fog = new THREE.Fog(0x0d1117, 25, 55);
+  S.scene.fog = new THREE.Fog(0x0d1117, 30, 80);
 
-  S.camera = new THREE.PerspectiveCamera(50, S.container.clientWidth / S.container.clientHeight, 0.1, 200);
-  S.camera.position.set(0, 12, 16);
+  S.camera = new THREE.PerspectiveCamera(50, S.container.clientWidth / S.container.clientHeight, 0.1, 300);
+  S.camera.position.set(0, 15, 22);
   S.camera.lookAt(0, 0, 0);
 
   S.renderer = new THREE.WebGLRenderer({ antialias: true });

@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.6.2] - 2026-03-16
+
+### Added — Message Awareness System
+- **Sender gets busy status** — `send_message` and `broadcast` tell you when recipients are working (not listening) so you know messages are queued
+- **Pending message nudge** — every non-listen tool call checks for unread messages and tells the agent to call `listen_group()` soon
+- **Message age tracking** — `listen_group` shows `age_seconds` per message and `delayed: true` flag for messages older than 30s
+- **Agent status in batch** — `listen_group` returns `agents_status` map showing who is `listening` vs `working`
+- **listen_group retry** — timeout now returns `retry: true` with explicit instruction to call again immediately
+- **next_action field** — successful `listen_group` response tells agent to call `listen_group()` again after responding
+- **Ctrl key removed from camera** — no longer moves camera down (Q/E only)
+
+### Added — 3D World: Campus Environment & Navigation
+- **Campus environment** — new outdoor environment option with buildings, paths, green spaces
+- **Navigation system** — pathfinding for agents to walk around obstacles instead of through walls
+- **Door animations** — manager office door slides open when agents approach, closes when they leave
+- **Roof visibility** — roof hides when camera is above ceiling height
+
 ## [3.6.1] - 2026-03-16
 
 ### Fixed

@@ -2558,6 +2558,15 @@
     opacity: 0;
     transition: none;
   }
+  .office3d-listen-lost {
+    pointer-events: none;
+    font-family: Inter, sans-serif;
+    white-space: nowrap;
+  }
+  @keyframes office3d-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.1); }
+  }
 
   /* 3D task indicator */
   .office3d-task-indicator {
@@ -3300,6 +3309,7 @@
       <div class="office-toolbar">
         <label>Environment:</label>
         <select id="office-env-select" onchange="officeSetEnvironment(this.value)">
+          <option value="campus" selected>Tech Campus</option>
           <option value="modern">Modern Office</option>
           <option value="startup">Startup Garage</option>
         </select>
