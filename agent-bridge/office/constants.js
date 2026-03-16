@@ -45,7 +45,9 @@ export const DEFAULT_APPEARANCE = {
   mouth_style: 'smile',
   shirt_color: '#58a6ff',
   pants_color: '#2d3748',
-  shoe_color: '#1a1a2e'
+  shoe_color: '#1a1a2e',
+  outfit: null,
+  body_type: 'default',
 };
 
 export const AGENT_PALETTES = [

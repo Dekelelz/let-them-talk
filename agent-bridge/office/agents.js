@@ -4,6 +4,7 @@ import { createCharacter } from './character.js';
 import { resolveAppearance } from './appearance.js';
 import { buildHair } from './hair.js';
 import { buildFaceSprite } from './face.js';
+import { buildOutfit, removeOutfit } from './outfits.js';
 
 export function walkTo(agent, tx, tz, callback) {
   var dx = tx - agent.pos.x;
@@ -130,6 +131,14 @@ function rebuildCharacterAppearance(agent) {
   newFace.position.set(0, 0, 0.251);
   agent.parts.head.add(newFace);
   agent.parts.faceSprite = newFace;
+
+  // Rebuild outfit
+  removeOutfit(agent.parts.group);
+  if (a.outfit) {
+    agent.parts.outfitGroup = buildOutfit(a.outfit, { shirt_color: a.shirt_color, pants_color: a.pants_color }, agent.parts.group);
+  } else {
+    agent.parts.outfitGroup = null;
+  }
 }
 
 export function syncAgents() {
@@ -174,6 +183,12 @@ export function syncAgents() {
         taskCelebration: 0,
         isListening: !!(info.is_listening),
         handRaiseTimer: 0,
+        waveTimer: 0,
+        thinkTimer: 0,
+        pointTimer: 0,
+        celebrateTimer: 0,
+        stretchTimer: 0,
+        idleGestureTimer: 5 + Math.random() * 10,
         lastMessageTime: 0,
         monitorTimer: 0,
         location: 'desk', // 'desk', 'dressing_room', 'rest', 'walking'
@@ -220,6 +235,7 @@ export function syncAgents() {
         existing.currentTask = task;
         if (prevTask && prevTask.status !== 'done' && task.status === 'done') {
           existing.taskCelebration = 2;
+          existing.celebrateTimer = 1.5;
         }
       } else {
         existing.currentTask = null;
@@ -262,20 +278,63 @@ export function processMessages() {
     var text = msg.content || msg.message || '';
 
     from.lastMessageTime = Date.now();
-    from.handRaiseTimer = 0.4;
     flashDeskScreen(from.deskIdx);
+
+    // Contextual gesture based on message type
+    var isBC = !msg.to || msg.to === 'all';
+    if (isBC) {
+      from.waveTimer = 0.8;
+    } else {
+      from.pointTimer = 0.6;
+    }
 
     if (msg.to && msg.to !== 'all' && S.agents3d[msg.to]) {
       var target = S.agents3d[msg.to];
       (function(f, t, txt) {
         setTimeout(function() {
           f.walkQueue = [];
-          walkTo(f, t.deskPos.x, t.deskPos.z + 0.8, function() {
-            var dx = t.parts.group.position.x - f.parts.group.position.x;
-            var dz = t.parts.group.position.z - f.parts.group.position.z;
-            f.facingTarget = Math.atan2(dx, dz);
+          // Calculate a stop point ~1.8m away from the target, facing them
+          var tx = t.pos.x, tz = t.pos.z;
+          var fx = f.pos.x, fz = f.pos.z;
+          var adx = tx - fx, adz = tz - fz;
+          var dist = Math.sqrt(adx * adx + adz * adz);
+          var stopDist = 1.8;
+          var stopX, stopZ;
+          if (dist > stopDist + 0.5) {
+            // Approach from sender's direction, stop 1.8m away
+            stopX = tx - (adx / dist) * stopDist;
+            stopZ = tz - (adz / dist) * stopDist;
+          } else {
+            // Already close — just step to the side of target's desk
+            stopX = tx + 1.5;
+            stopZ = tz;
+          }
+          walkTo(f, stopX, stopZ, function() {
+            // Sender faces target
+            var dx2 = t.pos.x - f.pos.x;
+            var dz2 = t.pos.z - f.pos.z;
+            f.facingTarget = Math.atan2(dx2, dz2);
             showBubble(f, txt);
-            setTimeout(function() { walkTo(f, f.deskPos.x, f.deskPos.z + 0.7); }, 4200);
+
+            // Target turns toward sender (listener reaction)
+            var rdx = f.pos.x - t.pos.x;
+            var rdz = f.pos.z - t.pos.z;
+            t.facingTarget = Math.atan2(rdx, rdz);
+            t.isListening = true;
+            t._listeningTo = f.name;
+
+            setTimeout(function() {
+              // Sender walks back to desk
+              walkTo(f, f.deskPos.x, f.deskPos.z + 0.7);
+              // Target turns back to desk after a short delay
+              setTimeout(function() {
+                if (t._listeningTo === f.name) {
+                  t.isListening = false;
+                  t._listeningTo = null;
+                  t.facingTarget = Math.PI; // face desk
+                }
+              }, 1500);
+            }, 4200);
           });
         }, 400);
       })(from, target, text);
@@ -285,7 +344,30 @@ export function processMessages() {
           f.walkQueue = [];
           walkTo(f, 0, 0, function() {
             showBubble(f, txt);
-            setTimeout(function() { walkTo(f, f.deskPos.x, f.deskPos.z + 0.7); }, 4200);
+            // All nearby agents turn toward the broadcaster
+            for (var an in S.agents3d) {
+              var a = S.agents3d[an];
+              if (a.name === f.name || !a.registered || a.state !== 'active') continue;
+              var bdx = f.pos.x - a.pos.x;
+              var bdz = f.pos.z - a.pos.z;
+              a.facingTarget = Math.atan2(bdx, bdz);
+              a.isListening = true;
+              a._listeningTo = f.name;
+            }
+            setTimeout(function() {
+              walkTo(f, f.deskPos.x, f.deskPos.z + 0.7);
+              // All listeners turn back
+              setTimeout(function() {
+                for (var an2 in S.agents3d) {
+                  var a2 = S.agents3d[an2];
+                  if (a2._listeningTo === f.name) {
+                    a2.isListening = false;
+                    a2._listeningTo = null;
+                    a2.facingTarget = Math.PI;
+                  }
+                }
+              }, 1500);
+            }, 4200);
           });
         }, 400);
       })(from, text);

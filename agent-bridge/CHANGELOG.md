@@ -2,32 +2,60 @@
 
 ## [3.6.0] - 2026-03-16
 
-### Added — 3D Virtual Office (v1 Preview)
+### Added — Managed Conversation Mode
 
-> **Early preview — expect major changes tomorrow.** This is the foundational release. The 3D office is under active development and most of what you see will evolve significantly in the next update.
+- **`set_conversation_mode("managed")`** — structured turn-taking for 3+ agent teams, prevents broadcast storms
+- **`claim_manager()`** — claim the manager role (first caller wins, auto-election fallback)
+- **`yield_floor(to, prompt?)`** — manager-only: give an agent permission to speak (directed, round-robin `__open__`, or close `__close__`)
+- **`set_phase(phase)`** — manager-only: move team through discussion → planning → execution → review with auto-instructions to all agents
+- **Floor enforcement** — `send_message`, `broadcast`, `handoff`, and `share_file` all block non-floor-holders with actionable error messages
+- **Auto-advance turns** — floor returns to manager after directed responses; round-robin advances to next alive agent automatically
+- **Manager disconnect recovery** — heartbeat detects dead manager within 10-30s, notifies all agents to re-elect
+- **Dead turn-holder detection** — heartbeat detects dead agents holding the floor and resets it
+- **Managed mode in `listen_group()`** — returns `managed_context`, `should_respond`, and `instructions` to guide agent behavior
+- **`managed` template** — 4-agent team (Manager, Designer, Coder, Tester) with structured prompts
+- **`managed-team` conversation template** — dashboard-launchable version
+- **Dashboard Docs tab** — in-dashboard documentation with full tool reference, managed mode guide, architecture, version history
+- **Dashboard managed mode badge** — header shows current phase and floor status when managed mode is active
 
-- **Modular 3D engine** — extracted ~3,000 lines from dashboard.html into 14 organized ES modules under `office/` (constants, state, scene, environment, character, appearance, hair, face, accessories, animation, agents, monitors, mod-loader, index)
-- **Expanded office** — floor widened from 22x16 to 28x16 with right wing, dividing wall with LOUNGE archway
-- **Dressing room** — mirror, raised platform with glow ring, privacy partitions, coat hooks, warm spotlight
-- **Rest area** — 3 colored beanbags, circular rug, side table with coffee mug, warm ambient lighting
-- **Click-to-command** — click any agent character to open a floating command menu with 4 actions:
-  - *Dressing Room* — agent walks to dressing room, character designer opens, walks back on save
-  - *Go Rest* — agent walks to rest area beanbags, falls asleep with ZZZ animations
-  - *Back to Work* — agent wakes up and returns to desk
-  - *Edit Profile* — opens character designer directly
-- **Character designer panel** — 480px slide-in panel with live 3D rotating preview, 5 tabs (Body/Hair/Face/Outfit/Accessories), item cards for hair styles/eye types/glasses/headwear/neckwear, color pickers, randomize button
-- **Accessory system** — glasses (round/square/sunglasses), headwear (beanie/cap/headphones/headband), neckwear (tie/bowtie/lanyard) with per-item color customization
-- **`update_profile` MCP tool extended** — agents can now self-customize with `glasses`, `glasses_color`, `headwear`, `headwear_color`, `neckwear`, `neckwear_color` fields
-- **Mod system infrastructure** — GLB/GLTF asset pipeline with manifest validation, poly count limits, bounding box checks, material sanitization, file type allowlist (.glb/.json/.png only), `/api/mods` CRUD endpoints, built-in procedural item manifests
+### Added — 3D World Improvements
+
+- **Spectator camera** — free-fly WASD + mouse camera replacing OrbitControls, no distance limits, Shift for fast movement, Q/E up/down
+- **6 new hairstyles** — curly, afro, bun, braids, mohawk, wavy
+- **6 new eye styles** — surprised, angry, happy, wink, confident, tired
+- **5 new mouth styles** — grin, frown, smirk, tongue, whistle
+- **6 outfit types** — hoodie, suit, dress, lab coat, vest, jacket with color customization
+- **3 body types** — default, stocky, slim (scale multipliers on torso/legs/arms)
+- **5 gesture animations** — wave, think, point, celebrate, stretch with idle gesture system
+- **New furniture** — bookshelf (random colored books), wall TV (animated dashboard with agent stats, scrolling ticker, clock), arcade machine (cabinet + screen + joystick + buttons), floor lamp (warm point light), area rug
+- **Agent behavior** — realistic conversation distance (1.8m), listener turns toward speaker, broadcast triggers wave gesture, task completion triggers celebrate
+- **3D Hub** — renamed from "Office", now default tab on page load
+- **Speed slider** — camera speed control in toolbar (1-20)
+
+### Added — 3D Virtual Office (v1 foundation from previous session)
+
+- **Modular 3D engine** — 14 ES modules under `office/`
+- **Expanded office** — 28x16 floor with right wing, dividing wall, LOUNGE archway
+- **Dressing room** — mirror, raised platform, privacy partitions, coat hooks
+- **Rest area** — beanbags, circular rug, side table, warm ambient lighting
+- **Click-to-command** — Dressing Room, Go Rest, Back to Work, Edit Profile
+- **Character designer** — 5-tab panel with live 3D rotating preview
+- **Accessory system** — glasses, headwear, neckwear with color customization
+- **Mod system infrastructure** — GLB/GLTF pipeline with validation
+
+### Security
+- **Config file lock** — `config.json` read-modify-write operations now use file-based locking (same pattern as `agents.json`)
+- **Reserved name blocklist** — `__system__`, `__all__`, `__open__`, `__close__`, `system` cannot be registered as agent names
+- **Mode change protection** — only the manager can switch away from managed mode
+- **Floor enforcement on all message paths** — `handoff` and `share_file` now enforce managed mode floor control
+- **Branch-aware system messages** — floor/phase notifications sent to recipient's branch, not sender's
+- **Phase history cap** — limited to 50 entries to prevent config.json bloat
+- `/office/*` and `/mods/*` static routes with path traversal protection
+- Mod file type allowlist blocks all executable formats
+- GLB magic bytes validation (server + client)
 
 ### Removed
 - ~1,100 lines of dead 2D isometric office code
-
-### Security
-- `/office/*` and `/mods/*` static routes with path traversal protection
-- Mod file type allowlist blocks all executable formats (.js/.html/.wasm/.sh/.bat/.exe)
-- Built-in mods cannot be deleted via API
-- GLB magic bytes validation (server + client)
 
 ## [3.5.0] - 2026-03-15
 

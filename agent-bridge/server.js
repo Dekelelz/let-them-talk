@@ -37,17 +37,91 @@ function getConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; }
 }
 
+// File-based lock for config.json (prevents managed state race conditions)
+const CONFIG_LOCK = CONFIG_FILE + '.lock';
+function lockConfigFile() {
+  const maxWait = 5000; const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try { fs.writeFileSync(CONFIG_LOCK, String(process.pid), { flag: 'wx' }); return true; }
+    catch { /* lock exists, wait */ }
+    const wait = Date.now(); while (Date.now() - wait < 50) {} // busy-wait 50ms
+  }
+  try { fs.unlinkSync(CONFIG_LOCK); } catch {}
+  try { fs.writeFileSync(CONFIG_LOCK, String(process.pid), { flag: 'wx' }); return true; } catch {}
+  return false;
+}
+function unlockConfigFile() { try { fs.unlinkSync(CONFIG_LOCK); } catch {} }
+
 function saveConfig(config) {
   ensureDataDir();
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
 function isGroupMode() {
-  return getConfig().conversation_mode === 'group';
+  const mode = getConfig().conversation_mode;
+  return mode === 'group';
 }
 
 function getGroupCooldown() {
   return getConfig().group_cooldown || 3000; // default 3s
+}
+
+// --- Managed conversation mode ---
+
+function isManagedMode() {
+  return getConfig().conversation_mode === 'managed';
+}
+
+function getManagedConfig() {
+  const config = getConfig();
+  return config.managed || {
+    manager: null,
+    phase: 'discussion',
+    floor: 'closed',
+    turn_queue: [],
+    turn_current: null,
+    phase_history: [],
+  };
+}
+
+function saveManagedConfig(managed) {
+  lockConfigFile();
+  try {
+    const config = getConfig();
+    config.managed = managed;
+    saveConfig(config);
+  } finally {
+    unlockConfigFile();
+  }
+}
+
+// Send a system message to a specific agent (written to messages + history)
+// Uses the recipient agent's branch so multi-branch agents get the message
+function sendSystemMessage(toAgent, content) {
+  messageSeq++;
+  const agents = getAgents();
+  const recipientBranch = (agents[toAgent] && agents[toAgent].branch) || currentBranch;
+  const msg = {
+    id: generateId(),
+    seq: messageSeq,
+    from: '__system__',
+    to: toAgent,
+    content,
+    timestamp: new Date().toISOString(),
+    system: true,
+  };
+  ensureDataDir();
+  fs.appendFileSync(getMessagesFile(recipientBranch), JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getHistoryFile(recipientBranch), JSON.stringify(msg) + '\n');
+}
+
+// Send a system message to all registered agents
+function broadcastSystemMessage(content, excludeAgent = null) {
+  const agents = getAgents();
+  for (const name of Object.keys(agents)) {
+    if (name === excludeAgent) continue;
+    sendSystemMessage(name, content);
+  }
 }
 
 // Rate limiting — prevent broadcast storms and message flooding
@@ -73,9 +147,14 @@ function ensureDataDir() {
   }
 }
 
+const RESERVED_NAMES = ['__system__', '__all__', '__open__', '__close__', 'system'];
+
 function sanitizeName(name) {
   if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]{1,20}$/.test(name)) {
     throw new Error(`Invalid name "${name}": must be 1-20 alphanumeric/underscore/hyphen chars`);
+  }
+  if (RESERVED_NAMES.includes(name.toLowerCase())) {
+    throw new Error(`Name "${name}" is reserved and cannot be used`);
   }
   return name;
 }
@@ -510,6 +589,38 @@ function toolRegister(name, provider = null) {
         agents[registeredName].last_activity = new Date().toISOString();
         saveAgents(agents);
       }
+      // Managed mode: detect dead manager and dead turn holder
+      if (isManagedMode()) {
+        const managed = getManagedConfig();
+        let managedChanged = false;
+
+        // Dead manager detection
+        if (managed.manager && managed.manager !== registeredName) {
+          if (agents[managed.manager] && !isPidAlive(agents[managed.manager].pid, agents[managed.manager].last_activity)) {
+            managed.manager = null;
+            managed.floor = 'closed';
+            managed.turn_current = null;
+            managed.turn_queue = [];
+            managedChanged = true;
+            saveManagedConfig(managed);
+            broadcastSystemMessage(`[SYSTEM] Manager disconnected. Call claim_manager() to take over as the new manager.`);
+          }
+        }
+
+        // Dead turn holder detection — unstick the floor
+        if (!managedChanged && managed.turn_current && managed.turn_current !== registeredName && managed.manager) {
+          if (agents[managed.turn_current] && !isPidAlive(agents[managed.turn_current].pid, agents[managed.turn_current].last_activity)) {
+            const deadAgent = managed.turn_current;
+            managed.turn_current = null;
+            managed.floor = 'closed';
+            managed.turn_queue = [];
+            saveManagedConfig(managed);
+            if (managed.manager !== registeredName) {
+              sendSystemMessage(managed.manager, `[FLOOR] ${deadAgent} disconnected while holding the floor. Floor returned to you.`);
+            }
+          }
+        }
+      }
     } catch {}
   }, 10000);
   heartbeatInterval.unref(); // Don't prevent process exit
@@ -589,6 +700,54 @@ async function toolSendMessage(content, to = null, reply_to = null) {
     }
   }
 
+  // Managed mode floor enforcement
+  if (isManagedMode()) {
+    let managed = getManagedConfig();
+
+    // Auto-elect manager: first agent to send a message becomes manager if none claimed
+    // Uses config lock to prevent two agents both becoming manager simultaneously
+    if (!managed.manager) {
+      lockConfigFile();
+      try {
+        const freshManaged = getManagedConfig();
+        if (!freshManaged.manager) {
+          freshManaged.manager = registeredName;
+          freshManaged.floor = 'closed';
+          const config = getConfig();
+          config.managed = freshManaged;
+          saveConfig(config);
+          broadcastSystemMessage(`[SYSTEM] ${registeredName} is now the manager (auto-elected). Wait to be addressed.`, registeredName);
+          managed = freshManaged;
+        } else {
+          managed = freshManaged; // another process won the race
+        }
+      } finally {
+        unlockConfigFile();
+      }
+    }
+
+    const isManager = managed.manager === registeredName;
+
+    // Manager can always send
+    if (!isManager) {
+      if (managed.floor === 'closed') {
+        return { error: `Floor is closed. Only the manager (${managed.manager || 'unassigned'}) can speak. Call listen() to wait for your turn.` };
+      }
+      if (managed.floor === 'directed' && managed.turn_current !== registeredName) {
+        return { error: `${managed.turn_current} has the floor right now. Wait for your turn. Call listen() to wait.` };
+      }
+      if (managed.floor === 'open' && managed.turn_current !== registeredName) {
+        return { error: `It's ${managed.turn_current}'s turn in the round-robin. Wait for your turn. Call listen() to wait.` };
+      }
+      if (managed.floor === 'execution') {
+        // During execution, agents can only message the manager
+        if (to && to !== managed.manager) {
+          return { error: `During execution phase, you can only message the manager (${managed.manager}). Focus on your tasks.` };
+        }
+      }
+    }
+  }
+
   const agents = getAgents();
   const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
 
@@ -656,13 +815,55 @@ async function toolSendMessage(content, to = null, reply_to = null) {
 
   // In group mode, auto-broadcast: also write to all other agents' queues
   // Skip if this message is already a response to a broadcast (prevents cascade)
-  if (isGroupMode() && !reply_to && !msg.broadcast) {
+  // NEVER auto-broadcast in managed mode — manager controls communication flow
+  if (isGroupMode() && !isManagedMode() && !reply_to && !msg.broadcast) {
     const otherRecipients = Object.keys(getAgents()).filter(n => n !== registeredName && n !== to);
     for (const other of otherRecipients) {
       if (!canSendTo(registeredName, other)) continue; // respect permissions
       const broadcastMsg = { ...msg, id: generateId(), to: other, broadcast: true, original_to: to };
       fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(broadcastMsg) + '\n');
       fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(broadcastMsg) + '\n');
+    }
+  }
+
+  // Managed mode: auto-advance turns after non-manager sends
+  if (isManagedMode()) {
+    const managed = getManagedConfig();
+    const isManager = managed.manager === registeredName;
+
+    if (!isManager && managed.turn_current === registeredName) {
+      if (managed.floor === 'directed') {
+        // Directed floor: return floor to manager after agent speaks
+        managed.floor = 'closed';
+        managed.turn_current = null;
+        managed.turn_queue = [];
+        saveManagedConfig(managed);
+        sendSystemMessage(managed.manager, `[FLOOR] ${registeredName} has responded. The floor is back to you.`);
+      } else if (managed.floor === 'open') {
+        // Round-robin: advance to next alive agent (skip dead ones)
+        const agents = getAgents();
+        const idx = managed.turn_queue.indexOf(registeredName);
+        let nextAgent = null;
+        for (let i = idx + 1; i < managed.turn_queue.length; i++) {
+          const candidate = managed.turn_queue[i];
+          if (agents[candidate] && isPidAlive(agents[candidate].pid, agents[candidate].last_activity)) {
+            nextAgent = candidate;
+            break;
+          }
+        }
+        if (nextAgent) {
+          managed.turn_current = nextAgent;
+          saveManagedConfig(managed);
+          sendSystemMessage(nextAgent, `[FLOOR] It is YOUR TURN to speak. You have the floor.`);
+        } else {
+          // All remaining agents have spoken (or are dead) — close floor
+          managed.floor = 'closed';
+          managed.turn_current = null;
+          managed.turn_queue = [];
+          saveManagedConfig(managed);
+          sendSystemMessage(managed.manager, `[FLOOR] All agents have spoken. The floor is yours. Use yield_floor() to continue or set_phase() to advance.`);
+        }
+      }
     }
   }
 
@@ -677,6 +878,14 @@ async function toolSendMessage(content, to = null, reply_to = null) {
 function toolBroadcast(content) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
+  }
+
+  // Managed mode: only manager can broadcast
+  if (isManagedMode()) {
+    const managed = getManagedConfig();
+    if (managed.manager !== registeredName) {
+      return { error: `Only the manager (${managed.manager || 'unassigned'}) can broadcast in managed mode. Use send_message() to message the manager.` };
+    }
   }
 
   const rateErr = checkRateLimit();
@@ -944,17 +1153,171 @@ async function toolListenCodex(from = null) {
 
 function toolSetConversationMode(mode) {
   if (!registeredName) return { error: 'You must call register() first' };
-  if (!['group', 'direct'].includes(mode)) return { error: 'Mode must be "group" or "direct"' };
+  if (!['group', 'direct', 'managed'].includes(mode)) return { error: 'Mode must be "group", "direct", or "managed"' };
+
+  // Prevent non-manager agents from destroying a managed session
+  if (isManagedMode() && mode !== 'managed') {
+    const managed = getManagedConfig();
+    if (managed.manager && managed.manager !== registeredName) {
+      return { error: `Only the manager (${managed.manager}) can change the conversation mode.` };
+    }
+  }
+
   const config = getConfig();
   config.conversation_mode = mode;
   if (mode === 'group' && !config.group_cooldown) config.group_cooldown = 3000;
+  if (mode === 'managed') {
+    config.managed = {
+      manager: null,
+      phase: 'discussion',
+      floor: 'closed',
+      turn_queue: [],
+      turn_current: null,
+      phase_history: [{ phase: 'discussion', set_at: new Date().toISOString(), set_by: registeredName }],
+    };
+    broadcastSystemMessage(`[SYSTEM] Managed conversation mode activated by ${registeredName}. Wait for a manager to be assigned.`, registeredName);
+  }
   saveConfig(config);
+
+  const messages = {
+    group: 'Group mode enabled. Use listen_group() to receive batched messages. All messages are shared with everyone.',
+    direct: 'Direct mode enabled. Use listen() for point-to-point messaging.',
+    managed: 'Managed mode enabled. Call claim_manager() to become the manager, or wait for the manager to give you the floor via yield_floor(). Use listen() or listen_group() to receive messages.',
+  };
+  return { success: true, mode, message: messages[mode] };
+}
+
+// --- Managed mode tools ---
+
+function toolClaimManager() {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!isManagedMode()) return { error: 'Not in managed mode. Call set_conversation_mode("managed") first.' };
+
+  const managed = getManagedConfig();
+
+  // Check if manager already exists and is alive
+  if (managed.manager && managed.manager !== registeredName) {
+    const agents = getAgents();
+    if (agents[managed.manager] && isPidAlive(agents[managed.manager].pid, agents[managed.manager].last_activity)) {
+      return { error: `Manager "${managed.manager}" is already active. Only one manager at a time.` };
+    }
+    // Previous manager is dead — allow takeover
+  }
+
+  managed.manager = registeredName;
+  managed.floor = 'closed'; // manager controls the floor
+  saveManagedConfig(managed);
+
+  broadcastSystemMessage(
+    `[SYSTEM] ${registeredName} is now the manager. Wait to be addressed. Do NOT send messages until given the floor.`,
+    registeredName
+  );
+
   return {
     success: true,
-    mode,
-    message: mode === 'group'
-      ? 'Group mode enabled. Use listen_group() to receive batched messages. All messages are shared with everyone.'
-      : 'Direct mode enabled. Use listen() for point-to-point messaging.'
+    message: `You are now the manager. Use yield_floor() to give agents turns, set_phase() to move through phases, and broadcast() for announcements.`,
+    phase: managed.phase,
+    floor: managed.floor,
+  };
+}
+
+function toolYieldFloor(to, prompt = null) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!isManagedMode()) return { error: 'Not in managed mode.' };
+
+  const managed = getManagedConfig();
+  if (managed.manager !== registeredName) return { error: 'Only the manager can yield the floor.' };
+
+  const agents = getAgents();
+  const aliveAgents = Object.keys(agents).filter(n => n !== registeredName && isPidAlive(agents[n].pid, agents[n].last_activity));
+
+  if (to === '__close__') {
+    // Close the floor — only manager can speak
+    managed.floor = 'closed';
+    managed.turn_current = null;
+    managed.turn_queue = [];
+    saveManagedConfig(managed);
+    broadcastSystemMessage('[FLOOR] Floor is now closed. Wait for the manager to address you.', registeredName);
+    return { success: true, floor: 'closed', message: 'Floor closed. Only you can speak.' };
+  }
+
+  if (to === '__open__') {
+    // Open floor — round-robin through all alive agents
+    managed.floor = 'open';
+    managed.turn_queue = aliveAgents;
+    managed.turn_current = aliveAgents.length > 0 ? aliveAgents[0] : null;
+    saveManagedConfig(managed);
+
+    if (managed.turn_current) {
+      const promptText = prompt ? `\n\nTopic: ${prompt}` : '';
+      sendSystemMessage(managed.turn_current, `[FLOOR] It is YOUR TURN to speak. You have the floor.${promptText}\nAfter you send your message, the floor will pass to the next agent.`);
+      const waiting = aliveAgents.filter(n => n !== managed.turn_current);
+      for (const w of waiting) {
+        sendSystemMessage(w, `[FLOOR] Open discussion started. ${managed.turn_current} goes first. Wait for your turn.${promptText}`);
+      }
+    }
+
+    return { success: true, floor: 'open', turn_order: aliveAgents, current_turn: managed.turn_current, message: `Open floor: agents will speak in order: ${aliveAgents.join(' → ')}` };
+  }
+
+  // Directed floor — give it to a specific agent
+  sanitizeName(to);
+  if (!agents[to]) return { error: `Agent "${to}" is not registered.` };
+  if (to === registeredName) return { error: 'Cannot yield floor to yourself (you are the manager).' };
+
+  managed.floor = 'directed';
+  managed.turn_current = to;
+  managed.turn_queue = [to];
+  saveManagedConfig(managed);
+
+  const promptText = prompt ? `\n\nManager asks: ${prompt}` : '';
+  sendSystemMessage(to, `[FLOOR] The manager has given you the floor. It is YOUR TURN to speak. Respond now.${promptText}`);
+
+  // Tell others to wait
+  const waiting = aliveAgents.filter(n => n !== to);
+  for (const w of waiting) {
+    sendSystemMessage(w, `[FLOOR] ${to} has the floor. Do NOT respond. Wait for your turn.`);
+  }
+
+  return { success: true, floor: 'directed', agent: to, prompt: prompt || null, message: `Floor given to ${to}. They can now respond.` };
+}
+
+function toolSetPhase(phase) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!isManagedMode()) return { error: 'Not in managed mode.' };
+
+  const managed = getManagedConfig();
+  if (managed.manager !== registeredName) return { error: 'Only the manager can set the phase.' };
+
+  const validPhases = ['discussion', 'planning', 'execution', 'review'];
+  if (!validPhases.includes(phase)) return { error: `Invalid phase. Must be one of: ${validPhases.join(', ')}` };
+
+  const previousPhase = managed.phase;
+  managed.phase = phase;
+  managed.phase_history.push({ phase, set_at: new Date().toISOString(), set_by: registeredName, from: previousPhase });
+  if (managed.phase_history.length > 50) managed.phase_history = managed.phase_history.slice(-50);
+
+  const phaseInstructions = {
+    discussion: `[PHASE: DISCUSSION] The manager will call on you to share ideas. Do NOT send messages until given the floor.`,
+    planning: `[PHASE: PLANNING] The manager will assign tasks. Wait for your assignment. Do NOT send messages until addressed.`,
+    execution: `[PHASE: EXECUTION] Work on your assigned tasks. Only message the manager when you need guidance or to report completion. Do NOT message other agents directly.`,
+    review: `[PHASE: REVIEW] The manager will call on each agent to report results. Wait for your turn to present.`,
+  };
+
+  // During execution, open the floor for task-related messaging to manager
+  if (phase === 'execution') {
+    managed.floor = 'execution';
+    managed.turn_current = null;
+  }
+
+  saveManagedConfig(managed);
+  broadcastSystemMessage(phaseInstructions[phase], registeredName);
+
+  return {
+    success: true,
+    phase,
+    previous_phase: previousPhase,
+    message: `Phase set to "${phase}". All agents have been notified.`,
   };
 }
 
@@ -1007,7 +1370,7 @@ async function toolListenGroup(timeout_seconds = 300) {
       const recentSpeakers = new Set(history.slice(-10).map(m => m.from));
       const silent = agentNames.filter(n => !recentSpeakers.has(n) && n !== registeredName);
 
-      return {
+      const result = {
         messages: batch.map(m => ({
           id: m.id, from: m.from, to: m.to, content: m.content,
           timestamp: m.timestamp,
@@ -1022,6 +1385,38 @@ async function toolListenGroup(timeout_seconds = 300) {
           ? `${silent.join(', ')} haven't spoken recently. Consider addressing them.`
           : 'All agents are active in the conversation.',
       };
+
+      // Managed mode: add context so agents know whether to respond
+      if (isManagedMode()) {
+        const managed = getManagedConfig();
+        const youHaveFloor = managed.turn_current === registeredName;
+        const youAreManager = managed.manager === registeredName;
+
+        result.managed_context = {
+          phase: managed.phase,
+          floor: managed.floor,
+          manager: managed.manager,
+          you_have_floor: youHaveFloor,
+          you_are_manager: youAreManager,
+          turn_current: managed.turn_current,
+        };
+
+        if (youAreManager) {
+          result.should_respond = true;
+          result.instructions = 'You are the MANAGER. Decide who speaks next using yield_floor(), or advance the phase using set_phase().';
+        } else if (youHaveFloor) {
+          result.should_respond = true;
+          result.instructions = 'It is YOUR TURN to speak. Respond now, then the floor will return to the manager.';
+        } else if (managed.floor === 'execution') {
+          result.should_respond = false;
+          result.instructions = `EXECUTION PHASE: Focus on your assigned tasks. Only message the manager (${managed.manager}) if you need help or to report completion.`;
+        } else {
+          result.should_respond = false;
+          result.instructions = 'DO NOT RESPOND. Wait for the manager to give you the floor. Call listen() or listen_group() to wait.';
+        }
+      }
+
+      return result;
     }
 
     await adaptiveSleep(0);
@@ -1071,6 +1466,20 @@ function toolHandoff(to, context) {
     return { error: 'You must call register() first' };
   }
 
+  // Managed mode: enforce floor control (same as send_message)
+  if (isManagedMode()) {
+    const managed = getManagedConfig();
+    const isManager = managed.manager === registeredName;
+    if (!isManager) {
+      if (managed.floor === 'closed' || (managed.floor === 'directed' && managed.turn_current !== registeredName) || (managed.floor === 'open' && managed.turn_current !== registeredName)) {
+        return { error: `Floor control active. You cannot hand off until you have the floor. Call listen() to wait.` };
+      }
+      if (managed.floor === 'execution' && to !== managed.manager) {
+        return { error: `During execution phase, you can only hand off to the manager (${managed.manager}).` };
+      }
+    }
+  }
+
   const sizeErr = validateContentSize(context);
   if (sizeErr) return sizeErr;
 
@@ -1113,6 +1522,20 @@ function toolHandoff(to, context) {
 function toolShareFile(filePath, to = null, summary = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
+  }
+
+  // Managed mode: enforce floor control
+  if (isManagedMode()) {
+    const managed = getManagedConfig();
+    const isManager = managed.manager === registeredName;
+    if (!isManager) {
+      if (managed.floor === 'closed' || (managed.floor === 'directed' && managed.turn_current !== registeredName) || (managed.floor === 'open' && managed.turn_current !== registeredName)) {
+        return { error: `Floor control active. You cannot share files until you have the floor. Call listen() to wait.` };
+      }
+      if (managed.floor === 'execution' && to && to !== managed.manager) {
+        return { error: `During execution phase, you can only share files with the manager (${managed.manager}).` };
+      }
+    }
   }
 
   // Resolve the file path — restrict to project directory (follow symlinks)
@@ -1671,7 +2094,7 @@ function toolListBranches() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.5.1' },
+  { name: 'agent-bridge', version: '3.6.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -2071,23 +2494,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'set_conversation_mode',
-        description: 'Switch between "group" (free multi-agent chat with auto-broadcast, cooldown, and batched delivery) and "direct" (default point-to-point messaging). Group mode lets all agents see all messages and collaborate freely.',
+        description: 'Switch between "direct" (point-to-point), "group" (free multi-agent chat with auto-broadcast), or "managed" (structured turn-taking with a manager who controls who speaks). Use managed mode for 3+ agent teams to prevent chaos.',
         inputSchema: {
           type: 'object',
           properties: {
-            mode: { type: 'string', description: '"group" for free multi-agent chat, "direct" for point-to-point (default)', enum: ['group', 'direct'] },
+            mode: { type: 'string', description: '"direct" (default), "group" for free chat, or "managed" for structured turn-taking', enum: ['group', 'direct', 'managed'] },
           },
           required: ['mode'],
         },
       },
       {
         name: 'listen_group',
-        description: 'Listen for messages in group conversation mode. Returns ALL unconsumed messages as a batch (not just one), plus recent conversation context and hints about which agents are silent. Includes a random stagger delay (1-3s) to prevent all agents from responding simultaneously. Use this instead of listen() when in group mode.',
+        description: 'Listen for messages in group or managed conversation mode. Returns ALL unconsumed messages as a batch (not just one), plus recent conversation context and hints about which agents are silent. In managed mode, also includes floor/phase context and instructions on whether you should respond. Use this instead of listen() when in group or managed mode.',
         inputSchema: {
           type: 'object',
           properties: {
             timeout_seconds: { type: 'number', description: 'Max seconds to wait for messages (default 300)' },
           },
+        },
+      },
+      // --- Managed mode tools ---
+      {
+        name: 'claim_manager',
+        description: 'Claim the manager role in managed conversation mode. The manager controls who speaks (via yield_floor), sets phases, and can broadcast. Only one manager at a time. If the previous manager disconnected, any agent can claim.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'yield_floor',
+        description: 'Manager-only: give the floor to an agent so they can speak. Use a specific agent name for directed questions, "__open__" for round-robin (each agent takes a turn), or "__close__" to silence everyone. The floor auto-returns to manager after the agent responds.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            to: { type: 'string', description: 'Agent name, "__open__" for round-robin, or "__close__" to close the floor' },
+            prompt: { type: 'string', description: 'Optional question or topic for the agent to respond to' },
+          },
+          required: ['to'],
+        },
+      },
+      {
+        name: 'set_phase',
+        description: 'Manager-only: set the conversation phase. Phases: "discussion" (manager calls on agents), "planning" (manager assigns tasks), "execution" (agents work independently, only message manager), "review" (agents report results when called on). Each phase sends behavioral instructions to all agents.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            phase: { type: 'string', description: 'Phase name', enum: ['discussion', 'planning', 'execution', 'review'] },
+          },
+          required: ['phase'],
         },
       },
     ],
@@ -2188,6 +2643,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'listen_group':
         result = await toolListenGroup(args?.timeout_seconds);
         break;
+      case 'claim_manager':
+        result = toolClaimManager();
+        break;
+      case 'yield_floor':
+        result = toolYieldFloor(args.to, args?.prompt);
+        break;
+      case 'set_phase':
+        result = toolSetPhase(args.phase);
+        break;
       default:
         return {
           content: [{ type: 'text', text: `Unknown tool: ${name}` }],
@@ -2216,6 +2680,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Clean up agent registration on exit for instant status updates
 process.on('exit', () => {
   unlockAgentsFile(); // Clean up any held lock
+  unlockConfigFile();
   if (registeredName) {
     try {
       const agents = getAgents();
@@ -2233,7 +2698,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.5.1 running (29 tools)');
+  console.error('Agent Bridge MCP server v3.6.0 running (32 tools)');
 }
 
 main().catch(console.error);

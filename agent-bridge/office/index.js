@@ -3,7 +3,7 @@ import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { S } from './state.js';
 import { DESK_POSITIONS, DRESSING_ROOM_POS, DRESSING_ROOM_ENTRANCE, REST_AREA_POS, REST_AREA_ENTRANCE } from './constants.js';
 import { initScene } from './scene.js';
-import { buildEnvironment } from './environment.js';
+import { buildEnvironment, updateTVScreen } from './environment.js';
 import { updateAgent } from './animation.js';
 import { syncAgents, processMessages, walkTo, showBubble } from './agents.js';
 // Side-effect: registers window.officeGetAppearance
@@ -15,6 +15,7 @@ export { resolveAppearance } from './appearance.js';
 export { buildHair } from './hair.js';
 export { buildFaceSprite } from './face.js';
 export { buildGlasses, buildHeadwear, buildNeckwear } from './accessories.js';
+export { buildOutfit, removeOutfit } from './outfits.js';
 
 // ===================== RAYCASTER + COMMAND MENU =====================
 var raycaster = new THREE.Raycaster();
@@ -24,8 +25,17 @@ var clickHandlerBound = null;
 
 function setupClickHandler() {
   if (clickHandlerBound) return;
+  // Track mouse-down position to distinguish clicks from camera drags
+  var downPos = { x: 0, y: 0 };
+  S.renderer.domElement.addEventListener('mousedown', function(e) {
+    downPos.x = e.clientX; downPos.y = e.clientY;
+  });
   clickHandlerBound = function(event) {
     if (!S.running || !S.renderer) return;
+    // Ignore if mouse moved more than 5px (it was a drag, not a click)
+    var dx = event.clientX - downPos.x, dy = event.clientY - downPos.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 5) return;
+
     var rect = S.renderer.domElement.getBoundingClientRect();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -216,7 +226,15 @@ function animate() {
     updateAgent(S.agents3d[name], dt, time);
   }
 
-  S.controls.update();
+  // Update TV screen every ~0.5s for smooth ticker
+  if (!S._tvTimer) S._tvTimer = 0;
+  S._tvTimer += dt;
+  if (S._tvTimer >= 0.15) {
+    S._tvTimer = 0;
+    updateTVScreen(time);
+  }
+
+  S.controls.update(dt);
   S.renderer.render(S.scene, S.camera);
   S.cssRenderer.render(S.scene, S.camera);
 
@@ -269,6 +287,7 @@ window.office3dStart = function() {
     if (S.running && window.activeView === 'office') {
       syncAgents();
       processMessages();
+      updateTVScreen(S.clock.getElapsedTime());
     }
   }, 2000);
 };
@@ -302,6 +321,10 @@ window.office3dSetEnvironment = function(env) {
       i++;
     }
   }
+};
+
+window.office3dSetCamSpeed = function(speed) {
+  if (S.controls) S.controls.moveSpeed = speed;
 };
 
 // Handle visibility change for 3D mode

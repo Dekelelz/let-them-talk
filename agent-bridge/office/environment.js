@@ -198,13 +198,21 @@ function buildDecorations(env) {
   buildPlant(-9, -2);
   buildPlant(9, -2);
   buildWhiteboard(-9.5, 1);
+  buildBookshelf(-9.5, -4.5);
+  buildFloorLamp(-8.5, 4.5);
+  buildFloorLamp(6, 5);
+  buildAreaRug(0, -1);
   if (isStartup) {
     buildPizzaBox(9, 1);
     buildBeanbag(9, -6);
     buildBeanbag(-9, 3);
+    buildArcadeMachine(-8.5, -6);
+    buildTV(0, -7.5);
   } else {
     buildCoffeeMachine(9, 1);
     buildWatercooler(9, -4);
+    buildTV(0, -7.5);
+    buildBookshelf(-9.5, 3);
   }
 }
 
@@ -325,6 +333,306 @@ function buildWatercooler(x, z) {
   var bottle = new THREE.Mesh(bottleGeo, bottleMat);
   bottle.position.y = 0.8;
   group.add(bottle);
+  S.furnitureGroup.add(group);
+}
+
+// ===================== BOOKSHELF =====================
+function buildBookshelf(x, z) {
+  var group = new THREE.Group();
+  group.position.set(x, 0, z);
+  var frameMat = new THREE.MeshStandardMaterial({ color: 0x5a3e28, roughness: 0.7 });
+  // Main frame
+  var back = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.2, 1.2), frameMat);
+  back.position.y = 1.1; back.castShadow = true;
+  group.add(back);
+  // Shelves (4 levels)
+  [0.05, 0.55, 1.1, 1.65, 2.15].forEach(function(sy) {
+    var shelf = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.04, 1.2), frameMat);
+    shelf.position.set(0.13, sy, 0); shelf.castShadow = true; shelf.receiveShadow = true;
+    group.add(shelf);
+  });
+  // Side panels
+  [-0.58, 0.58].forEach(function(sz) {
+    var side = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.2, 0.04), frameMat);
+    side.position.set(0.13, 1.1, sz); side.castShadow = true;
+    group.add(side);
+  });
+  // Books (colored blocks on shelves)
+  var bookColors = [0xc0392b, 0x2980b9, 0x27ae60, 0x8e44ad, 0xe67e22, 0x2c3e50, 0xd4a24e, 0x1abc9c];
+  var shelfYs = [0.09, 0.59, 1.14, 1.69];
+  shelfYs.forEach(function(sy, si) {
+    var numBooks = 4 + Math.floor(Math.random() * 4);
+    var startZ = -0.45;
+    for (var bi = 0; bi < numBooks; bi++) {
+      var bh = 0.3 + Math.random() * 0.15;
+      var bw = 0.04 + Math.random() * 0.03;
+      var bookMat = new THREE.MeshStandardMaterial({ color: bookColors[(si * 5 + bi) % bookColors.length], roughness: 0.8 });
+      var book = new THREE.Mesh(new THREE.BoxGeometry(0.2, bh, bw), bookMat);
+      book.position.set(0.18, sy + bh / 2, startZ);
+      book.castShadow = true;
+      group.add(book);
+      startZ += bw + 0.02;
+    }
+  });
+  S.furnitureGroup.add(group);
+}
+
+// ===================== TV / MONITOR =====================
+function buildTV(x, z) {
+  var group = new THREE.Group();
+  group.position.set(x, 0, z);
+  // Wall mount bracket
+  var bracketMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5, metalness: 0.3 });
+  var bracket = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.3, 0.06), bracketMat);
+  bracket.position.y = 2.2;
+  group.add(bracket);
+  // TV body — wide on X, thin on Z (mounted on back wall, facing +Z into room)
+  var tvMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.3 });
+  var tvBody = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1, 0.08), tvMat);
+  tvBody.position.y = 2.2; tvBody.castShadow = true;
+  group.add(tvBody);
+  // Animated screen canvas
+  var W = 320, H = 200;
+  var cvs = document.createElement('canvas');
+  cvs.width = W; cvs.height = H;
+  var tex = new THREE.CanvasTexture(cvs);
+  tex.minFilter = THREE.LinearFilter;
+  var screenMat = new THREE.MeshStandardMaterial({
+    map: tex, emissive: 0x58a6ff, emissiveIntensity: 0.25, roughness: 0.1
+  });
+  var screen = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9), screenMat);
+  screen.position.set(0, 2.2, 0.045);
+  group.add(screen);
+  // Store for animation updates
+  S._tvScreen = { canvas: cvs, texture: tex, tickerOffset: 0 };
+  S.furnitureGroup.add(group);
+}
+
+// Called every ~1s from the sync interval to update the TV screen
+export function updateTVScreen(time) {
+  var tv = S._tvScreen;
+  if (!tv) return;
+  var cvs = tv.canvas, ctx = cvs.getContext('2d');
+  var W = cvs.width, H = cvs.height;
+
+  // Background gradient
+  ctx.fillStyle = '#0a0e1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Top bar
+  ctx.fillStyle = '#111830';
+  ctx.fillRect(0, 0, W, 24);
+  ctx.fillStyle = '#58a6ff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('OFFICE DASHBOARD', 8, 16);
+  // Clock
+  var now = new Date();
+  var timeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0') + ':' + now.getSeconds().toString().padStart(2, '0');
+  ctx.fillStyle = '#7ee787';
+  ctx.textAlign = 'right';
+  ctx.fillText(timeStr, W - 8, 16);
+  ctx.textAlign = 'left';
+
+  // Agent count + message stats
+  var agents = window.cachedAgents || {};
+  var history = window.cachedHistory || [];
+  var agentNames = Object.keys(agents);
+  var activeCount = 0, sleepCount = 0;
+  agentNames.forEach(function(n) {
+    var st = agents[n].status || 'dead';
+    if (st === 'active') activeCount++;
+    else if (st === 'sleeping') sleepCount++;
+  });
+
+  ctx.font = '10px monospace';
+  var y = 42;
+
+  // Stats section
+  ctx.fillStyle = '#546178';
+  ctx.fillText('AGENTS', 8, y);
+  ctx.fillStyle = '#d2a8ff';
+  ctx.fillText(String(agentNames.length), 70, y);
+  ctx.fillStyle = '#4ade80';
+  ctx.fillText(activeCount + ' active', 90, y);
+  ctx.fillStyle = '#facc15';
+  ctx.fillText(sleepCount + ' idle', 160, y);
+  y += 18;
+
+  ctx.fillStyle = '#546178';
+  ctx.fillText('MESSAGES', 8, y);
+  ctx.fillStyle = '#79c0ff';
+  ctx.fillText(String(history.length), 80, y);
+  y += 18;
+
+  // Separator line
+  ctx.strokeStyle = '#1a2744';
+  ctx.beginPath(); ctx.moveTo(8, y); ctx.lineTo(W - 8, y); ctx.stroke();
+  y += 14;
+
+  // Recent activity feed (last 5 messages)
+  ctx.fillStyle = '#546178';
+  ctx.font = '9px monospace';
+  ctx.fillText('RECENT ACTIVITY', 8, y);
+  y += 14;
+
+  var recentMsgs = history.slice(-5);
+  for (var i = 0; i < recentMsgs.length; i++) {
+    var msg = recentMsgs[i];
+    var from = msg.from || '?';
+    var to = msg.to || 'all';
+    var snippet = (msg.content || msg.message || '').substring(0, 30);
+    if ((msg.content || msg.message || '').length > 30) snippet += '..';
+    ctx.fillStyle = '#7ee787';
+    ctx.fillText(from, 8, y);
+    ctx.fillStyle = '#546178';
+    ctx.fillText(' > ', 8 + from.length * 5.5, y);
+    ctx.fillStyle = '#d2a8ff';
+    ctx.fillText(to, 8 + from.length * 5.5 + 18, y);
+    y += 12;
+    ctx.fillStyle = '#8892b0';
+    ctx.fillText('  ' + snippet, 8, y);
+    y += 14;
+    if (y > H - 30) break;
+  }
+  if (recentMsgs.length === 0) {
+    ctx.fillStyle = '#3d4663';
+    ctx.fillText('  Waiting for messages...', 8, y);
+  }
+
+  // Bottom ticker bar
+  ctx.fillStyle = '#111830';
+  ctx.fillRect(0, H - 20, W, 20);
+  // Scrolling ticker
+  var tickerParts = [];
+  agentNames.forEach(function(n) {
+    var info = agents[n];
+    var st = info.status === 'active' ? '\u25CF' : '\u25CB';
+    tickerParts.push(st + ' ' + (info.display_name || n));
+  });
+  var tickerText = tickerParts.length > 0 ? tickerParts.join('    \u2022    ') + '    \u2022    ' : 'No agents online';
+  tv.tickerOffset = (tv.tickerOffset + 1) % (tickerText.length * 6);
+  ctx.fillStyle = '#58a6ff';
+  ctx.font = '10px monospace';
+  // Draw twice for seamless loop
+  var fullW = tickerText.length * 6;
+  ctx.fillText(tickerText, -tv.tickerOffset, H - 6);
+  ctx.fillText(tickerText, -tv.tickerOffset + fullW, H - 6);
+
+  // Scanline overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.04)';
+  for (var sl = 0; sl < H; sl += 2) {
+    ctx.fillRect(0, sl, W, 1);
+  }
+
+  tv.texture.needsUpdate = true;
+}
+
+// ===================== ARCADE MACHINE =====================
+function buildArcadeMachine(x, z) {
+  var group = new THREE.Group();
+  group.position.set(x, 0, z);
+  var cabinetMat = new THREE.MeshStandardMaterial({ color: 0x2c1654, roughness: 0.7 });
+  // Main cabinet body
+  var cabinet = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.8, 0.7), cabinetMat);
+  cabinet.position.y = 0.9; cabinet.castShadow = true;
+  group.add(cabinet);
+  // Top section (angled screen housing)
+  var topMat = new THREE.MeshStandardMaterial({ color: 0x3a1f6e, roughness: 0.6 });
+  var top = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 0.6), topMat);
+  top.position.set(0, 2.05, -0.05); top.castShadow = true;
+  group.add(top);
+  // Screen
+  var scrMat = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x00ff88, emissiveIntensity: 0.5, roughness: 0.1 });
+  var scr = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 0.35), scrMat);
+  scr.position.set(0.31, 2.0, -0.05);
+  scr.rotation.y = Math.PI / 2;
+  group.add(scr);
+  // Control panel
+  var panelMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.5 });
+  var panel = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.1, 0.4), panelMat);
+  panel.position.set(0, 1.5, 0.2); panel.rotation.x = -0.3;
+  group.add(panel);
+  // Joystick
+  var joyMat = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.4 });
+  var joyBase = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.02, 8), panelMat);
+  joyBase.position.set(0.1, 1.56, 0.15);
+  group.add(joyBase);
+  var joyStick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 6), joyMat);
+  joyStick.position.set(0.1, 1.6, 0.15);
+  group.add(joyStick);
+  var joyBall = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), joyMat);
+  joyBall.position.set(0.1, 1.65, 0.15);
+  group.add(joyBall);
+  // Buttons
+  var btnColors = [0xff4444, 0x44ff44, 0x4444ff];
+  btnColors.forEach(function(col, bi) {
+    var btn = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.015, 8), new THREE.MeshStandardMaterial({ color: col, roughness: 0.3 }));
+    btn.position.set(-0.05 - bi * 0.06, 1.56, 0.15);
+    group.add(btn);
+  });
+  // Marquee sign
+  var marqueeDiv = document.createElement('div');
+  marqueeDiv.textContent = 'ARCADE';
+  marqueeDiv.style.cssText = 'color:#ff00ff;font-size:8px;font-weight:bold;font-family:monospace;letter-spacing:2px;text-shadow:0 0 4px #ff00ff;';
+  var marquee = new CSS2DObject(marqueeDiv);
+  marquee.position.set(0, 2.45, 0);
+  group.add(marquee);
+  S.furnitureGroup.add(group);
+}
+
+// ===================== FLOOR LAMP =====================
+function buildFloorLamp(x, z) {
+  var group = new THREE.Group();
+  group.position.set(x, 0, z);
+  // Base
+  var baseMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5, metalness: 0.3 });
+  var base = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 0.04, 12), baseMat);
+  base.position.y = 0.02; base.castShadow = true;
+  group.add(base);
+  // Pole
+  var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.6, 8), baseMat);
+  pole.position.y = 0.84;
+  group.add(pole);
+  // Shade (cone)
+  var shadeMat = new THREE.MeshStandardMaterial({ color: 0xddd5c0, roughness: 0.8, side: THREE.DoubleSide });
+  var shade = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.25, 12, 1, true), shadeMat);
+  shade.position.y = 1.72; shade.castShadow = true;
+  group.add(shade);
+  // Light inside
+  var light = new THREE.PointLight(0xffeedd, 0.3, 4);
+  light.position.set(0, 1.6, 0);
+  group.add(light);
+  S.furnitureGroup.add(group);
+}
+
+// ===================== AREA RUG =====================
+function buildAreaRug(x, z) {
+  var group = new THREE.Group();
+  group.position.set(x, 0.005, z);
+  var isStartup = S.currentEnv === 'startup';
+  var rugColor = isStartup ? 0x3d2b1f : 0x232a35;
+  var borderColor = isStartup ? 0x4a3525 : 0x2a3340;
+  // Main rug
+  var rugMat = new THREE.MeshStandardMaterial({ color: rugColor, roughness: 0.95 });
+  var rug = new THREE.Mesh(new THREE.PlaneGeometry(6, 4), rugMat);
+  rug.rotation.x = -Math.PI / 2; rug.receiveShadow = true;
+  group.add(rug);
+  // Subtle border stripe (slightly lighter than rug, not bright)
+  var borderMat = new THREE.MeshStandardMaterial({ color: borderColor, roughness: 0.9 });
+  // Top/bottom borders
+  [-1.9, 1.9].forEach(function(bz) {
+    var stripe = new THREE.Mesh(new THREE.PlaneGeometry(5.8, 0.08), borderMat);
+    stripe.rotation.x = -Math.PI / 2;
+    stripe.position.set(0, 0.001, bz);
+    group.add(stripe);
+  });
+  // Left/right borders
+  [-2.9, 2.9].forEach(function(bx) {
+    var stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 3.8), borderMat);
+    stripe.rotation.x = -Math.PI / 2;
+    stripe.position.set(bx, 0.001, 0);
+    group.add(stripe);
+  });
   S.furnitureGroup.add(group);
 }
 

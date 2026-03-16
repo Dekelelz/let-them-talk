@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { SpectatorCamera } from './spectator-camera.js';
 import { S } from './state.js';
 
 export function initScene() {
@@ -9,9 +9,9 @@ export function initScene() {
 
   S.scene = new THREE.Scene();
   S.scene.background = new THREE.Color(0x0d1117);
-  S.scene.fog = new THREE.Fog(0x0d1117, 25, 45);
+  S.scene.fog = new THREE.Fog(0x0d1117, 25, 55);
 
-  S.camera = new THREE.PerspectiveCamera(50, S.container.clientWidth / S.container.clientHeight, 0.1, 100);
+  S.camera = new THREE.PerspectiveCamera(50, S.container.clientWidth / S.container.clientHeight, 0.1, 200);
   S.camera.position.set(0, 12, 16);
   S.camera.lookAt(0, 0, 0);
 
@@ -32,13 +32,8 @@ export function initScene() {
   S.cssRenderer.domElement.style.pointerEvents = 'none';
   S.container.appendChild(S.cssRenderer.domElement);
 
-  S.controls = new OrbitControls(S.camera, S.renderer.domElement);
-  S.controls.enableDamping = true;
-  S.controls.dampingFactor = 0.08;
-  S.controls.maxPolarAngle = Math.PI / 2.1;
-  S.controls.minDistance = 5;
-  S.controls.maxDistance = 30;
-  S.controls.target.set(0, 0, 0);
+  // Spectator camera — free movement, no limits
+  S.controls = new SpectatorCamera(S.camera, S.renderer.domElement);
 
   // Lighting
   var ambient = new THREE.AmbientLight(0xffffff, 0.5);

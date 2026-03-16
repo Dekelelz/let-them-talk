@@ -63,6 +63,70 @@ export function updateAgent(agent, dt, time) {
     agent.parts.rightArm.rotation.x = -Math.sin(raiseT * Math.PI) * 0.3;
   }
 
+  // Wave gesture (both arms up, friendly wave)
+  if (agent.waveTimer > 0) {
+    agent.waveTimer -= dt;
+    var wT = agent.waveTimer / 0.8;
+    agent.parts.rightArm.rotation.z = -Math.sin(wT * Math.PI) * 1.4;
+    agent.parts.rightArm.rotation.x = Math.sin(time * 12) * 0.3 * wT;
+    agent.parts.leftArm.rotation.z = Math.sin(wT * Math.PI) * 0.3;
+  }
+
+  // Thinking gesture (hand on chin, head tilted)
+  if (agent.thinkTimer > 0) {
+    agent.thinkTimer -= dt;
+    var thT = Math.min(1, agent.thinkTimer / 1.5);
+    agent.parts.rightArm.rotation.x = -1.0 * thT;
+    agent.parts.rightForearm.rotation.x = -1.5 * thT;
+    agent.parts.head.rotation.z = 0.1 * thT;
+    agent.parts.head.rotation.x = -0.08 * thT;
+  }
+
+  // Pointing gesture (right arm extended forward)
+  if (agent.pointTimer > 0) {
+    agent.pointTimer -= dt;
+    var ptT = agent.pointTimer / 0.6;
+    agent.parts.rightArm.rotation.x = -Math.sin(ptT * Math.PI) * 1.4;
+    agent.parts.rightForearm.rotation.x = -0.1 * Math.sin(ptT * Math.PI);
+  }
+
+  // Celebrate gesture (both arms up, bounce)
+  if (agent.celebrateTimer > 0) {
+    agent.celebrateTimer -= dt;
+    var celT = agent.celebrateTimer / 1.5;
+    agent.parts.leftArm.rotation.z = Math.sin(celT * Math.PI) * 1.6;
+    agent.parts.rightArm.rotation.z = -Math.sin(celT * Math.PI) * 1.6;
+    agent.parts.leftArm.rotation.x = -0.2 * celT;
+    agent.parts.rightArm.rotation.x = -0.2 * celT;
+    agent.parts.group.position.y += Math.abs(Math.sin(time * 10)) * 0.04 * celT;
+  }
+
+  // Stretch gesture (arms wide, body arches back)
+  if (agent.stretchTimer > 0) {
+    agent.stretchTimer -= dt;
+    var stT = agent.stretchTimer / 2;
+    var stPhase = Math.sin(stT * Math.PI);
+    agent.parts.leftArm.rotation.z = stPhase * 1.3;
+    agent.parts.rightArm.rotation.z = -stPhase * 1.3;
+    agent.parts.leftArm.rotation.x = -stPhase * 0.5;
+    agent.parts.rightArm.rotation.x = -stPhase * 0.5;
+    agent.parts.body.rotation.x = -stPhase * 0.15;
+    agent.parts.head.rotation.x = -stPhase * 0.2;
+  }
+
+  // Idle gesture system — random gestures when sitting and idle
+  if (!agent.idleGestureTimer) agent.idleGestureTimer = 5 + Math.random() * 10;
+  if (agent.isSitting && agent.state === 'active' && !isWalking && !agent.isListening) {
+    agent.idleGestureTimer -= dt;
+    if (agent.idleGestureTimer <= 0) {
+      agent.idleGestureTimer = 8 + Math.random() * 15;
+      var gestures = ['stretch', 'think', 'none', 'none', 'none'];
+      var gesture = gestures[Math.floor(Math.random() * gestures.length)];
+      if (gesture === 'stretch') agent.stretchTimer = 2;
+      else if (gesture === 'think') agent.thinkTimer = 1.5;
+    }
+  }
+
   // Face walk direction
   if (isWalking && agent.target) {
     var dx = agent.target.x - agent.pos.x;

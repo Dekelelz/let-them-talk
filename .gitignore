@@ -8,3 +8,11 @@ agent-bridge/projects.json
 .mcp.json
 .codex/
 .gemini/
+
+# Root-level package files (not part of npm package — npm publishes from agent-bridge/)
+/package.json
+/package-lock.json
+
+# Development/planning artifacts
+/.claude/
+/ClaudePlans/

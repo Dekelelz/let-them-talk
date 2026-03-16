@@ -256,13 +256,27 @@ function apiStatus(query) {
     return idleSeconds > 60;
   }).length;
 
-  return {
+  // Include managed mode status if active
+  const config = readJson(filePath('config.json', projectPath));
+  const result = {
     messageCount: history.length,
     agentCount: agentEntries.length,
     aliveCount,
     sleepingCount,
     threadCount: threads.size,
+    conversation_mode: config.conversation_mode || 'direct',
   };
+
+  if (config.conversation_mode === 'managed' && config.managed) {
+    result.managed = {
+      manager: config.managed.manager,
+      phase: config.managed.phase,
+      floor: config.managed.floor,
+      turn_current: config.managed.turn_current,
+    };
+  }
+
+  return result;
 }
 
 function apiStats(query) {
@@ -1443,6 +1457,42 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/agents' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiAgents(url.searchParams)));
+    }
+    else if (url.pathname === '/api/agents' && req.method === 'DELETE') {
+      const body = await parseBody(req);
+      if (!body.name) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing agent name' }));
+        return;
+      }
+      const agentName = body.name;
+      const dataDir = resolveDataDir(url.searchParams.get('project'));
+      const agentsFile = path.join(dataDir, 'agents.json');
+      const profilesFile = path.join(dataDir, 'profiles.json');
+      await withFileLock(agentsFile, () => {
+        // Remove from agents.json
+        if (fs.existsSync(agentsFile)) {
+          const agents = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
+          if (!agents[agentName]) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Agent not found: ' + agentName }));
+            return;
+          }
+          delete agents[agentName];
+          fs.writeFileSync(agentsFile, JSON.stringify(agents, null, 2));
+        }
+        // Remove from profiles.json
+        if (fs.existsSync(profilesFile)) {
+          const profiles = JSON.parse(fs.readFileSync(profilesFile, 'utf8'));
+          delete profiles[agentName];
+          fs.writeFileSync(profilesFile, JSON.stringify(profiles, null, 2));
+        }
+        // Remove consumed file
+        const consumedFile = path.join(dataDir, 'consumed-' + agentName + '.json');
+        if (fs.existsSync(consumedFile)) fs.unlinkSync(consumedFile);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, removed: agentName }));
+      });
     }
     else if (url.pathname === '/api/status' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

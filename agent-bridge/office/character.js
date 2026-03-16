@@ -4,9 +4,18 @@ import { resolveAppearance } from './appearance.js';
 import { buildHair } from './hair.js';
 import { buildFaceSprite } from './face.js';
 import { buildGlasses, buildHeadwear, buildNeckwear } from './accessories.js';
+import { buildOutfit } from './outfits.js';
+
+// Body type scale multipliers (all keep the chibi oversized head)
+var BODY_TYPES = {
+  default: { torsoW: 1, torsoH: 1, torsoD: 1, legW: 1, legH: 1, armW: 1, armH: 1, legSpread: 1, armSpread: 1, headY: 0 },
+  stocky:  { torsoW: 1.3, torsoH: 0.95, torsoD: 1.25, legW: 1.25, legH: 0.9, armW: 1.2, armH: 0.95, legSpread: 1.2, armSpread: 1.15, headY: -0.02 },
+  slim:    { torsoW: 0.82, torsoH: 1.1, torsoD: 0.85, legW: 0.8, legH: 1.08, armW: 0.8, armH: 1.05, legSpread: 0.85, armSpread: 0.9, headY: 0.04 },
+};
 
 export function createCharacter(name, appearance) {
   var a = resolveAppearance(name, appearance);
+  var bt = BODY_TYPES[a.body_type] || BODY_TYPES.default;
   var group = new THREE.Group();
   group.userData.agentName = name;
 
@@ -26,89 +35,91 @@ export function createCharacter(name, appearance) {
   var armMat = new THREE.MeshStandardMaterial({ color: a.shirt_hex, roughness: 0.7 });
   var handMat = new THREE.MeshStandardMaterial({ color: a.head_hex, roughness: 0.7 });
 
-  // Torso
-  var body = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.32, 0.18), bodyMat);
+  // Torso (scaled by body type)
+  var body = new THREE.Mesh(new THREE.BoxGeometry(0.3 * bt.torsoW, 0.32 * bt.torsoH, 0.18 * bt.torsoD), bodyMat);
   body.position.y = 0.58; body.castShadow = true;
   group.add(body);
 
   // Left Leg
+  var legXOffset = 0.08 * bt.legSpread;
   var leftLeg = new THREE.Group();
-  leftLeg.position.set(-0.08, 0.42, 0);
+  leftLeg.position.set(-legXOffset, 0.42, 0);
   group.add(leftLeg);
-  var leftUpperLeg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), legMat);
-  leftUpperLeg.position.y = -0.09; leftUpperLeg.castShadow = true;
+  var leftUpperLeg = new THREE.Mesh(new THREE.BoxGeometry(0.1 * bt.legW, 0.18 * bt.legH, 0.1 * bt.legW), legMat);
+  leftUpperLeg.position.y = -0.09 * bt.legH; leftUpperLeg.castShadow = true;
   leftLeg.add(leftUpperLeg);
   var leftLowerLeg = new THREE.Group();
-  leftLowerLeg.position.set(0, -0.18, 0);
+  leftLowerLeg.position.set(0, -0.18 * bt.legH, 0);
   leftLeg.add(leftLowerLeg);
-  var leftShin = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.16, 0.09), legMat);
-  leftShin.position.y = -0.08; leftShin.castShadow = true;
+  var leftShin = new THREE.Mesh(new THREE.BoxGeometry(0.09 * bt.legW, 0.16 * bt.legH, 0.09 * bt.legW), legMat);
+  leftShin.position.y = -0.08 * bt.legH; leftShin.castShadow = true;
   leftLowerLeg.add(leftShin);
-  var leftShoe = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.14), shoeMat);
-  leftShoe.position.set(0, -0.18, 0.02); leftShoe.castShadow = true;
+  var leftShoe = new THREE.Mesh(new THREE.BoxGeometry(0.1 * bt.legW, 0.05, 0.14), shoeMat);
+  leftShoe.position.set(0, -0.18 * bt.legH, 0.02); leftShoe.castShadow = true;
   leftLowerLeg.add(leftShoe);
 
   // Right Leg
   var rightLeg = new THREE.Group();
-  rightLeg.position.set(0.08, 0.42, 0);
+  rightLeg.position.set(legXOffset, 0.42, 0);
   group.add(rightLeg);
-  var rightUpperLeg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), legMat);
-  rightUpperLeg.position.y = -0.09; rightUpperLeg.castShadow = true;
+  var rightUpperLeg = new THREE.Mesh(new THREE.BoxGeometry(0.1 * bt.legW, 0.18 * bt.legH, 0.1 * bt.legW), legMat);
+  rightUpperLeg.position.y = -0.09 * bt.legH; rightUpperLeg.castShadow = true;
   rightLeg.add(rightUpperLeg);
   var rightLowerLeg = new THREE.Group();
-  rightLowerLeg.position.set(0, -0.18, 0);
+  rightLowerLeg.position.set(0, -0.18 * bt.legH, 0);
   rightLeg.add(rightLowerLeg);
-  var rightShin = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.16, 0.09), legMat);
-  rightShin.position.y = -0.08; rightShin.castShadow = true;
+  var rightShin = new THREE.Mesh(new THREE.BoxGeometry(0.09 * bt.legW, 0.16 * bt.legH, 0.09 * bt.legW), legMat);
+  rightShin.position.y = -0.08 * bt.legH; rightShin.castShadow = true;
   rightLowerLeg.add(rightShin);
-  var rightShoe = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.14), shoeMat);
-  rightShoe.position.set(0, -0.18, 0.02); rightShoe.castShadow = true;
+  var rightShoe = new THREE.Mesh(new THREE.BoxGeometry(0.1 * bt.legW, 0.05, 0.14), shoeMat);
+  rightShoe.position.set(0, -0.18 * bt.legH, 0.02); rightShoe.castShadow = true;
   rightLowerLeg.add(rightShoe);
 
   // Left Arm
+  var armXOffset = 0.21 * bt.armSpread;
   var leftArm = new THREE.Group();
-  leftArm.position.set(-0.21, 0.7, 0);
+  leftArm.position.set(-armXOffset, 0.7, 0);
   group.add(leftArm);
-  var leftUpperArm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.08), armMat);
-  leftUpperArm.position.y = -0.08; leftUpperArm.castShadow = true;
+  var leftUpperArm = new THREE.Mesh(new THREE.BoxGeometry(0.08 * bt.armW, 0.16 * bt.armH, 0.08 * bt.armW), armMat);
+  leftUpperArm.position.y = -0.08 * bt.armH; leftUpperArm.castShadow = true;
   leftArm.add(leftUpperArm);
   var leftForearm = new THREE.Group();
-  leftForearm.position.set(0, -0.16, 0);
+  leftForearm.position.set(0, -0.16 * bt.armH, 0);
   leftArm.add(leftForearm);
-  var leftForearmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.14, 0.07), armMat);
-  leftForearmMesh.position.y = -0.07; leftForearmMesh.castShadow = true;
+  var leftForearmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.07 * bt.armW, 0.14 * bt.armH, 0.07 * bt.armW), armMat);
+  leftForearmMesh.position.y = -0.07 * bt.armH; leftForearmMesh.castShadow = true;
   leftForearm.add(leftForearmMesh);
   var leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), handMat);
-  leftHand.position.y = -0.16;
+  leftHand.position.y = -0.16 * bt.armH;
   leftForearm.add(leftHand);
 
   // Right Arm
   var rightArm = new THREE.Group();
-  rightArm.position.set(0.21, 0.7, 0);
+  rightArm.position.set(armXOffset, 0.7, 0);
   group.add(rightArm);
-  var rightUpperArm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.08), armMat);
-  rightUpperArm.position.y = -0.08; rightUpperArm.castShadow = true;
+  var rightUpperArm = new THREE.Mesh(new THREE.BoxGeometry(0.08 * bt.armW, 0.16 * bt.armH, 0.08 * bt.armW), armMat);
+  rightUpperArm.position.y = -0.08 * bt.armH; rightUpperArm.castShadow = true;
   rightArm.add(rightUpperArm);
   var rightForearm = new THREE.Group();
-  rightForearm.position.set(0, -0.16, 0);
+  rightForearm.position.set(0, -0.16 * bt.armH, 0);
   rightArm.add(rightForearm);
-  var rightForearmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.14, 0.07), armMat);
-  rightForearmMesh.position.y = -0.07; rightForearmMesh.castShadow = true;
+  var rightForearmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.07 * bt.armW, 0.14 * bt.armH, 0.07 * bt.armW), armMat);
+  rightForearmMesh.position.y = -0.07 * bt.armH; rightForearmMesh.castShadow = true;
   rightForearm.add(rightForearmMesh);
   var rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), handMat);
-  rightHand.position.y = -0.16;
+  rightHand.position.y = -0.16 * bt.armH;
   rightForearm.add(rightHand);
 
-  // Head
+  // Head (always same chibi size regardless of body type)
   var headGeo = new THREE.SphereGeometry(0.25, 20, 16);
   var headMat = new THREE.MeshStandardMaterial({ color: a.head_hex, roughness: 0.6 });
   var head = new THREE.Mesh(headGeo, headMat);
-  head.position.y = 1.05; head.castShadow = true;
+  head.position.y = 1.05 + bt.headY; head.castShadow = true;
   group.add(head);
 
   // Hair
   var hairGroup = buildHair(a.hair_style, a.hair_hex);
-  hairGroup.position.y = 1.05;
+  hairGroup.position.y = 1.05 + bt.headY;
   group.add(hairGroup);
 
   // Face
@@ -116,10 +127,16 @@ export function createCharacter(name, appearance) {
   faceSprite.position.set(0, 0, 0.251);
   head.add(faceSprite);
 
+  // Outfit (layered on top of body)
+  var outfitGroup = null;
+  if (a.outfit) {
+    outfitGroup = buildOutfit(a.outfit, { shirt_color: a.shirt_color, pants_color: a.pants_color }, group);
+  }
+
   // Accessories
   if (a.glasses) buildGlasses(a.glasses, a.glasses_color || '#555555', head);
   if (a.headwear) buildHeadwear(a.headwear, a.headwear_color || '#333333', head);
-  if (a.neckwear) buildNeckwear(a.neckwear, a.neckwear_color || '#c0392b', group);
+  if (a.neckwear && !a.outfit) buildNeckwear(a.neckwear, a.neckwear_color || '#c0392b', group);
 
   // Name label
   var labelDiv = document.createElement('div');
@@ -178,6 +195,7 @@ export function createCharacter(name, appearance) {
     leftHand: leftHand, rightHand: rightHand,
     leftShoe: leftShoe, rightShoe: rightShoe,
     faceSprite: faceSprite, hairGroup: hairGroup,
+    outfitGroup: outfitGroup,
     label: label, labelDiv: labelDiv,
     bubble: bubble, bubbleDiv: bubbleDiv,
     shadow: shadow,
