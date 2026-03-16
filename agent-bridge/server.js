@@ -871,6 +871,15 @@ async function toolSendMessage(content, to = null, reply_to = null) {
   if (currentBranch !== 'main') result.branch = currentBranch;
   if (!recipientAlive) {
     result.warning = `Agent "${to}" appears offline (PID not running). Message queued but may not be received until they reconnect.`;
+  } else if (agents[to] && !agents[to].listening_since) {
+    result.note = `Agent "${to}" is currently working (not in listen mode). Message queued — they'll see it when they finish their current task and call listen_group().`;
+  }
+
+  // Nudge: check if THIS agent has unread messages waiting
+  const myPending = getUnconsumedMessages(registeredName);
+  if (myPending.length > 0) {
+    result.you_have_messages = myPending.length;
+    result.urgent = `You have ${myPending.length} unread message(s) waiting. Call listen_group() after this to read them.`;
   }
   return result;
 }
@@ -925,6 +934,19 @@ function toolBroadcast(content) {
 
   const result = { success: true, sent_to: ids, recipient_count: ids.length };
   if (skipped.length > 0) result.skipped = skipped;
+  // Show which recipients are busy vs listening
+  const agentsNow = getAgents();
+  const busy = ids.filter(function(i) { return agentsNow[i.to] && !agentsNow[i.to].listening_since; }).map(function(i) { return i.to; });
+  if (busy.length > 0) {
+    result.busy_agents = busy;
+    result.note = busy.join(', ') + (busy.length === 1 ? ' is' : ' are') + ' currently working (not listening). Messages queued.';
+  }
+  // Nudge for own unread messages
+  const myPending = getUnconsumedMessages(registeredName);
+  if (myPending.length > 0) {
+    result.you_have_messages = myPending.length;
+    result.urgent = `You have ${myPending.length} unread message(s). Call listen_group() soon.`;
+  }
   return result;
 }
 
@@ -1370,17 +1392,28 @@ async function toolListenGroup(timeout_seconds = 300) {
       const recentSpeakers = new Set(history.slice(-10).map(m => m.from));
       const silent = agentNames.filter(n => !recentSpeakers.has(n) && n !== registeredName);
 
+      const now = Date.now();
       const result = {
-        messages: batch.map(m => ({
-          id: m.id, from: m.from, to: m.to, content: m.content,
-          timestamp: m.timestamp,
-          ...(m.reply_to && { reply_to: m.reply_to }),
-          ...(m.thread_id && { thread_id: m.thread_id }),
-        })),
+        messages: batch.map(m => {
+          const ageMs = now - new Date(m.timestamp).getTime();
+          const ageSec = Math.round(ageMs / 1000);
+          return {
+            id: m.id, from: m.from, to: m.to, content: m.content,
+            timestamp: m.timestamp,
+            age_seconds: ageSec,
+            ...(ageSec > 30 && { delayed: true }),
+            ...(m.reply_to && { reply_to: m.reply_to }),
+            ...(m.thread_id && { thread_id: m.thread_id }),
+          };
+        }),
         message_count: batch.length,
         context: recentHistory,
         agents_online: agentNames.length,
         agents_silent: silent,
+        agents_status: agentNames.reduce(function(acc, n) {
+          acc[n] = agents[n].listening_since ? 'listening' : 'working';
+          return acc;
+        }, {}),
         hint: silent.length > 0
           ? `${silent.join(', ')} haven't spoken recently. Consider addressing them.`
           : 'All agents are active in the conversation.',
@@ -2671,6 +2704,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         isError: true,
       };
+    }
+
+    // Global hook: on non-listen tools, check for pending messages and nudge the agent
+    // This catches agents who are mid-work and have messages piling up
+    const listenTools = ['listen', 'listen_group', 'listen_codex', 'wait_for_reply', 'check_messages'];
+    if (registeredName && !listenTools.includes(name) && (isGroupMode() || isManagedMode())) {
+      try {
+        const pending = getUnconsumedMessages(registeredName);
+        if (pending.length > 0 && !result.you_have_messages) {
+          result._pending_messages = pending.length;
+          result._nudge = `You have ${pending.length} unread message(s) from the team. Finish your current task quickly, then call listen_group() to read them.`;
+        }
+      } catch {}
     }
 
     return {
