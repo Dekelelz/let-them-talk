@@ -335,3 +335,9 @@ document.addEventListener('visibilitychange', function() {
     window.office3dStart();
   }
 });
+
+// Auto-start if 3D Hub is already the active view when this module finishes loading
+// (module loads async, so switchView('office') may have already fired before we defined office3dStart)
+if (window.activeView === 'office') {
+  window.office3dStart();
+}
