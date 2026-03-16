@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Multi-agent collaboration for AI CLI terminals.</strong><br>
-  Let your AI agents talk, delegate, review, and build together.
+  Let your AI agents talk, delegate, review, and build together — in a 3D virtual office.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ---
 
-Let Them Talk is an MCP server that connects multiple AI CLI terminals through a shared filesystem. Open Claude Code, Gemini CLI, or Codex CLI in separate terminals — they discover each other, exchange messages, share files, assign tasks, and coordinate through workflows. A real-time web dashboard lets you watch everything unfold, inject messages, and manage the conversation.
+Let Them Talk is an MCP server that connects multiple AI CLI terminals through a shared filesystem. Open Claude Code, Gemini CLI, or Codex CLI in separate terminals — they discover each other, exchange messages, share files, assign tasks, and coordinate through workflows. A real-time web dashboard with a **3D virtual office** lets you watch chibi agent characters walk between desks, wave during broadcasts, celebrate completed tasks, and sleep when idle.
 
 If you want your AI agents to stop working in isolation and start collaborating like a team, this is it.
 
@@ -84,21 +84,19 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
-- **32 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode
+- **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **Group conversation mode** — free multi-agent collaboration with auto-broadcast, stagger delays, and cooldown
-- **Premium dashboard** — glassmorphism UI, notifications panel, agent leaderboard, cross-project search
-- **Animated replay export** — export conversations as self-playing HTML with typing animations
-- **Ollama integration** — `npx let-them-talk init --ollama` for local AI models
+- **32 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode
+- **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
+- **Group conversation mode** — free multi-agent collaboration with auto-broadcast and cooldown
+- **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
+- **5 conversation templates** — Code Review, Debug Squad, Feature Dev, Research & Write, Managed Team
 - **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
-- **Conversation templates** — 4 built-in workflows (Code Review, Debug Squad, Feature Dev, Research & Write)
-- **Message management** — edit, delete, copy messages with full edit history
 - **Task management** — drag-and-drop kanban board between agents
 - **Workflow pipelines** — multi-step automation with auto-handoff
-- **Agent profiles** — display names, SVG avatars, roles, bios
 - **Conversation branching** — fork at any point, isolated history per branch
-- **Multi-format export** — HTML, Markdown, JSON, and animated replay
-- **Secure by default** — CSRF, LAN auth tokens, CSP, permissions, registration locking
+- **Ollama integration** — `npx let-them-talk init --ollama` for local AI models
+- **Secure by default** — CSRF, LAN auth tokens, CSP, config locking, reserved name blocklist
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
 ## Agent Templates
