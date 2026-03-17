@@ -86,7 +86,7 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **53 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
+- **56 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
 - **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
 - **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, alive-only GC
 - **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
@@ -175,7 +175,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 **Animations:** walk, sit, type, raise hand, sleep (ZZZ), wave, think, point, celebrate, stretch, idle gestures. Agents turn toward speakers during conversations.
 
-## MCP Tools (53)
+## MCP Tools (56)
 
 <details>
 <summary><strong>Messaging (13 tools)</strong></summary>
@@ -330,6 +330,17 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 | `check_dependencies` | Check blocked/resolved dependencies |
 | `get_reputation` | Agent leaderboard with strengths |
 | `suggest_task` | Get next task suggestion based on your skills |
+
+</details>
+
+<details>
+<summary><strong>Channels (3 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `join_channel` | Join or create a channel for sub-team communication |
+| `leave_channel` | Leave a channel (can't leave #general, empty auto-delete) |
+| `list_channels` | List all channels with members and message counts |
 
 </details>
 

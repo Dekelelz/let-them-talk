@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.10.0] - 2026-03-17
+
+### Added — Dynamic Guide with Progressive Disclosure
+- **`buildGuide()`** — replaces hardcoded guide in register() and get_guide(). Returns only rules relevant to the current system state.
+- **Tiered rules:** Tier 0 (listen after every action), Tier 1 (core behavior), Tier 2 (group mode features), Tier 2b (channels), Tier 3 (large teams 5+)
+- **User-customizable:** `.agent-bridge/guide.md` for project-specific rules
+- 2-agent direct mode = 5 rules. 10-agent group with channels = 12 rules.
+
+## [3.9.1] - 2026-03-17
+
+### Added
+- **Per-channel cooldown** — uses channel member count instead of total agents. 2-member #backend = 1s, regardless of 10 in #general
+- **`cooldown_applied_ms`** — diagnostic field in send_message response showing exact cooldown applied
+- **`channel` field** in send_message response when sending to a channel
+
+### Fixed
+- Task race condition — `update_task` rejects claiming tasks already in_progress by another agent
+
 ## [3.9.0] - 2026-03-17
 
 ### Added — Channels & Split Cooldown
