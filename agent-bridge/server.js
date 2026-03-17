@@ -784,23 +784,31 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   const rateErr = checkRateLimit();
   if (rateErr) return rateErr;
 
-  // Group mode cooldown — split by addressing (fast lane / slow lane)
+  // Group mode cooldown — per-channel aware + split by addressing (fast/slow lane)
+  let _cooldownApplied = 0;
   if (isGroupMode()) {
-    let cooldown = getGroupCooldown(); // default: adaptive max(500, N*500)
-    // Split cooldown: if replying to a message that addressed us, use fast lane (500ms)
-    // If not addressed or no reply_to, use slow lane (higher friction)
+    // Per-channel cooldown: use channel member count, not total agents
+    const agentsNow = getAgents();
+    let memberCount;
+    if (channel && channel !== 'general') {
+      const channels = getChannelsData();
+      const ch = channels[channel];
+      memberCount = ch ? ch.members.filter(m => { const a = agentsNow[m]; return a && isPidAlive(a.pid, a.last_activity); }).length : 1;
+    } else {
+      memberCount = Object.values(agentsNow).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+    }
+    let cooldown = Math.max(500, memberCount * 500); // base: per-channel adaptive
+    // Split cooldown: reply_to addressed = fast lane, unaddressed = slow lane
     if (reply_to) {
-      const allMsgs = readJsonl(getMessagesFile(currentBranch));
+      const allMsgs = readJsonl(channel ? getChannelMessagesFile(channel) : getMessagesFile(currentBranch));
       const refMsg = allMsgs.find(m => m.id === reply_to);
       if (refMsg && refMsg.addressed_to && refMsg.addressed_to.includes(registeredName)) {
         cooldown = 500; // fast lane: I was addressed
       } else {
-        // Slow lane: heavier friction for unaddressed responses
-        const agents = getAgents();
-        const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
-        cooldown = Math.max(2000, aliveCount * 1000);
+        cooldown = Math.max(2000, memberCount * 1000); // slow lane
       }
     }
+    _cooldownApplied = cooldown;
     const elapsed = Date.now() - lastSentAt;
     if (elapsed < cooldown) {
       await sleep(cooldown - elapsed);
@@ -980,6 +988,8 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   }
 
   const result = { success: true, messageId: msg.id, from: msg.from, to: msg.to };
+  if (_cooldownApplied > 0) result.cooldown_applied_ms = _cooldownApplied;
+  if (channel) result.channel = channel;
   if (currentBranch !== 'main') result.branch = currentBranch;
   if (!recipientAlive) {
     result.warning = `Agent "${to}" appears offline (PID not running). Message queued but may not be received until they reconnect.`;
@@ -3142,7 +3152,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.9.0' },
+  { name: 'agent-bridge', version: '3.9.1' },
   { capabilities: { tools: {} } }
 );
 
@@ -3996,7 +4006,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.9.0 running (56 tools)');
+  console.error('Agent Bridge MCP server v3.9.1 running (56 tools)');
 }
 
 main().catch(console.error);
