@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.1.0] - 2026-03-17
+
+### Added — Agent Reliability & Intelligence
+
+- **Auto-recovery (crash resume)** — when an agent's process dies, the server snapshots its state (active tasks, locked files, channels, workspace keys, last 5 messages) to `recovery-{name}.json`. When a replacement registers with the same name, the snapshot is included in the register response with instructions to resume, not restart. 1-hour TTL, auto-deletes after load.
+- **Quality gates** — `update_task(id, "done")` auto-broadcasts `[REVIEW NEEDED]` to all alive agents. Teams get automatic review cycles without manually calling `request_review()`.
+- **Decision overlap hints** — `send_message` in group mode checks content against existing logged decisions. Returns `_decision_hint` if a related decision exists, preventing teams from re-debating settled topics.
+- **Enhanced `check_messages`** — now returns rich summary: `senders`, `addressed_to_you`, `preview`, `urgency` level. The proactive counterpart to the enhanced nudge.
+
+### Fixed
+- **Recovery lock notes** — snapshot correctly labels locked files as `locked_files_released` with note that locks were auto-released.
+
 ## [4.0.0] - 2026-03-17
 
 ### Major Release — 10-Agent Free Group Mode

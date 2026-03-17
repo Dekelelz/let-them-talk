@@ -738,6 +738,8 @@ function toolRegister(name, provider = null) {
           }
         }
       }
+      // Snapshot dead agents BEFORE cleanup (for auto-recovery)
+      snapshotDeadAgents(agents);
       // Clean up file locks held by dead agents
       cleanStaleLocks();
       cleanStaleChannelMembers();
@@ -770,6 +772,34 @@ function toolRegister(name, provider = null) {
       if (Object.keys(myWorkspace).length > 0) result.recovery.your_workspace_keys = Object.keys(myWorkspace);
       if (myRecentMsgs.length > 0) result.recovery.recent_messages = myRecentMsgs.map(m => ({ from: m.from, to: m.to, preview: m.content.substring(0, 100), timestamp: m.timestamp }));
       result.recovery.hint = 'You have prior context from a previous session. Call get_briefing() for a full project summary.';
+    }
+
+    // Auto-recovery: load crash snapshot if it exists (TTL: 1 hour)
+    const recoveryFile = path.join(DATA_DIR, `recovery-${name}.json`);
+    if (fs.existsSync(recoveryFile)) {
+      try {
+        const snapshot = JSON.parse(fs.readFileSync(recoveryFile, 'utf8'));
+        const snapshotAge = Date.now() - new Date(snapshot.died_at).getTime();
+        if (snapshotAge > 3600000) {
+          // Stale snapshot (>1 hour) — discard
+          try { fs.unlinkSync(recoveryFile); } catch {}
+        } else {
+          if (!result.recovery) result.recovery = {};
+          result.recovery.previous_session = true;
+          result.recovery.died_at = snapshot.died_at;
+          result.recovery.crashed_ago = Math.round(snapshotAge / 1000) + 's';
+          if (snapshot.active_tasks && snapshot.active_tasks.length > 0) result.recovery.your_active_tasks = snapshot.active_tasks;
+          if (snapshot.locked_files && snapshot.locked_files.length > 0) {
+            result.recovery.locked_files_released = snapshot.locked_files;
+            result.recovery.lock_note = 'These files were locked by your previous session. Locks have been auto-released. Re-lock them with lock_file() before editing.';
+          }
+          if (snapshot.channels && snapshot.channels.length > 0) result.recovery.your_channels = snapshot.channels;
+          if (snapshot.last_messages_sent) result.recovery.last_messages_sent = snapshot.last_messages_sent;
+          result.recovery.hint = 'You are RESUMING a previous session that crashed. Review your active tasks and locked files below, then continue where you left off. Do NOT restart work from scratch.';
+          // Clean up snapshot after loading
+          try { fs.unlinkSync(recoveryFile); } catch {}
+        }
+      } catch {}
     }
 
     // Notify other agents
@@ -1069,6 +1099,24 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   if (isGroupMode() && !msg.addressed_to) { unaddressedSends++; }
 
   const result = { success: true, messageId: msg.id, from: msg.from, to: msg.to };
+
+  // Decision overlap hint: warn if message content overlaps with existing decisions
+  if (isGroupMode()) {
+    try {
+      const decisions = readJsonFile(path.join(DATA_DIR, 'decisions.json')) || [];
+      if (decisions.length > 0) {
+        const contentLower = content.toLowerCase();
+        const overlap = decisions.find(d => {
+          const topic = (d.topic || '').toLowerCase();
+          const decision = (d.decision || '').toLowerCase();
+          return topic && contentLower.includes(topic) || decision.split(' ').filter(w => w.length > 4).some(w => contentLower.includes(w));
+        });
+        if (overlap) {
+          result._decision_hint = `Related decision exists: "${overlap.decision}" (topic: ${overlap.topic || 'general'}). Check get_decisions() before re-debating.`;
+        }
+      }
+    } catch {}
+  }
   if (_cooldownApplied > 0) result.cooldown_applied_ms = _cooldownApplied;
   if (channel) result.channel = channel;
   if (currentBranch !== 'main') result.branch = currentBranch;
@@ -2207,6 +2255,13 @@ function toolUpdateTask(taskId, status, notes = null) {
         saveChannelsData(channels);
       }
     }
+
+    // Quality gate: auto-request review when task is completed
+    const agents = getAgents();
+    const aliveOthers = Object.keys(agents).filter(n => n !== registeredName && isPidAlive(agents[n].pid, agents[n].last_activity));
+    if (aliveOthers.length > 0) {
+      broadcastSystemMessage(`[REVIEW NEEDED] ${registeredName} completed task "${task.title}". Team: please review the work and call submit_review() if applicable.`, registeredName);
+    }
   }
 
   return { success: true, task_id: task.id, status: task.status, title: task.title };
@@ -2745,6 +2800,38 @@ function toolListChannels() {
     };
   }
   return { channels: result, your_channels: getAgentChannels(registeredName) };
+}
+
+// Auto-recovery: snapshot dead agent state before cleanup
+// Creates recovery-{name}.json so replacement agent can resume
+function snapshotDeadAgents(agents) {
+  for (const [name, info] of Object.entries(agents)) {
+    if (name === registeredName) continue; // skip self
+    if (isPidAlive(info.pid, info.last_activity)) continue; // skip alive
+    const recoveryFile = path.join(DATA_DIR, `recovery-${name}.json`);
+    if (fs.existsSync(recoveryFile)) continue; // already snapshotted
+    try {
+      const tasks = getTasks().filter(t => t.assignee === name && (t.status === 'in_progress' || t.status === 'pending'));
+      const locks = getLocks();
+      const lockedFiles = Object.entries(locks).filter(([, l]) => l.agent === name).map(([f]) => f);
+      const channels = getAgentChannels(name);
+      const workspace = getWorkspace(name);
+      const history = readJsonl(getHistoryFile(currentBranch));
+      const lastSent = history.filter(m => m.from === name).slice(-5).map(m => ({ to: m.to, content: m.content.substring(0, 200), timestamp: m.timestamp }));
+      // Only snapshot if there's meaningful state to recover
+      if (tasks.length > 0 || lockedFiles.length > 0 || Object.keys(workspace).length > 0) {
+        writeJsonFile(recoveryFile, {
+          agent: name,
+          died_at: new Date().toISOString(),
+          active_tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, description: (t.description || '').substring(0, 300) })),
+          locked_files: lockedFiles,
+          channels: channels.filter(c => c !== 'general'),
+          workspace_keys: Object.keys(workspace),
+          last_messages_sent: lastSent,
+        });
+      }
+    } catch {}
+  }
 }
 
 // Auto-cleanup dead agent locks (called from heartbeat)
@@ -3368,7 +3455,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '4.0.2' },
+  { name: 'agent-bridge', version: '4.1.0' },
   { capabilities: { tools: {} } }
 );
 
