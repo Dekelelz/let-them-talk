@@ -1,5 +1,61 @@
 # Changelog
 
+## [4.2.0] - 2026-03-17
+
+### Added — Scaling, Reliability & Dashboard
+
+**Server (server.js):**
+- **Smart context priority partitions** — Bucket A (addressed messages), B (channel messages), C (chronological backfill). Ensures agents see what matters most within context limits.
+- **Send-after-listen enforcement** — `sendsSinceLastListen` counter blocks messaging without listening. Prevents message storms.
+- **Response budget** — 2 unaddressed sends per 60s with time-based reset. Discourages noise.
+- **Enhanced nudge on every tool call** — senders, addressed count, preview, urgency level included in responses.
+- **Stand-up meetings** — config-driven interval (`standup_interval_hours`), file-based dedup via `.last-standup`, 5+ agent gate.
+- **Auto-escalation for blocked tasks** — broadcasts `[ESCALATION]` for tasks blocked >5 min, `task.escalated_at` in tasks.json for cross-process dedup.
+- **Workload metrics** — `task_times[]`, `avg_task_time_sec`, `messages_sent` in reputation/leaderboard.
+- **Smarter suggest_task** — caps at 3 in-progress tasks per agent, suggests blocked tasks needing help.
+- **Auto-status board** — workspace `_status` auto-set on task state changes.
+- **KB hints in listen_group** — matches KB keys against message topics, returns actionable hints.
+- **Thread reply context in listen_group** — `_reply_context` preview of parent message (agent name + first 100 chars).
+- **DATA_VERSION system** — `.agent-bridge/.version` file stamps data format version, `migrateIfNeeded()` runs on first register per process. Idempotent, future-proof migration framework.
+
+**Dashboard (dashboard.html + dashboard.js):**
+- **Agent intent display** — `current_status` shown on agent cards (italic, with thought bubble prefix, ellipsis overflow).
+- **Channel badges on messages** — purple `#channel-name` badge on messages sent to channels, clickable to filter.
+- **Channel filter bar** — horizontal scrollable tab bar below search, filters messages by channel. "All" shows everything.
+- **Decision log display** — "Team Decisions" section in Docs tab showing decision cards with topic, text, reasoning, decided_by, timestamp. Newest first.
+- **`/api/channels` endpoint** — returns channel list with members and message counts.
+- **`/api/decisions` endpoint** — returns logged decisions array.
+- **Channel history merging** — `apiHistory()` merges `channel-*-history.jsonl` files with general history, sorted by timestamp.
+
+### Fixed
+- **`agentNames` scoping** — ReferenceError when used before declared
+- **Context overflow** — Bucket A+B could exceed contextSize; added cap-at-source fix
+- **`broadcast()` O(N) writes** — fixed after `__group__` refactor
+- **Escalation dedup** — moved from in-memory `_escalatedTasks` Set to file-based `task.escalated_at`
+
+## [4.1.0] - 2026-03-17
+
+### Added
+- Auto-recovery (crash snapshot + resume with TTL)
+- Quality gates (auto-review broadcast on task done)
+- Decision overlap hints (prevents re-debating)
+- Enhanced check_messages (rich peek with senders/addressed/preview)
+
+## [4.0.2] - 2026-03-17
+
+### Fixed
+- 3D Hub — bundle Three.js as dependency, fix node_modules resolve
+
+## [4.0.1] - 2026-03-17
+
+### Fixed
+- 3D Hub empty on fresh installs — Three.js CDN fallback
+
+## [4.0.0] - 2026-03-17
+
+### Added — 10-Agent Free Group Mode
+- Scaling, awareness, performance, safety improvements (56 tools)
+
 ## [3.10.0] - 2026-03-17
 
 ### Added — Dynamic Guide with Progressive Disclosure

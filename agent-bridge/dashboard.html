@@ -356,6 +356,22 @@
   .agent-badge.sleeping { background: var(--orange-dim); color: var(--orange); }
   .agent-badge.dead { background: var(--red-dim); color: var(--red); }
 
+  .agent-status-intent {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 3px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-style: italic;
+  }
+
+  .agent-status-intent::before {
+    content: '\1F4AD';
+    margin-right: 4px;
+    font-style: normal;
+  }
+
   .listen-badge {
     font-size: 9px;
     padding: 2px 6px;
@@ -756,6 +772,49 @@
   .msg-arrow { color: var(--text-muted); font-size: 11px; }
   .msg-to { font-size: 12px; color: var(--text-dim); }
   .msg-time { font-size: 10px; color: var(--text-muted); }
+
+  .badge-channel {
+    background: var(--purple-dim);
+    color: var(--purple);
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .badge-channel:hover { opacity: 0.8; }
+
+  .channel-filter-bar {
+    display: flex;
+    gap: 4px;
+    padding: 4px 12px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+  }
+
+  .channel-filter-bar::-webkit-scrollbar { display: none; }
+
+  .channel-tab {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+  }
+
+  .channel-tab:hover { border-color: var(--border-light); color: var(--text); }
+
+  .channel-tab.active {
+    background: var(--purple-dim);
+    color: var(--purple);
+    border-color: var(--purple);
+  }
 
   .msg-badges {
     display: flex;
@@ -2254,6 +2313,28 @@
     color: var(--text-dim);
   }
 
+  .pipeline-bar {
+    height: 4px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  .pipeline-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  .pipeline-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
   .pipeline-steps {
     display: flex;
     gap: 0;
@@ -2377,6 +2458,63 @@
   @media (max-width: 600px) {
     .docs-tool-grid { grid-template-columns: 1fr; }
     .docs-section { padding: 14px 16px; }
+  }
+
+  /* ===== DECISIONS LOG ===== */
+  .decisions-section { margin-bottom: 16px; }
+  .decisions-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .decisions-header h3 { font-size: 15px; font-weight: 700; color: var(--accent); margin: 0; }
+  .decisions-count { font-size: 11px; color: var(--text-muted); }
+
+  .decision-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    transition: border-color 0.15s;
+  }
+  .decision-card:hover { border-color: var(--border-light); }
+
+  .decision-topic {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--purple);
+    background: var(--purple-dim);
+    padding: 1px 6px;
+    border-radius: 6px;
+    display: inline-block;
+    margin-bottom: 4px;
+  }
+
+  .decision-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+    line-height: 1.4;
+  }
+
+  .decision-reasoning {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    margin-bottom: 6px;
+  }
+
+  .decision-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 10px;
   }
 
   /* ===== VIRTUAL OFFICE ===== */
@@ -3294,9 +3432,11 @@
     <div class="search-bar" id="search-bar">
       <input class="search-input" id="search-input" placeholder="Search messages...  ( / )" oninput="onSearch()">
       <button id="search-all-btn" onclick="toggleSearchAll()" title="Search across all projects" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted);white-space:nowrap;transition:all 0.2s">All Projects</button>
+      <button id="deep-search-btn" onclick="deepSearch()" title="Search full history (server-side, includes compacted messages and channels)" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted);white-space:nowrap;transition:all 0.2s">Deep Search</button>
       <span class="search-count" id="search-count"></span>
       <button class="compact-toggle" id="compact-toggle" onclick="toggleCompactMode()" title="Toggle compact view">Compact</button>
     </div>
+    <div class="channel-filter-bar" id="channel-filter-bar" style="display:none"></div>
     <div class="pinned-section" id="pinned-section">
       <div class="pinned-header" onclick="togglePinnedSection()"><span>Pinned Messages</span><span class="pinned-toggle" id="pinned-toggle">Hide</span></div>
       <div id="pinned-list"></div>
@@ -3332,7 +3472,7 @@
     </div>
     <div class="launch-area" id="launch-area"></div>
     <div class="stats-area" id="stats-area"></div>
-    <div class="docs-area" id="docs-area"></div>
+    <div class="docs-area" id="docs-area"><div id="decisions-panel" style="max-width:820px;margin:0 auto"></div><div id="docs-content"></div></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
     <div class="typing-bar" id="typing-bar"></div>
 
@@ -3765,6 +3905,7 @@ function lttFetch(url, opts) {
 }
 
 var activeThread = null;
+var activeChannel = null; // null = all channels
 var activeProject = ''; // empty = default/local
 var cachedHistory = [];
 var cachedAgents = {};
@@ -4077,6 +4218,7 @@ function renderAgents(agents) {
         '<span class="agent-activity-icon ' + state + '"></span>' +
         activityText +
       '</div>' +
+      (info.current_status ? '<div class="agent-status-intent" title="' + escapeHtml(info.current_status) + '">' + escapeHtml(info.current_status) + '</div>' : '') +
       listenHtml +
       nudgeHtml +
       removeHtml +
@@ -4273,6 +4415,14 @@ function renderMessages(messages) {
     filtered = filtered.filter(function(m) { return !!bookmarks[m.id]; });
   }
 
+  // Channel filter
+  if (activeChannel) {
+    filtered = filtered.filter(function(m) {
+      if (activeChannel === 'general') return !m.channel || m.channel === 'general';
+      return m.channel === activeChannel;
+    });
+  }
+
   // Search filter
   if (searchQuery) {
     filtered = filtered.filter(function(m) {
@@ -4333,6 +4483,7 @@ function renderMessages(messages) {
     var groupClass = isGrouped ? ' grouped' : '';
 
     var badges = '';
+    if (m.channel && m.channel !== 'general') badges += '<span class="badge-channel" onclick="filterChannel(\'' + escapeHtml(m.channel) + '\')" title="Channel: #' + escapeHtml(m.channel) + '">#' + escapeHtml(m.channel) + '</span>';
     if (m.acked) badges += '<span class="badge badge-ack">ACK</span>';
     if (m.thread_id) badges += '<span class="badge badge-thread">Thread</span>';
     if (m.edited) badges += '<span class="badge" style="background:var(--orange-dim);color:var(--orange)" title="Edited ' + (m.edited_at ? new Date(m.edited_at).toLocaleString() : '') + '">edited</span>';
@@ -4430,6 +4581,39 @@ function clearThreadFilter() {
   renderMessages(cachedHistory);
 }
 
+function filterChannel(ch) {
+  activeChannel = activeChannel === ch ? null : ch;
+  lastMessageCount = 0;
+  renderChannelBar(cachedHistory);
+  renderMessages(cachedHistory);
+}
+
+function renderChannelBar(messages) {
+  var bar = document.getElementById('channel-filter-bar');
+  if (!messages || !messages.length) { bar.style.display = 'none'; return; }
+
+  // Collect unique channels from messages
+  var channels = {};
+  for (var i = 0; i < messages.length; i++) {
+    var ch = messages[i].channel || 'general';
+    channels[ch] = (channels[ch] || 0) + 1;
+  }
+
+  var keys = Object.keys(channels);
+  // Only show channel bar if there are non-general channels
+  if (keys.length <= 1 && keys[0] === 'general') { bar.style.display = 'none'; return; }
+
+  bar.style.display = 'flex';
+  var html = '<div class="channel-tab' + (!activeChannel ? ' active' : '') + '" onclick="filterChannel(null)">All</div>';
+  keys.sort();
+  for (var j = 0; j < keys.length; j++) {
+    var name = keys[j];
+    var active = activeChannel === name ? ' active' : '';
+    html += '<div class="channel-tab' + active + '" onclick="filterChannel(\'' + escapeHtml(name) + '\')">#' + escapeHtml(name) + ' <span style="opacity:0.5;font-size:9px">' + channels[name] + '</span></div>';
+  }
+  bar.innerHTML = html;
+}
+
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebar-overlay').classList.toggle('open');
@@ -4498,6 +4682,33 @@ function onSearch() {
   }
   lastMessageCount = 0;
   renderMessages(cachedHistory);
+}
+
+function deepSearch() {
+  var query = document.getElementById('search-input').value.trim();
+  if (query.length < 2) return;
+  var pq = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
+  var countEl = document.getElementById('search-count');
+  countEl.textContent = 'Searching...';
+  lttFetch('/api/search?q=' + encodeURIComponent(query) + '&limit=100' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.error) { countEl.textContent = data.error; return; }
+    countEl.textContent = data.results_count + ' deep result' + (data.results_count !== 1 ? 's' : '');
+    // Convert search results to message format for renderMessages
+    var messages = data.results.map(function(r) {
+      return { id: r.id, from: r.from, to: r.to, content: r.preview, timestamp: r.timestamp, channel: r.channel || null };
+    });
+    lastMessageCount = 0;
+    var el = document.getElementById('messages');
+    if (!messages.length) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1f50d;</div><div class="empty-text">No results for "' + escapeHtml(query) + '"</div><div class="empty-sub">Searched full history including channels</div></div>';
+      return;
+    }
+    // Render search results directly (don't overwrite cachedHistory)
+    searchQuery = query.toLowerCase();
+    renderMessages(messages);
+  }).catch(function(e) {
+    countEl.textContent = 'Search failed';
+  });
 }
 
 // ==================== READ RECEIPTS ====================
@@ -5025,17 +5236,11 @@ function exportConversation() {
 
 function exportJSON() {
   if (!cachedHistory.length) return;
-  var data = cachedHistory.map(function(m) {
-    return { id: m.id, from: m.from, to: m.to, content: m.content, timestamp: m.timestamp, thread_id: m.thread_id || null };
-  });
-  var json = JSON.stringify(data, null, 2);
-  var blob = new Blob([json], { type: 'application/json' });
-  var url = URL.createObjectURL(blob);
+  var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
   var a = document.createElement('a');
-  a.href = url;
-  a.download = 'conversation-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.href = '/api/export-json' + pq;
+  a.download = 'conversation-' + new Date().toISOString().slice(0, 10) + '-full.json';
   a.click();
-  URL.revokeObjectURL(url);
 }
 
 // ==================== VIEW SWITCHING ====================
@@ -5061,12 +5266,33 @@ function switchView(view) {
   document.getElementById('stats-area').classList.toggle('visible', view === 'stats');
   document.getElementById('docs-area').classList.toggle('visible', view === 'docs');
   document.getElementById('search-bar').style.display = view === 'messages' ? 'flex' : 'none';
+  document.getElementById('channel-filter-bar').style.display = view === 'messages' && activeChannel !== undefined ? '' : 'none';
+  if (view === 'messages') renderChannelBar(cachedHistory);
   if (view === 'tasks') fetchTasks();
   if (view === 'workspaces') fetchWorkspaces();
   if (view === 'workflows') fetchWorkflows();
   if (view === 'docs') renderDocs();
   if (view === 'office') {
-    if (window.office3dStart) window.office3dStart();
+    if (window.office3dStart) {
+      window.office3dStart();
+    } else {
+      // Show helpful error if 3D engine failed to load (Three.js missing)
+      var officeEl = document.getElementById('office-area');
+      if (officeEl && !officeEl.querySelector('.office-error')) {
+        var errDiv = document.createElement('div');
+        errDiv.className = 'office-error';
+        errDiv.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-dim);text-align:center;padding:40px';
+        errDiv.innerHTML = '<div style="font-size:48px;margin-bottom:16px">&#x1f3d7;</div>' +
+          '<div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px">3D Hub loading...</div>' +
+          '<div style="font-size:12px;max-width:400px;line-height:1.6">If the 3D world doesn\'t appear, Three.js may not have loaded correctly. Try refreshing the page. If the problem persists, check the browser console for errors.</div>';
+        officeEl.appendChild(errDiv);
+        // Remove error message once 3D loads
+        var checkInterval = setInterval(function() {
+          if (window.office3dStart) { errDiv.remove(); clearInterval(checkInterval); window.office3dStart(); }
+        }, 2000);
+        setTimeout(function() { clearInterval(checkInterval); }, 30000);
+      }
+    }
   }
   if (view === 'launch') renderLaunchPanel();
   if (view === 'stats') fetchStats();
@@ -5162,9 +5388,20 @@ function buildTaskCard(t) {
     '<option value="blocked"' + (t.status === 'blocked' ? ' selected' : '') + '>Blocked</option>' +
   '</select>';
 
+  var badgesHtml = '';
+  if (t.escalated_at) badgesHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:6px;font-weight:600;background:var(--red-dim);color:var(--red)">ESCALATED</span>';
+  if (t.channel) badgesHtml += '<span class="badge-channel" onclick="filterChannel(\'' + escapeHtml(t.channel) + '\')">#' + escapeHtml(t.channel) + '</span>';
+
+  var notesHtml = '';
+  if (t.notes && t.notes.length) {
+    var lastNote = t.notes[t.notes.length - 1];
+    notesHtml = '<div style="font-size:10px;color:var(--text-muted);margin-top:4px;font-style:italic">' + escapeHtml(lastNote.by) + ': ' + escapeHtml((lastNote.text || '').substring(0, 80)) + '</div>';
+  }
+
   return '<div class="task-card" draggable="true" data-task-id="' + t.id + '" ondragstart="onTaskDragStart(event)" ondragend="onTaskDragEnd(event)">' +
-    '<div class="task-title">' + escapeHtml(t.title || 'Untitled') + '</div>' +
+    '<div class="task-title">' + escapeHtml(t.title || 'Untitled') + (badgesHtml ? ' ' + badgesHtml : '') + '</div>' +
     (t.description ? '<div class="task-desc">' + escapeHtml(t.description) + '</div>' : '') +
+    notesHtml +
     '<div class="task-footer">' +
       assigneeHtml +
       statusOpts +
@@ -5815,22 +6052,41 @@ function renderWorkflows(workflows) {
     var pct = Math.round((doneCount / wf.steps.length) * 100);
     var statusColor = wf.status === 'completed' ? 'var(--green)' : 'var(--accent)';
 
+    var barColor = wf.status === 'completed' ? 'var(--green)' : 'var(--accent)';
+    var metaHtml = '<div class="pipeline-meta">';
+    if (wf.created_by) metaHtml += '<span>Created by ' + escapeHtml(wf.created_by) + '</span>';
+    if (wf.created_at) metaHtml += '<span>' + timeAgo(wf.created_at) + '</span>';
+    if (wf.updated_at && wf.updated_at !== wf.created_at) metaHtml += '<span>Updated ' + timeAgo(wf.updated_at) + '</span>';
+    metaHtml += '</div>';
+
     html += '<div class="pipeline">' +
       '<div class="pipeline-header">' +
         '<div class="pipeline-name">' + escapeHtml(wf.name) + ' <span style="font-size:11px;color:' + statusColor + ';font-weight:600">' + escapeHtml(wf.status) + '</span></div>' +
         '<div class="pipeline-progress">' + doneCount + '/' + wf.steps.length + ' (' + pct + '%)</div>' +
       '</div>' +
+      metaHtml +
+      '<div class="pipeline-bar"><div class="pipeline-bar-fill" style="width:' + pct + '%;background:' + barColor + '"></div></div>' +
       '<div class="pipeline-steps">';
 
     for (var j = 0; j < wf.steps.length; j++) {
       var s = wf.steps[j];
       var stepColor = s.status === 'done' ? 'var(--green)' : s.status === 'in_progress' ? 'var(--accent)' : 'var(--text-muted)';
       if (j > 0) html += '<span class="step-arrow">&rarr;</span>';
+      var stepTimeHtml = '';
+      if (s.status === 'done' && s.started_at && s.completed_at) {
+        var dur = Math.round((new Date(s.completed_at) - new Date(s.started_at)) / 60000);
+        stepTimeHtml = '<div style="font-size:9px;color:var(--text-muted);margin-top:2px">' + (dur > 0 ? dur + 'm' : '<1m') + '</div>';
+      } else if (s.status === 'in_progress' && s.started_at) {
+        var elapsed = Math.round((Date.now() - new Date(s.started_at)) / 60000);
+        stepTimeHtml = '<div style="font-size:9px;color:var(--accent);margin-top:2px">' + elapsed + 'm elapsed</div>';
+      }
+
       html += '<div class="step-card ' + s.status + '" title="' + escapeHtml(s.notes || '') + '">' +
         '<span class="step-num">' + s.id + '</span>' +
         '<span style="font-size:10px;color:' + stepColor + ';font-weight:600;text-transform:uppercase">' + s.status.replace('_', ' ') + '</span>' +
         '<div class="step-desc">' + escapeHtml(s.description) + '</div>' +
         (s.assignee ? '<div class="step-assignee">&#x1f464; ' + escapeHtml(s.assignee) + '</div>' : '') +
+        stepTimeHtml +
       '</div>';
     }
     html += '</div>';
@@ -6111,6 +6367,7 @@ function poll() {
     renderAgentStats();
     renderThreads(cachedHistory);
     if (!replayActive) renderMessages(cachedHistory);
+    renderChannelBar(cachedHistory);
     renderPinnedMessages();
     renderBookmarksSidebar();
     fetchActivity();
@@ -6751,8 +7008,42 @@ function showConvTemplate(tid){var pq=activeProject?'?project='+encodeURICompone
 
 // ==================== v3.6: DOCS VIEW ====================
 
+function fetchDecisions() {
+  var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+  lttFetch('/api/decisions' + pq).then(function(r) { return r.json(); }).then(function(decisions) {
+    var el = document.getElementById('decisions-panel');
+    if (!decisions || !decisions.length) {
+      el.innerHTML = '';
+      return;
+    }
+    // Show most recent first
+    var sorted = decisions.slice().reverse();
+    var html = '<div class="decisions-section">' +
+      '<div class="decisions-header">' +
+        '<h3>Team Decisions</h3>' +
+        '<span class="decisions-count">' + decisions.length + ' decision' + (decisions.length !== 1 ? 's' : '') + '</span>' +
+      '</div>';
+    for (var i = 0; i < sorted.length; i++) {
+      var d = sorted[i];
+      var dateStr = d.decided_at ? new Date(d.decided_at).toLocaleString() : '';
+      html += '<div class="decision-card">' +
+        (d.topic ? '<span class="decision-topic">' + escapeHtml(d.topic) + '</span>' : '') +
+        '<div class="decision-text">' + escapeHtml(d.decision) + '</div>' +
+        (d.reasoning ? '<div class="decision-reasoning">' + escapeHtml(d.reasoning) + '</div>' : '') +
+        '<div class="decision-meta">' +
+          '<span>By ' + escapeHtml(d.decided_by || 'unknown') + '</span>' +
+          '<span>' + dateStr + '</span>' +
+        '</div>' +
+      '</div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  }).catch(function() {});
+}
+
 function renderDocs() {
-  var el = document.getElementById('docs-area');
+  fetchDecisions();
+  var el = document.getElementById('docs-content');
   if (el.dataset.rendered) return; // already rendered
   el.dataset.rendered = '1';
 

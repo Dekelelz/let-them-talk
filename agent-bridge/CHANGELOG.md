@@ -1,5 +1,37 @@
 # Changelog
 
+## [4.2.0] - 2026-03-17
+
+### Major — Team Intelligence, Dashboard Upgrade, Performance
+
+Built by a 4-agent team (Architect, Tester, Protocol, Builder) working in parallel.
+
+### Added — Team Automation
+- **Auto-escalation** — blocked tasks auto-broadcast `[ESCALATION]` to team after 5 minutes. File-based dedup via `task.escalated_at` field (cross-process safe). Clears on unblock.
+- **Stand-up meetings** — config-driven periodic team check-ins (`standup_interval_hours` in config.json). File-based dedup, 5+ agent gate. Broadcasts task summary with in-progress/blocked/done counts.
+- **Quality gates** — `update_task(done)` auto-broadcasts `[REVIEW NEEDED]` (from v4.1.0, now with auto-escalation integration).
+
+### Added — Agent Intelligence
+- **Workload metrics** — reputation tracks `task_times[]` (completion seconds), leaderboard shows `avg_task_time_sec` per agent.
+- **Smarter suggest_task** — caps at 3 in-progress tasks ("finish first"), suggests blocked tasks when no pending ones, workload-aware.
+- **KB hints in listen_group** — batch messages checked against KB keys, returns `kb_hints` with relevant entries.
+- **Thread reply context** — `listen_group` includes `_reply_context` preview of parent message for threaded replies.
+- **Decision overlap hints** — `send_message` checks content against logged decisions, returns `_decision_hint` to prevent re-debating.
+- **Auto-status board** — `update_task` auto-writes `_status` to agent workspace ("Working on: X"). `list_agents` includes `current_status` field.
+
+### Added — Dashboard
+- **Agent intent display** — dashboard shows what each agent is currently working on (from workspace `_status`)
+- **Channel badges** — messages show colored `#channel` badges
+- **Channel filter bar** — horizontal scrollable tabs to filter messages by channel
+- **Channel history merging** — `/api/history` merges channel-specific + general history files
+- **`/api/channels` endpoint** — channel list with member counts for dashboard
+- **`/api/decisions` endpoint** — decision log display in dashboard
+- **Decision log UI** — chronological cards with topic, decision, reasoning, author
+
+### Improved — Performance & Safety
+- **Escalation dedup fix** — replaced in-memory `_escalatedTasks` Set with file-based `task.escalated_at` field (cross-process safe for 10 agents)
+- **Dashboard current_status API** — `/api/agents` includes workspace `_status` for agent intent board
+
 ## [4.1.0] - 2026-03-17
 
 ### Added — Agent Reliability & Intelligence

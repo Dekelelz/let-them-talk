@@ -186,7 +186,22 @@ function apiHistory(query) {
   const histFile = branch && branch !== 'main'
     ? filePath(`branch-${branch}-history.jsonl`, projectPath)
     : filePath('history.jsonl', projectPath);
-  const history = readJsonl(histFile);
+  let history = readJsonl(histFile);
+
+  // Merge channel-specific history files
+  const dataDir = resolveDataDir(projectPath);
+  try {
+    const files = fs.readdirSync(dataDir);
+    for (const f of files) {
+      if (f.startsWith('channel-') && f.endsWith('-history.jsonl') && f !== 'channel-general-history.jsonl') {
+        const channelHistory = readJsonl(path.join(dataDir, f));
+        history = history.concat(channelHistory);
+      }
+    }
+  } catch {}
+  // Sort merged messages by timestamp
+  history.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
   const acks = readJson(filePath('acks.json', projectPath));
   const limit = parseInt(query.get('limit') || '500', 10);
   const threadId = query.get('thread_id');
@@ -198,6 +213,29 @@ function apiHistory(query) {
   messages = messages.slice(-limit);
   messages.forEach(m => { m.acked = !!acks[m.id]; });
   return messages;
+}
+
+function apiChannels(query) {
+  const projectPath = query.get('project') || null;
+  const channelsFile = filePath('channels.json', projectPath);
+  const channels = readJson(channelsFile);
+  if (!channels) return { general: { description: 'General channel', members: ['*'], message_count: 0 } };
+  const dataDir = resolveDataDir(projectPath);
+  const result = {};
+  for (const [name, ch] of Object.entries(channels)) {
+    let msgCount = 0;
+    const msgFile = name === 'general'
+      ? filePath('history.jsonl', projectPath)
+      : path.join(dataDir, 'channel-' + name + '-history.jsonl');
+    try {
+      if (fs.existsSync(msgFile)) {
+        const content = fs.readFileSync(msgFile, 'utf8').trim();
+        if (content) msgCount = content.split('\n').length;
+      }
+    } catch {}
+    result[name] = { description: ch.description || '', members: ch.members, message_count: msgCount };
+  }
+  return result;
 }
 
 function apiAgents(query) {
@@ -236,6 +274,14 @@ function apiAgents(query) {
       bio: profile.bio || '',
       appearance: profile.appearance || {},
     };
+    // Include workspace status for agent intent board
+    try {
+      const wsPath = path.join(resolveDataDir(projectPath), 'workspaces', name + '.json');
+      if (fs.existsSync(wsPath)) {
+        const ws = JSON.parse(fs.readFileSync(wsPath, 'utf8'));
+        if (ws._status) result[name].current_status = ws._status;
+      }
+    } catch {}
   }
   return result;
 }
@@ -1388,11 +1434,35 @@ const server = http.createServer(async (req, res) => {
       if (libPath.includes('..') || libPath.includes('\\')) {
         res.writeHead(400); res.end('Bad path'); return;
       }
-      // Search multiple node_modules locations (handles npx, local dev, monorepo)
+      // Search multiple node_modules locations (handles npx, local dev, monorepo, global)
       const searchPaths = [
-        path.join(__dirname, 'node_modules', libPath),       // inside agent-bridge (npx installs deps here)
+        path.join(__dirname, 'node_modules', libPath),       // inside package (nested deps)
         path.join(__dirname, '..', 'node_modules', libPath), // repo root (local dev)
+        path.join(__dirname, '..', libPath),                  // npx sibling packages (three/ is next to let-them-talk/)
       ];
+      // Also try require.resolve for robust npm path resolution (works with hoisted deps, npx cache, etc.)
+      // Note: use require.resolve(pkg) not require.resolve(pkg/package.json) — modern packages
+      // with "exports" fields block resolving package.json directly (ERR_PACKAGE_PATH_NOT_EXPORTED)
+      try {
+        const parts = libPath.split('/');
+        const pkgName = parts[0];
+        const subPath = parts.slice(1).join('/');
+        // Try resolving the package's main entry, then navigate to subPath
+        const resolved = require.resolve(pkgName);
+        const pkgDir = path.dirname(resolved);
+        // Walk up from the resolved entry to the package root (handle nested build/ dirs)
+        let pkgRoot = pkgDir;
+        while (pkgRoot !== path.dirname(pkgRoot)) {
+          if (fs.existsSync(path.join(pkgRoot, 'package.json'))) {
+            try {
+              const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
+              if (pkg.name === pkgName) break;
+            } catch {}
+          }
+          pkgRoot = path.dirname(pkgRoot);
+        }
+        searchPaths.push(path.join(pkgRoot, subPath));
+      } catch {}
       const filePath = searchPaths.find(p => fs.existsSync(p));
       if (filePath) {
         const ext = path.extname(filePath);
@@ -1467,6 +1537,16 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/agents' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiAgents(url.searchParams)));
+    }
+    else if (url.pathname === '/api/channels' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiChannels(url.searchParams)));
+    }
+    else if (url.pathname === '/api/decisions' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const decisions = readJson(filePath('decisions.json', projectPath));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(decisions || []));
     }
     else if (url.pathname === '/api/agents' && req.method === 'DELETE') {
       const body = await parseBody(req);
@@ -1547,6 +1627,80 @@ const server = http.createServer(async (req, res) => {
       const result = apiUpdateTask(body, url.searchParams);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
+    }
+    else if (url.pathname === '/api/search' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const query = (url.searchParams.get('q') || '').trim();
+      const from = url.searchParams.get('from') || null;
+      const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)), 100);
+      if (query.length < 2) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Query must be at least 2 characters' }));
+        return;
+      }
+      // Search general history + all channel histories
+      let allHistory = readJsonl(filePath('history.jsonl', projectPath));
+      const dataDir = resolveDataDir(projectPath);
+      try {
+        const files = fs.readdirSync(dataDir);
+        for (const f of files) {
+          if (f.startsWith('channel-') && f.endsWith('-history.jsonl')) {
+            allHistory = allHistory.concat(readJsonl(path.join(dataDir, f)));
+          }
+        }
+      } catch {}
+      const queryLower = query.toLowerCase();
+      const results = [];
+      for (let i = allHistory.length - 1; i >= 0 && results.length < limit; i--) {
+        const m = allHistory[i];
+        if (from && m.from !== from) continue;
+        if (m.content && m.content.toLowerCase().includes(queryLower)) {
+          results.push({
+            id: m.id, from: m.from, to: m.to,
+            preview: m.content.substring(0, 200),
+            timestamp: m.timestamp,
+            ...(m.channel && { channel: m.channel }),
+          });
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ query, results_count: results.length, results }));
+    }
+    else if (url.pathname === '/api/export-json' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const history = apiHistory(url.searchParams);
+      const agents = apiAgents(url.searchParams);
+      const decisions = readJson(filePath('decisions.json', projectPath)) || [];
+      const tasks = readJson(filePath('tasks.json', projectPath)) || [];
+      const channels = apiChannels(url.searchParams);
+      const pkg = readJson(path.join(__dirname, 'package.json')) || {};
+      const result = {
+        export_version: 1,
+        exported_at: new Date().toISOString(),
+        project: projectPath || process.cwd(),
+        version: pkg.version || 'unknown',
+        summary: {
+          message_count: history.length,
+          agent_count: Object.keys(agents).length,
+          decision_count: decisions.length,
+          task_count: tasks.length,
+          channel_count: Object.keys(channels).length,
+          time_range: history.length > 0 ? {
+            start: history[0].timestamp,
+            end: history[history.length - 1].timestamp,
+          } : null,
+        },
+        agents,
+        channels,
+        decisions,
+        tasks,
+        messages: history,
+      };
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="conversation-' + new Date().toISOString().slice(0, 10) + '-full.json"',
+      });
+      res.end(JSON.stringify(result, null, 2));
     }
     else if (url.pathname === '/api/export' && req.method === 'GET') {
       const html = apiExportHtml(url.searchParams);

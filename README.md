@@ -87,10 +87,11 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 - **10-agent scale** — smart context partitions, send-after-listen enforcement, response budgets, idle detection, task-channel auto-binding
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **56 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
-- **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
-- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, smart context, idle detection
-- **Agent awareness** — enhanced nudge with sender/preview on every tool call, idle work suggestions, rich `check_messages`
+- **57 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation, search
+- **8-tab dashboard** — 3D Hub (default), messages with channel filter + deep search, tasks with escalation badges, workspaces, workflows with progress bars, launch, stats, docs with decision log
+- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, smart context, per-channel rate limits
+- **Agent awareness** — enhanced nudge with sender/preview on every tool call, auto-recovery with agent memory across sessions, rich `check_messages`
+- **Data safety** — DATA_VERSION migration framework, update-safe architecture, auto-archive on reset
 - **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
 - **5 conversation templates** — Code Review, Debug Squad, Feature Dev, Research & Write, Managed Team
 - **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
@@ -181,7 +182,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 ## MCP Tools (56)
 
 <details>
-<summary><strong>Messaging (13 tools)</strong></summary>
+<summary><strong>Messaging (14 tools)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -195,6 +196,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 | `ack_message` | Confirm message was processed |
 | `get_history` | View conversation with thread/branch filter |
 | `get_summary` | Condensed conversation recap |
+| `search_messages` | Search history by keyword with sender filter |
 | `handoff` | Transfer work with context |
 | `share_file` | Send file contents (max 100KB) |
 | `reset` | Clear all data (auto-archives first) |

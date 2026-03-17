@@ -41,6 +41,7 @@ let sendsSinceLastListen = 0; // enforced: must listen between sends in group mo
 let sendLimit = 1; // default: 1 send per listen cycle (2 if addressed)
 let unaddressedSends = 0; // response budget: unaddressed sends counter
 let budgetResetTime = Date.now(); // resets every 60s
+let _channelSendTimes = {}; // per-channel rate limit sliding window
 
 // --- Read cache (eliminates 70%+ redundant disk I/O) ---
 const _cache = {};
@@ -179,6 +180,32 @@ function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+}
+
+// Data version tracking — enables safe migrations between releases
+const DATA_VERSION_FILE = path.join(DATA_DIR, '.version');
+const CURRENT_DATA_VERSION = 1; // bump when data format changes require migration
+let _migrationDone = false;
+
+function migrateIfNeeded() {
+  if (_migrationDone) return;
+  _migrationDone = true;
+  ensureDataDir();
+  let dataVersion = 0;
+  try {
+    if (fs.existsSync(DATA_VERSION_FILE)) {
+      dataVersion = parseInt(fs.readFileSync(DATA_VERSION_FILE, 'utf8').trim()) || 0;
+    }
+  } catch {}
+  if (dataVersion >= CURRENT_DATA_VERSION) return;
+
+  // Run migrations in order
+  // v0 → v1: stamp initial version (no data changes needed, all fields are additive)
+  // Future migrations go here:
+  // if (dataVersion < 2) { /* migrate v1 → v2 */ }
+
+  // Stamp current version
+  try { fs.writeFileSync(DATA_VERSION_FILE, String(CURRENT_DATA_VERSION)); } catch {}
 }
 
 const RESERVED_NAMES = ['__system__', '__all__', '__open__', '__close__', 'system'];
@@ -423,7 +450,14 @@ function autoCompact() {
     const newContent = active.map(m => JSON.stringify(m)).join('\n') + (active.length ? '\n' : '');
     const tmpFile = msgFile + '.tmp';
     fs.writeFileSync(tmpFile, newContent);
-    fs.renameSync(tmpFile, msgFile);
+    try {
+      fs.renameSync(tmpFile, msgFile);
+    } catch {
+      // Rename can fail on Windows if another process has the file open
+      // Clean up temp file and abort compaction — will retry next cycle
+      try { fs.unlinkSync(tmpFile); } catch {}
+      return;
+    }
     lastReadOffset = Buffer.byteLength(newContent, 'utf8');
 
     // Trim consumed ID files — keep only IDs still in active messages
@@ -589,20 +623,36 @@ function getHistoryFile(branch) {
 
 // --- Dynamic Guide (progressive disclosure) ---
 
-function buildGuide() {
+function buildGuide(level = 'standard') {
   const agents = getAgents();
   const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
   const mode = getConfig().conversation_mode || 'direct';
   const channels = getChannelsData();
   const hasChannels = Object.keys(channels).length > 1; // more than just #general
-  const hasTasks = getTasks().length > 0;
 
   const rules = [];
 
-  // Tier 0 — THE one rule (always)
+  // Tier 0 — THE one rule (always included at every level)
   rules.push('AFTER EVERY ACTION, call listen_group(). This is how you receive messages. Never skip this.');
 
-  // Tier 1 — core behavior (always)
+  // Minimal level: Tier 0 only — for experienced agents refreshing rules
+  if (level === 'minimal') {
+    rules.push('Call get_briefing() when joining a project or after being away.');
+    rules.push('Lock files before editing shared code (lock_file / unlock_file).');
+    if (mode === 'group' || mode === 'managed') {
+      rules.push('Use reply_to when responding — you get faster cooldown (500ms vs default).');
+      rules.push('Messages not addressed to you show should_respond: false. Only respond if you have something new to add.');
+    }
+    return {
+      rules,
+      tier_info: `${rules.length} rules (minimal level, ${aliveCount} agents)`,
+      first_steps: mode === 'direct'
+        ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait.'
+        : '1. Call get_briefing() for project context. 2. Call listen_group() to join. 3. Respond and listen_group() again.',
+    };
+  }
+
+  // Tier 1 — core behavior (standard + full)
   rules.push('Call get_briefing() when joining a project or after being away.');
   rules.push('Keep messages to 2-3 paragraphs max.');
   rules.push('When you finish work, report what you did and what files you changed.');
@@ -623,7 +673,7 @@ function buildGuide() {
 
   // Tier 3 — large teams (shown when 5+ agents)
   if (aliveCount >= 5) {
-    rules.push('If listen_group returns idle: true, follow the work_suggestions. Do not sit idle.');
+    rules.push('listen_group blocks until messages arrive. Do not stop listening.');
     rules.push('Tasks auto-create channels (#task-xxx). Use them for focused discussion instead of #general.');
     rules.push('Use channels to split into sub-teams. Do not discuss everything in #general.');
   }
@@ -638,7 +688,7 @@ function buildGuide() {
     } catch {}
   }
 
-  return {
+  const result = {
     rules,
     project_rules: projectRules.length > 0 ? projectRules : undefined,
     tier_info: `${rules.length} rules (${aliveCount} agents, ${mode} mode${hasChannels ? ', channels active' : ''})`,
@@ -646,7 +696,7 @@ function buildGuide() {
       ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait.'
       : '1. Call get_briefing() for project context. 2. Call listen_group() to join. 3. Respond and listen_group() again.',
     tool_categories: {
-      'MESSAGING': 'send_message, broadcast, listen_group, listen, check_messages, get_history, get_summary, handoff, share_file',
+      'MESSAGING': 'send_message, broadcast, listen_group, listen, check_messages, get_history, get_summary, search_messages, handoff, share_file',
       'COORDINATION': 'get_briefing, log_decision, get_decisions, kb_write, kb_read, kb_list, call_vote, cast_vote, vote_status',
       'TASKS': 'create_task, update_task, list_tasks, declare_dependency, check_dependencies, suggest_task',
       'QUALITY': 'update_progress, get_progress, request_review, submit_review, get_reputation',
@@ -655,12 +705,31 @@ function buildGuide() {
       ...(mode === 'managed' ? { 'MANAGED MODE': 'claim_manager, yield_floor, set_phase' } : {}),
     },
   };
+
+  // Full level: add tool descriptions for complete reference
+  if (level === 'full') {
+    result.tool_details = {
+      'listen_group': 'Blocks until messages arrive. Returns batch with priorities, context, agent statuses.',
+      'send_message': 'Send to agent (to param). reply_to for threading. channel for sub-channels.',
+      'lock_file / unlock_file': 'Exclusive file locking. Auto-releases on disconnect.',
+      'log_decision': 'Persist decisions to prevent re-debating. Visible in get_briefing().',
+      'create_task / update_task': 'Structured task management. Auto-creates channels at 5+ agents.',
+      'kb_write / kb_read': 'Shared knowledge base. Any agent can read/write.',
+      'suggest_task': 'AI-suggested next task based on your strengths and pending work.',
+      'request_review / submit_review': 'Structured code review workflow with notifications.',
+      'declare_dependency': 'Block a task until another completes. Auto-notifies on resolution.',
+      'get_compressed_history': 'Summarized history for catching up without context overflow.',
+    };
+  }
+
+  return result;
 }
 
 // --- Tool implementations ---
 
 function toolRegister(name, provider = null) {
   ensureDataDir();
+  migrateIfNeeded(); // run data migrations on first register
   sanitizeName(name);
   lockAgentsFile();
 
@@ -698,13 +767,21 @@ function toolRegister(name, provider = null) {
   }
 
   // Start heartbeat — updates last_activity every 10s so dashboard knows we're alive
+  // Deterministic jitter per agent to spread writes across the interval (prevents lock storms at 10 agents)
+  const heartbeatJitter = name.split('').reduce((h, c) => h + c.charCodeAt(0), 0) % 2000;
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   heartbeatInterval = setInterval(() => {
     try {
       const agents = getAgents();
       if (agents[registeredName]) {
-        agents[registeredName].last_activity = new Date().toISOString();
-        saveAgents(agents);
+        lockAgentsFile();
+        try {
+          const freshAgents = getAgents(); // re-read inside lock
+          if (freshAgents[registeredName]) {
+            freshAgents[registeredName].last_activity = new Date().toISOString();
+            saveAgents(freshAgents);
+          }
+        } finally { unlockAgentsFile(); }
       }
       // Managed mode: detect dead manager and dead turn holder
       if (isManagedMode()) {
@@ -743,8 +820,12 @@ function toolRegister(name, provider = null) {
       // Clean up file locks held by dead agents
       cleanStaleLocks();
       cleanStaleChannelMembers();
+      // Auto-escalation: notify team about long-blocked tasks
+      escalateBlockedTasks();
+      // Stand-up meetings: periodic team check-ins
+      triggerStandupIfDue();
     } catch {}
-  }, 10000);
+  }, 10000 + heartbeatJitter);
   heartbeatInterval.unref(); // Don't prevent process exit
 
     // Fire join event + recovery data for returning agents
@@ -795,7 +876,14 @@ function toolRegister(name, provider = null) {
           }
           if (snapshot.channels && snapshot.channels.length > 0) result.recovery.your_channels = snapshot.channels;
           if (snapshot.last_messages_sent) result.recovery.last_messages_sent = snapshot.last_messages_sent;
-          result.recovery.hint = 'You are RESUMING a previous session that crashed. Review your active tasks and locked files below, then continue where you left off. Do NOT restart work from scratch.';
+          // Agent memory fields
+          if (snapshot.decisions_made && snapshot.decisions_made.length > 0) result.recovery.decisions_made = snapshot.decisions_made;
+          if (snapshot.tasks_completed && snapshot.tasks_completed.length > 0) result.recovery.tasks_completed = snapshot.tasks_completed;
+          if (snapshot.kb_entries_written && snapshot.kb_entries_written.length > 0) result.recovery.kb_entries_written = snapshot.kb_entries_written;
+          if (snapshot.graceful) result.recovery.was_graceful = true;
+          result.recovery.hint = snapshot.graceful
+            ? 'You are RESUMING from a previous session that exited gracefully. Your memory (decisions, completed tasks, KB entries) is below. Continue where you left off.'
+            : 'You are RESUMING a previous session that crashed. Review your active tasks and locked files below, then continue where you left off. Do NOT restart work from scratch.';
           // Clean up snapshot after loading
           try { fs.unlinkSync(recoveryFile); } catch {}
         }
@@ -812,14 +900,18 @@ function toolRegister(name, provider = null) {
 }
 
 // Update last_activity timestamp for this agent
+// Uses file lock to prevent race with heartbeat writes
 function touchActivity() {
   if (!registeredName) return;
   try {
-    const agents = getAgents();
-    if (agents[registeredName]) {
-      agents[registeredName].last_activity = new Date().toISOString();
-      saveAgents(agents);
-    }
+    lockAgentsFile();
+    try {
+      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
+      if (agents[registeredName]) {
+        agents[registeredName].last_activity = new Date().toISOString();
+        saveAgents(agents);
+      }
+    } finally { unlockAgentsFile(); }
   } catch {}
 }
 
@@ -864,6 +956,11 @@ function toolListAgents() {
       role: profile.role || '',
       bio: profile.bio || '',
     };
+    // Include workspace status if set (agent intent board)
+    try {
+      const ws = getWorkspace(name);
+      if (ws._status) result[name].current_status = ws._status;
+    } catch {}
   }
   return { agents: result };
 }
@@ -894,8 +991,24 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   // Group mode cooldown — per-channel aware + split by addressing (fast/slow lane)
   let _cooldownApplied = 0;
   if (isGroupMode()) {
-    // Per-channel cooldown: use channel member count, not total agents
+    // Per-channel rate limit: check if channel has custom rate_limit config
     const agentsNow = getAgents();
+    if (channel && channel !== 'general') {
+      const channels = getChannelsData();
+      const ch = channels[channel];
+      if (ch && ch.rate_limit && ch.rate_limit.max_sends_per_minute) {
+        // Custom per-channel rate limit — check sliding window
+        if (!_channelSendTimes[channel]) _channelSendTimes[channel] = [];
+        const now = Date.now();
+        _channelSendTimes[channel] = _channelSendTimes[channel].filter(t => now - t < 60000);
+        if (_channelSendTimes[channel].length >= ch.rate_limit.max_sends_per_minute) {
+          return { error: `Rate limit for #${channel}: max ${ch.rate_limit.max_sends_per_minute} messages/minute. Wait before sending.` };
+        }
+        _channelSendTimes[channel].push(now);
+      }
+    }
+
+    // Per-channel cooldown: use channel member count, not total agents
     let memberCount;
     if (channel && channel !== 'general') {
       const channels = getChannelsData();
@@ -1005,11 +1118,19 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   // Check if recipient is alive — warn if dead
   const recipientAlive = isPidAlive(agents[to].pid, agents[to].last_activity);
 
-  // Resolve threading
+  // Resolve threading — search main messages + channel files
   let thread_id = null;
   if (reply_to) {
-    const allMsgs = readJsonl(getMessagesFile(currentBranch));
-    const referencedMsg = allMsgs.find(m => m.id === reply_to);
+    let referencedMsg = null;
+    // Search channel file first if channel specified, then main messages
+    if (channel && channel !== 'general') {
+      const chMsgs = readJsonl(getChannelMessagesFile(channel));
+      referencedMsg = chMsgs.find(m => m.id === reply_to);
+    }
+    if (!referencedMsg) {
+      const allMsgs = readJsonl(getMessagesFile(currentBranch));
+      referencedMsg = allMsgs.find(m => m.id === reply_to);
+    }
     if (referencedMsg) {
       thread_id = referencedMsg.thread_id || referencedMsg.id;
     } else {
@@ -1687,8 +1808,6 @@ async function toolListenGroup() {
   setListening(true);
 
   const consumed = getConsumedIds(registeredName);
-  const idleThreshold = 60000; // 60s of no messages → return idle suggestions
-  const listenStarted = Date.now();
 
   // Poll indefinitely (in 5-min chunks to stay within any MCP limits, same as listen())
   while (true) {
@@ -1809,6 +1928,17 @@ async function toolListenGroup() {
       const recentSpeakers = new Set(history.slice(-10).map(m => m.from));
       const silent = agentNames.filter(n => !recentSpeakers.has(n) && n !== registeredName);
 
+      // KB hints: check if batch messages mention KB topics
+      let kbHints = [];
+      try {
+        const kb = getKB();
+        const kbKeys = Object.keys(kb);
+        if (kbKeys.length > 0) {
+          const batchText = batch.map(m => m.content).join(' ').toLowerCase();
+          kbHints = kbKeys.filter(k => batchText.includes(k.toLowerCase().replace(/[-_.]/g, ' '))).slice(0, 3);
+        }
+      } catch {}
+
       const now = Date.now();
       const result = {
         messages: batch.map(m => {
@@ -1819,7 +1949,14 @@ async function toolListenGroup() {
             timestamp: m.timestamp,
             age_seconds: ageSec,
             ...(ageSec > 30 && { delayed: true }),
-            ...(m.reply_to && { reply_to: m.reply_to }),
+            ...(m.reply_to && {
+              reply_to: m.reply_to,
+              // Thread context: include parent message preview so recipients have context
+              _reply_context: (() => {
+                const parent = history.find(h => h.id === m.reply_to);
+                return parent ? `${parent.from}: "${parent.content.substring(0, 100)}..."` : null;
+              })(),
+            }),
             ...(m.thread_id && { thread_id: m.thread_id }),
             // addressed_to hint for group messages
             ...(m.addressed_to && { addressed_to: m.addressed_to }),
@@ -1884,47 +2021,15 @@ async function toolListenGroup() {
         }
       }
 
+      if (kbHints.length > 0) {
+        result.kb_hints = kbHints.map(k => `Relevant KB entry: "${k}" — call kb_read("${k}") for context`);
+      }
       result.next_action = 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
       return result;
     }
 
-    // Idle detection: after 60s of no messages, return with work suggestions
-    if (Date.now() - listenStarted > idleThreshold) {
-      setListening(false);
-      touchActivity();
-
-      // Reset send counters (listening counts as a listen cycle)
-      sendsSinceLastListen = 0;
-      sendLimit = 1;
-
-      const agents = getAgents();
-      const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
-
-      // Proactive work suggestions
-      const suggestion = toolSuggestTask();
-      const myTasks = getTasks().filter(t => t.assignee === registeredName && t.status === 'in_progress');
-      const pendingReviews = getReviews().filter(r => r.status === 'pending' && r.requested_by !== registeredName);
-      const unresolved = getDeps().filter(d => !d.resolved);
-
-      const workItems = [];
-      if (myTasks.length > 0) workItems.push(`You have ${myTasks.length} task(s) in progress: ${myTasks.map(t => `"${t.title}" (${t.id})`).join(', ')}`);
-      if (pendingReviews.length > 0) workItems.push(`${pendingReviews.length} code review(s) waiting`);
-      if (unresolved.length > 0) workItems.push(`${unresolved.length} blocked dependency(s) to resolve`);
-
-      return {
-        idle: true,
-        idle_seconds: Math.round((Date.now() - listenStarted) / 1000),
-        messages: [],
-        message_count: 0,
-        agents_online: agentNames.length,
-        work_suggestions: workItems.length > 0 ? workItems : ['No pending work. Ask the team what needs doing, or propose a new task.'],
-        suggestion: suggestion.suggestion !== 'none' ? suggestion : undefined,
-        instructions: myTasks.length > 0
-          ? `No new messages for ${Math.round((Date.now() - listenStarted) / 1000)}s. Continue working on your in-progress task(s), then call listen_group() again.`
-          : `No new messages for ${Math.round((Date.now() - listenStarted) / 1000)}s. ${suggestion.message || 'Ask the team what needs doing next.'}`,
-        next_action: 'Do some work (suggest_task, continue tasks, review code), then call listen_group() again.',
-      };
-    }
+    // Note: NO idle timeout here. listen_group blocks indefinitely until messages arrive.
+    // Work suggestions are delivered via enhanced nudge on other tool calls, not by breaking listen.
 
     await adaptiveSleep(0);
   }
@@ -2215,12 +2320,25 @@ function toolUpdateTask(taskId, status, notes = null) {
 
   task.status = status;
   task.updated_at = new Date().toISOString();
+  // Clear escalation flag when task is unblocked
+  if (status !== 'blocked' && task.escalated_at) delete task.escalated_at;
   if (notes) {
     task.notes.push({ by: registeredName, text: notes, at: new Date().toISOString() });
   }
 
   saveTasks(tasks);
   touchActivity();
+
+  // Auto-status: update agent's workspace status on task state changes
+  try {
+    if (status === 'in_progress') {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `Working on: ${task.title}`, _status_since: new Date().toISOString() }));
+    } else if (status === 'done') {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `Completed: ${task.title}`, _status_since: new Date().toISOString() }));
+    } else if (status === 'blocked') {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `BLOCKED on: ${task.title}`, _status_since: new Date().toISOString() }));
+    }
+  } catch {}
 
   // Task-channel auto-join: when claiming a task that has a channel, auto-join it
   if (status === 'in_progress' && task.channel) {
@@ -2314,6 +2432,45 @@ function toolGetSummary(lastN = 20) {
     last_message: history[history.length - 1].timestamp,
     summary: lines.join('\n'),
   };
+}
+
+function toolSearchMessages(query, from = null, limit = 20) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (typeof query !== 'string' || query.length < 2) return { error: 'Query must be at least 2 characters' };
+  if (query.length > 100) return { error: 'Query too long (max 100 chars)' };
+  limit = Math.min(Math.max(1, limit || 20), 50);
+
+  // Search general history + all channel history files
+  let allMessages = readJsonl(getHistoryFile(currentBranch));
+  try {
+    const myChannels = getAgentChannels(registeredName);
+    for (const ch of myChannels) {
+      if (ch === 'general') continue;
+      const chFile = getChannelHistoryFile(ch);
+      if (fs.existsSync(chFile)) {
+        const chMsgs = readJsonl(chFile);
+        allMessages = allMessages.concat(chMsgs);
+      }
+    }
+  } catch {}
+  // Sort by timestamp descending for newest-first results
+  allMessages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  const queryLower = query.toLowerCase();
+  const results = [];
+  for (let i = 0; i < allMessages.length && results.length < limit; i++) {
+    const m = allMessages[i];
+    if (from && m.from !== from) continue;
+    if (m.content && m.content.toLowerCase().includes(queryLower)) {
+      results.push({
+        id: m.id, from: m.from, to: m.to,
+        preview: m.content.substring(0, 200),
+        timestamp: m.timestamp,
+        ...(m.channel && { channel: m.channel }),
+      });
+    }
+  }
+  return { query, results_count: results.length, results, searched: allMessages.length };
 }
 
 function toolReset() {
@@ -2741,7 +2898,7 @@ function cleanStaleChannelMembers() {
   if (changed) saveChannelsData(channels);
 }
 
-function toolJoinChannel(channelName, description) {
+function toolJoinChannel(channelName, description, rateLimit) {
   if (!registeredName) return { error: 'You must call register() first' };
   if (typeof channelName !== 'string' || channelName.length < 1 || channelName.length > 20) return { error: 'Channel name must be 1-20 chars' };
   sanitizeName(channelName);
@@ -2758,12 +2915,19 @@ function toolJoinChannel(channelName, description) {
     };
   } else if (!isChannelMember(channelName, registeredName)) {
     channels[channelName].members.push(registeredName);
-  } else {
+  } else if (!rateLimit) {
     return { success: true, channel: channelName, message: 'Already a member of #' + channelName };
+  }
+  // Per-channel rate limit config — any member can set/update
+  if (rateLimit && typeof rateLimit === 'object' && rateLimit.max_sends_per_minute) {
+    const max = Math.min(Math.max(1, parseInt(rateLimit.max_sends_per_minute) || 10), 60);
+    channels[channelName].rate_limit = { max_sends_per_minute: max };
   }
   saveChannelsData(channels);
   touchActivity();
-  return { success: true, channel: channelName, members: channels[channelName].members, message: 'Joined #' + channelName };
+  const result = { success: true, channel: channelName, members: channels[channelName].members, message: 'Joined #' + channelName };
+  if (channels[channelName].rate_limit) result.rate_limit = channels[channelName].rate_limit;
+  return result;
 }
 
 function toolLeaveChannel(channelName) {
@@ -2802,6 +2966,71 @@ function toolListChannels() {
   return { channels: result, your_channels: getAgentChannels(registeredName) };
 }
 
+// Auto-escalation: notify team about tasks blocked for >5 minutes
+// Uses task.escalated_at field for cross-process dedup (file-based, not in-memory)
+function escalateBlockedTasks() {
+  try {
+    const tasks = getTasks();
+    const now = Date.now();
+    let changed = false;
+    for (const task of tasks) {
+      if (task.status !== 'blocked') continue;
+      if (task.escalated_at) continue; // already escalated (cross-process safe)
+      const blockedSince = new Date(task.updated_at).getTime();
+      if (now - blockedSince > 300000) { // 5 minutes
+        task.escalated_at = new Date().toISOString();
+        changed = true;
+        broadcastSystemMessage(
+          `[ESCALATION] Task "${task.title}" (assigned to ${task.assignee || 'unassigned'}) has been blocked for ${Math.round((now - blockedSince) / 60000)} minutes. Team: can anyone help unblock it?`,
+          registeredName
+        );
+      }
+    }
+    if (changed) saveTasks(tasks);
+  } catch {}
+}
+
+// Stand-up meetings: periodic team check-ins triggered by heartbeat
+let _lastStandupTime = 0;
+function triggerStandupIfDue() {
+  try {
+    const config = getConfig();
+    const intervalHours = config.standup_interval_hours || 0; // 0 = disabled
+    if (intervalHours <= 0) return;
+    const intervalMs = intervalHours * 3600000;
+    const now = Date.now();
+
+    // Only one process should trigger (the first to notice it's due)
+    const standupFile = path.join(DATA_DIR, '.last-standup');
+    let lastStandup = 0;
+    if (fs.existsSync(standupFile)) {
+      try { lastStandup = parseInt(fs.readFileSync(standupFile, 'utf8').trim()) || 0; } catch {}
+    }
+    if (now - lastStandup < intervalMs) return;
+
+    // Write timestamp first to prevent other processes from also triggering
+    fs.writeFileSync(standupFile, String(now));
+
+    const agents = getAgents();
+    const aliveAgents = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+    if (aliveAgents.length < 5) return; // stand-ups only for large teams (5+)
+
+    // Build standup context: tasks in progress, blocked, recently completed
+    const tasks = getTasks();
+    const inProgress = tasks.filter(t => t.status === 'in_progress');
+    const blocked = tasks.filter(t => t.status === 'blocked');
+    const recentDone = tasks.filter(t => t.status === 'done' && (now - new Date(t.updated_at).getTime()) < intervalMs);
+
+    let summary = `[STANDUP] Team check-in (${aliveAgents.length} agents online).`;
+    if (inProgress.length > 0) summary += ` In progress: ${inProgress.map(t => `"${t.title}" (${t.assignee || '?'})`).join(', ')}.`;
+    if (blocked.length > 0) summary += ` BLOCKED: ${blocked.map(t => `"${t.title}" (${t.assignee || '?'})`).join(', ')}.`;
+    if (recentDone.length > 0) summary += ` Recently done: ${recentDone.length} task(s).`;
+    summary += ' Each agent: report what you did, what\'s blocked, what\'s next. Then call listen_group().';
+
+    broadcastSystemMessage(summary, registeredName);
+  } catch {}
+}
+
 // Auto-recovery: snapshot dead agent state before cleanup
 // Creates recovery-{name}.json so replacement agent can resume
 function snapshotDeadAgents(agents) {
@@ -2811,15 +3040,22 @@ function snapshotDeadAgents(agents) {
     const recoveryFile = path.join(DATA_DIR, `recovery-${name}.json`);
     if (fs.existsSync(recoveryFile)) continue; // already snapshotted
     try {
-      const tasks = getTasks().filter(t => t.assignee === name && (t.status === 'in_progress' || t.status === 'pending'));
+      const allTasks = getTasks();
+      const tasks = allTasks.filter(t => t.assignee === name && (t.status === 'in_progress' || t.status === 'pending'));
       const locks = getLocks();
       const lockedFiles = Object.entries(locks).filter(([, l]) => l.agent === name).map(([f]) => f);
       const channels = getAgentChannels(name);
       const workspace = getWorkspace(name);
       const history = readJsonl(getHistoryFile(currentBranch));
       const lastSent = history.filter(m => m.from === name).slice(-5).map(m => ({ to: m.to, content: m.content.substring(0, 200), timestamp: m.timestamp }));
+      // Agent memory: decisions made, tasks completed, KB keys written
+      const decisions = readJsonFile(DECISIONS_FILE) || [];
+      const myDecisions = decisions.filter(d => d.decided_by === name).slice(-10).map(d => ({ decision: d.decision, reasoning: (d.reasoning || '').substring(0, 150), decided_at: d.decided_at }));
+      const completedTasks = allTasks.filter(t => t.assignee === name && t.status === 'done').slice(-10).map(t => ({ id: t.id, title: t.title }));
+      const kb = readJsonFile(KB_FILE) || {};
+      const kbKeysWritten = Object.keys(kb).filter(k => kb[k] && kb[k].updated_by === name);
       // Only snapshot if there's meaningful state to recover
-      if (tasks.length > 0 || lockedFiles.length > 0 || Object.keys(workspace).length > 0) {
+      if (tasks.length > 0 || lockedFiles.length > 0 || Object.keys(workspace).length > 0 || myDecisions.length > 0 || completedTasks.length > 0) {
         writeJsonFile(recoveryFile, {
           agent: name,
           died_at: new Date().toISOString(),
@@ -2828,6 +3064,9 @@ function snapshotDeadAgents(agents) {
           channels: channels.filter(c => c !== 'general'),
           workspace_keys: Object.keys(workspace),
           last_messages_sent: lastSent,
+          decisions_made: myDecisions,
+          tasks_completed: completedTasks,
+          kb_entries_written: kbKeysWritten,
         });
       }
     } catch {}
@@ -2884,11 +3123,14 @@ function fireEvent(eventName, data) {
   }
 }
 
-function toolGetGuide() {
+function toolGetGuide(level = 'standard') {
   if (!registeredName) return { error: 'You must call register() first' };
-  const guide = buildGuide();
+  if (!['minimal', 'standard', 'full'].includes(level)) return { error: 'Level must be "minimal", "standard", or "full"' };
+  const guide = buildGuide(level);
   guide.your_name = registeredName;
-  guide.workflow = '1. get_briefing → 2. list_tasks/suggest_task → 3. claim task → 4. lock_file → 5. work → 6. unlock_file → 7. update_task done → 8. listen_group';
+  if (level !== 'minimal') {
+    guide.workflow = '1. get_briefing → 2. list_tasks/suggest_task → 3. claim task → 4. lock_file → 5. work → 6. unlock_file → 7. update_task done → 8. listen_group';
+  }
   return guide;
 }
 
@@ -3360,6 +3602,8 @@ function trackReputation(agent, action) {
       bugs_found: 0, messages_sent: 0, decisions_made: 0, votes_cast: 0,
       kb_contributions: 0, files_shared: 0, first_seen: new Date().toISOString(),
       last_active: new Date().toISOString(), strengths: [],
+      task_times: [], // completion times in seconds for avg calculation
+      response_times: [], // time between being addressed and responding
     };
   }
   const r = rep[agent];
@@ -3376,6 +3620,14 @@ function trackReputation(agent, action) {
     case 'kb_write': r.kb_contributions++; break;
     case 'file_share': r.files_shared++; break;
     case 'bug_found': r.bugs_found++; break;
+  }
+
+  // Track task completion time if metadata provided
+  if (action === 'task_complete' && arguments[2]) {
+    const taskTime = arguments[2]; // seconds
+    if (!r.task_times) r.task_times = [];
+    r.task_times.push(taskTime);
+    if (r.task_times.length > 50) r.task_times = r.task_times.slice(-50); // keep last 50
   }
 
   // Auto-detect strengths based on stats
@@ -3399,14 +3651,20 @@ function toolGetReputation(agent) {
   }
 
   // All agents with ranking
-  const leaderboard = Object.entries(rep).map(([name, r]) => ({
-    agent: name,
-    score: r.tasks_completed * 10 + r.reviews_done * 5 + r.decisions_made * 3 + r.kb_contributions * 2 + r.bugs_found * 8,
-    tasks_completed: r.tasks_completed,
-    reviews_done: r.reviews_done,
-    strengths: r.strengths,
-    last_active: r.last_active,
-  })).sort((a, b) => b.score - a.score);
+  const leaderboard = Object.entries(rep).map(([name, r]) => {
+    const avgTaskTime = r.task_times && r.task_times.length > 0
+      ? Math.round(r.task_times.reduce((a, b) => a + b, 0) / r.task_times.length) : null;
+    return {
+      agent: name,
+      score: r.tasks_completed * 10 + r.reviews_done * 5 + r.decisions_made * 3 + r.kb_contributions * 2 + r.bugs_found * 8,
+      tasks_completed: r.tasks_completed,
+      reviews_done: r.reviews_done,
+      strengths: r.strengths,
+      avg_task_time_sec: avgTaskTime,
+      messages_sent: r.messages_sent,
+      last_active: r.last_active,
+    };
+  }).sort((a, b) => b.score - a.score);
 
   return { leaderboard, total_agents: leaderboard.length };
 }
@@ -3436,11 +3694,41 @@ function toolSuggestTask() {
     return { suggestion: 'none', message: 'No pending tasks, reviews, or blocked items. Ask the team what needs doing next.' };
   }
 
+  // Check current workload — don't suggest new tasks if already overloaded
+  const myActiveTasks = tasks.filter(t => t.assignee === registeredName && t.status === 'in_progress');
+  if (myActiveTasks.length >= 3) {
+    return { suggestion: 'finish_first', your_active_tasks: myActiveTasks.map(t => ({ id: t.id, title: t.title })), message: `You already have ${myActiveTasks.length} tasks in progress. Finish one before taking more.` };
+  }
+
   // Suggest based on reputation strengths
-  let suggested = pendingTasks[0] || unassignedTasks[0];
   if (myRep && myRep.strengths.includes('reviewer')) {
     const reviews = getReviews().filter(r => r.status === 'pending' && r.requested_by !== registeredName);
     if (reviews.length > 0) return { suggestion: 'review', review_id: reviews[0].id, file: reviews[0].file, message: `Based on your strengths (reviewer), review "${reviews[0].file}".` };
+  }
+
+  // Smart matching: score tasks by keyword overlap with agent's completed task history
+  const myDoneTasks = tasks.filter(t => t.assignee === registeredName && t.status === 'done');
+  const myKeywords = new Set();
+  for (const t of myDoneTasks) {
+    const words = (t.title + ' ' + (t.description || '')).toLowerCase().split(/\W+/).filter(w => w.length > 3);
+    words.forEach(w => myKeywords.add(w));
+  }
+
+  let suggested = pendingTasks[0] || unassignedTasks[0];
+  if (myKeywords.size > 0 && pendingTasks.length > 1) {
+    // Score each pending task by keyword overlap
+    let bestScore = 0;
+    for (const task of pendingTasks) {
+      const taskWords = (task.title + ' ' + (task.description || '')).toLowerCase().split(/\W+/).filter(w => w.length > 3);
+      const score = taskWords.filter(w => myKeywords.has(w)).length;
+      if (score > bestScore) { bestScore = score; suggested = task; }
+    }
+  }
+
+  // Check for blocked tasks that might be unblockable
+  const blockedTasks = tasks.filter(t => t.status === 'blocked');
+  if (blockedTasks.length > 0 && pendingTasks.length === 0) {
+    return { suggestion: 'unblock_task', task: { id: blockedTasks[0].id, title: blockedTasks[0].title }, message: `No pending tasks, but "${blockedTasks[0].title}" is blocked. Can you help unblock it?` };
   }
 
   return {
@@ -3449,13 +3737,14 @@ function toolSuggestTask() {
     title: suggested.title,
     description: suggested.description,
     message: `Suggested: "${suggested.title}". Call update_task("${suggested.id}", "in_progress") to claim it.`,
+    ...(myKeywords.size > 0 && { match_reason: 'Based on your completed task history' }),
   };
 }
 
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '4.1.0' },
+  { name: 'agent-bridge', version: '4.2.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -3706,6 +3995,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'search_messages',
+        description: 'Search conversation history by keyword. Returns matching messages with previews. Useful for finding past discussions, decisions, or code references.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search term (min 2 chars)' },
+            from: { type: 'string', description: 'Filter by sender agent name (optional)' },
+            limit: { type: 'number', description: 'Max results (default: 20, max: 50)' },
+          },
+          required: ['query'],
+        },
+      },
+      {
         name: 'reset',
         description: 'Clear all data files and start fresh. Automatically archives the conversation before clearing.',
         inputSchema: {
@@ -3880,7 +4182,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'join_channel',
         description: 'Join or create a channel. Channels let sub-teams communicate without flooding the main conversation. Auto-joined to #general on register. Use channels when team size > 4.',
-        inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Channel name (1-30 chars, e.g. "backend", "testing")' }, description: { type: 'string', description: 'Channel description (optional, max 200 chars)' } }, required: ['name'] },
+        inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Channel name (1-20 chars, e.g. "backend", "testing")' }, description: { type: 'string', description: 'Channel description (optional, max 200 chars)' }, rate_limit: { type: 'object', description: 'Optional rate limit config: { max_sends_per_minute: 10 }. Any member can update.', properties: { max_sends_per_minute: { type: 'number' } } } }, required: ['name'] },
       },
       {
         name: 'leave_channel',
@@ -3895,8 +4197,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // --- Briefing & Recovery ---
       {
         name: 'get_guide',
-        description: 'Get the collaboration guide — all tool categories, critical rules, and workflow patterns. Call this if you are unsure how to use the tools or need a refresher on best practices.',
-        inputSchema: { type: 'object', properties: {} },
+        description: 'Get the collaboration guide — all tool categories, critical rules, and workflow patterns. Call this if you are unsure how to use the tools or need a refresher on best practices. Use level="minimal" for a compact refresher (saves context tokens), "full" for complete reference with tool details.',
+        inputSchema: { type: 'object', properties: { level: { type: 'string', enum: ['minimal', 'standard', 'full'], description: 'Guide detail level: "minimal" (~5 rules, saves tokens), "standard" (default, progressive disclosure), "full" (all rules + tool details)' } } },
       },
       {
         name: 'get_briefing',
@@ -4098,6 +4400,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'get_summary':
         result = toolGetSummary(args?.last_n);
         break;
+      case 'search_messages':
+        result = toolSearchMessages(args.query, args?.from, args?.limit);
+        break;
       case 'reset':
         result = toolReset();
         break;
@@ -4138,7 +4443,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await toolListenGroup();
         break;
       case 'join_channel':
-        result = toolJoinChannel(args.name, args?.description);
+        result = toolJoinChannel(args.name, args?.description, args?.rate_limit);
         break;
       case 'leave_channel':
         result = toolLeaveChannel(args.name);
@@ -4147,7 +4452,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolListChannels();
         break;
       case 'get_guide':
-        result = toolGetGuide();
+        result = toolGetGuide(args?.level);
         break;
       case 'get_briefing':
         result = toolGetBriefing();
@@ -4296,7 +4601,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
         if (repMap[name]) trackReputation(registeredName, repMap[name]);
         // Track task completion specifically
-        if (name === 'update_task' && args?.status === 'done') trackReputation(registeredName, 'task_complete');
+        if (name === 'update_task' && args?.status === 'done') {
+          // Calculate task completion time
+          const tasks = getTasks();
+          const doneTask = tasks.find(t => t.id === args.task_id);
+          const taskTimeSec = doneTask ? Math.round((Date.now() - new Date(doneTask.created_at).getTime()) / 1000) : 0;
+          trackReputation(registeredName, 'task_complete', taskTimeSec);
+        }
       } catch {}
     }
 
@@ -4322,6 +4633,37 @@ process.on('exit', () => {
   unlockConfigFile();
   if (registeredName) {
     try {
+      // Save final status to workspace before exit
+      const ws = getWorkspace(registeredName);
+      ws._status = 'Offline (graceful exit)';
+      ws._status_since = new Date().toISOString();
+      saveWorkspace(registeredName, ws);
+    } catch {}
+    try {
+      // Agent memory: save recovery snapshot with decisions/tasks/KB on graceful exit
+      const recoveryFile = path.join(DATA_DIR, `recovery-${registeredName}.json`);
+      const allTasks = getTasks();
+      const activeTasks = allTasks.filter(t => t.assignee === registeredName && (t.status === 'in_progress' || t.status === 'pending'));
+      const completedTasks = allTasks.filter(t => t.assignee === registeredName && t.status === 'done').slice(-10).map(t => ({ id: t.id, title: t.title }));
+      const decisions = readJsonFile(DECISIONS_FILE) || [];
+      const myDecisions = decisions.filter(d => d.decided_by === registeredName).slice(-10).map(d => ({ decision: d.decision, reasoning: (d.reasoning || '').substring(0, 150), decided_at: d.decided_at }));
+      const kb = readJsonFile(KB_FILE) || {};
+      const kbKeysWritten = Object.keys(kb).filter(k => kb[k] && kb[k].updated_by === registeredName);
+      const history = readJsonl(getHistoryFile(currentBranch));
+      const lastSent = history.filter(m => m.from === registeredName).slice(-5).map(m => ({ to: m.to, content: m.content.substring(0, 200), timestamp: m.timestamp }));
+      fs.writeFileSync(recoveryFile, JSON.stringify({
+        agent: registeredName,
+        died_at: new Date().toISOString(),
+        graceful: true,
+        active_tasks: activeTasks.map(t => ({ id: t.id, title: t.title, status: t.status, description: (t.description || '').substring(0, 300) })),
+        channels: getAgentChannels(registeredName).filter(c => c !== 'general'),
+        last_messages_sent: lastSent,
+        decisions_made: myDecisions,
+        tasks_completed: completedTasks,
+        kb_entries_written: kbKeysWritten,
+      }));
+    } catch {}
+    try {
       const agents = getAgents();
       if (agents[registeredName]) {
         delete agents[registeredName];
@@ -4337,7 +4679,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.10.1 running (56 tools)');
+  console.error('Agent Bridge MCP server v4.1.0 running (57 tools)');
 }
 
 main().catch(console.error);
