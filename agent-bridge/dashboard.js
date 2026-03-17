@@ -1388,15 +1388,20 @@ const server = http.createServer(async (req, res) => {
       if (libPath.includes('..') || libPath.includes('\\')) {
         res.writeHead(400); res.end('Bad path'); return;
       }
-      const filePath = path.join(__dirname, '..', 'node_modules', libPath);
-      if (fs.existsSync(filePath)) {
+      // Search multiple node_modules locations (handles npx, local dev, monorepo)
+      const searchPaths = [
+        path.join(__dirname, 'node_modules', libPath),       // inside agent-bridge (npx installs deps here)
+        path.join(__dirname, '..', 'node_modules', libPath), // repo root (local dev)
+      ];
+      const filePath = searchPaths.find(p => fs.existsSync(p));
+      if (filePath) {
         const ext = path.extname(filePath);
         const mimeTypes = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.json': 'application/json', '.wasm': 'application/wasm' };
         const contentType = mimeTypes[ext] || 'application/octet-stream';
         res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=604800' });
         res.end(fs.readFileSync(filePath));
       } else {
-        res.writeHead(404); res.end('Not found');
+        res.writeHead(404); res.end('Not found: ' + libPath);
       }
       return;
     }

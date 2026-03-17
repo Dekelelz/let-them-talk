@@ -3368,7 +3368,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '4.0.1' },
+  { name: 'agent-bridge', version: '4.0.2' },
   { capabilities: { tools: {} } }
 );
 
