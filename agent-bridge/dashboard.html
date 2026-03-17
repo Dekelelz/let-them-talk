@@ -494,6 +494,90 @@
     border-color: var(--red);
   }
 
+  .respawn-btn {
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    margin-top: 4px;
+    width: 100%;
+    text-align: center;
+  }
+  .respawn-btn:hover {
+    background: rgba(63, 185, 80, 0.25);
+    border-color: var(--green);
+  }
+
+  /* Respawn modal */
+  .respawn-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .respawn-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 700px;
+    width: 90%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .respawn-modal h3 {
+    margin: 0 0 12px 0;
+    color: var(--green);
+    font-size: 16px;
+  }
+  .respawn-modal-prompt {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    overflow-y: auto;
+    flex: 1;
+    max-height: 50vh;
+    user-select: all;
+  }
+  .respawn-modal-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    justify-content: flex-end;
+  }
+  .respawn-modal-actions button {
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .respawn-copy-btn {
+    background: var(--green-dim);
+    color: var(--green);
+    border-color: rgba(63, 185, 80, 0.3) !important;
+  }
+  .respawn-copy-btn:hover { background: rgba(63, 185, 80, 0.25); }
+  .respawn-close-btn {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+  }
+  .respawn-close-btn:hover { background: var(--border); }
+
   /* ===== PROJECT SWITCHER ===== */
   .project-switcher {
     padding: 12px;
@@ -3460,6 +3544,7 @@
         <span style="color:var(--text-dim);font-size:9px;min-width:16px" id="office-speed-val">4</span>
         <span style="color:var(--text-muted);font-size:9px;opacity:0.6;margin-left:8px" title="WASD=Move, Right-Drag=Look, Scroll=Dolly, Shift=Fast, Q/E=Down/Up">WASD + Mouse</span>
         <span style="color:var(--text-dim);font-size:10px" id="office-fps"></span>
+        <button id="fullscreen-btn" onclick="toggleFullscreen()" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-dim);padding:3px 10px;border-radius:6px;font-size:10px;cursor:pointer;font-family:inherit;margin-left:8px;transition:all 0.2s" title="Toggle fullscreen (End key to exit)">&#x26F6; Fullscreen</button>
       </div>
       <div class="office-canvas-wrap">
         <div id="office-3d-container"></div>
@@ -4177,8 +4262,10 @@ function renderAgents(agents) {
       nudgeHtml = '<button class="nudge-btn" onclick="sendNudge(\'' + escapeHtml(name) + '\')">Send Nudge</button>';
     }
     var removeHtml = '';
+    var respawnHtml = '';
     if (state === 'dead') {
       removeHtml = '<button class="remove-agent-btn" onclick="event.stopPropagation();removeAgent(\'' + escapeHtml(name) + '\')" title="Remove this agent">Remove</button>';
+      respawnHtml = '<button class="respawn-btn" onclick="event.stopPropagation();respawnAgent(\'' + escapeHtml(name) + '\')" title="Generate resume prompt for this agent">&#x1F504; Respawn</button>';
     }
 
     // Listening status — simplified: skip for dead (already shown via badge)
@@ -4221,6 +4308,7 @@ function renderAgents(agents) {
       (info.current_status ? '<div class="agent-status-intent" title="' + escapeHtml(info.current_status) + '">' + escapeHtml(info.current_status) + '</div>' : '') +
       listenHtml +
       nudgeHtml +
+      respawnHtml +
       removeHtml +
     '</div>';
   }
@@ -4263,6 +4351,83 @@ function removeAgent(agentName) {
     if (res.success) poll();
     else console.error('Remove failed:', res.error);
   }).catch(function(e) { console.error('Remove agent failed:', e); });
+}
+
+// ==================== RESPAWN AGENT ====================
+
+function respawnAgent(agentName) {
+  var pq = projectParam();
+  var sep = pq ? '&' : '?';
+  lttFetch('/api/agents/' + encodeURIComponent(agentName) + '/respawn-prompt' + pq, {
+    method: 'GET'
+  }).then(function(r) {
+    if (!r.ok) throw new Error('API returned ' + r.status);
+    return r.json();
+  }).then(function(res) {
+    if (res.error) {
+      alert('Respawn failed: ' + res.error);
+      return;
+    }
+    showRespawnModal(agentName, res.prompt || res.resume_prompt || 'No prompt available');
+  }).catch(function(e) {
+    // Fallback: generate a basic prompt client-side if API not ready
+    var fallbackPrompt = generateFallbackRespawnPrompt(agentName);
+    showRespawnModal(agentName, fallbackPrompt);
+  });
+}
+
+function generateFallbackRespawnPrompt(agentName) {
+  return 'Register as \'' + agentName + '\', then call get_briefing() and listen_group() to rejoin the conversation. ' +
+    'You are resuming a previous session — call get_compressed_history() to catch up on what you missed. ' +
+    'Check your workspace with workspace_read() for any saved state. ' +
+    'Then call listen_group() and respond to any pending messages.';
+}
+
+function showRespawnModal(agentName, prompt) {
+  // Remove existing modal if any
+  dismissRespawnModal();
+
+  var overlay = document.createElement('div');
+  overlay.className = 'respawn-modal-overlay';
+  overlay.id = 'respawn-modal';
+  overlay.onclick = function(e) { if (e.target === overlay) dismissRespawnModal(); };
+
+  overlay.innerHTML =
+    '<div class="respawn-modal">' +
+      '<h3>&#x1F504; Respawn ' + escapeHtml(agentName) + '</h3>' +
+      '<p style="color:var(--text-secondary);font-size:12px;margin:0 0 8px">Copy this prompt and paste it into a fresh CLI terminal to respawn the agent:</p>' +
+      '<div class="respawn-modal-prompt" id="respawn-prompt-text">' + escapeHtml(prompt) + '</div>' +
+      '<div class="respawn-modal-actions">' +
+        '<button class="respawn-close-btn" onclick="dismissRespawnModal()">Close</button>' +
+        '<button class="respawn-copy-btn" onclick="copyRespawnPrompt()">&#x1F4CB; Copy to Clipboard</button>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+}
+
+function dismissRespawnModal() {
+  var modal = document.getElementById('respawn-modal');
+  if (modal) modal.remove();
+}
+
+function copyRespawnPrompt() {
+  var el = document.getElementById('respawn-prompt-text');
+  if (!el) return;
+  var text = el.textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = document.querySelector('.respawn-copy-btn');
+    if (btn) {
+      btn.textContent = '\u2705 Copied!';
+      setTimeout(function() { btn.innerHTML = '&#x1F4CB; Copy to Clipboard'; }, 2000);
+    }
+  }).catch(function() {
+    // Fallback: select all text
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  });
 }
 
 // ==================== INJECT TARGETS ====================
@@ -7439,6 +7604,34 @@ function officeCamSpeed(val) {
 }
 
 // Player avatar mode
+// --- Fullscreen toggle ---
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else {
+    // If on 3D Hub, fullscreen only the 3D container (game mode)
+    var officeContainer = document.getElementById('office-3d-container');
+    if (window.activeView === 'office' && officeContainer) {
+      officeContainer.requestFullscreen().catch(function() {});
+    } else {
+      document.documentElement.requestFullscreen().catch(function() {});
+    }
+  }
+}
+// End key exits fullscreen
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'End' && document.fullscreenElement) {
+    document.exitFullscreen();
+  }
+});
+// Update button text on fullscreen change
+document.addEventListener('fullscreenchange', function() {
+  var btn = document.getElementById('fullscreen-btn');
+  if (btn) {
+    btn.innerHTML = document.fullscreenElement ? '&#x2716; Exit Fullscreen' : '&#x26F6; Fullscreen';
+  }
+});
+
 function togglePlayerMode() {
   var btn = document.getElementById('player-mode-btn');
   if (window.office3dIsPlayerMode && window.office3dIsPlayerMode()) {

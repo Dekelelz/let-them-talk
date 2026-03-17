@@ -254,5 +254,70 @@ export function buildFaceSprite(eyeStyle, mouthStyle, sleeping) {
   var faceMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.38), faceMat);
   faceMesh.userData.canvas = canvas;
   faceMesh.userData.texture = tex;
+  faceMesh.userData.eyeStyle = eyeStyle;
+  faceMesh.userData.mouthStyle = mouthStyle;
   return faceMesh;
+}
+
+// Emotion presets: map emotion name to eye + mouth style
+var EMOTION_MAP = {
+  neutral:    { eyes: 'dots',      mouth: 'neutral' },
+  happy:      { eyes: 'happy',     mouth: 'grin' },
+  excited:    { eyes: 'surprised', mouth: 'grin' },
+  thinking:   { eyes: 'confident', mouth: 'neutral' },
+  frustrated: { eyes: 'angry',     mouth: 'frown' },
+  surprised:  { eyes: 'surprised', mouth: 'open' },
+  tired:      { eyes: 'tired',     mouth: 'neutral' },
+  sleepy:     { eyes: 'sleepy',    mouth: 'neutral' },
+  playful:    { eyes: 'wink',      mouth: 'tongue' },
+  confident:  { eyes: 'confident', mouth: 'smirk' },
+  focused:    { eyes: 'confident', mouth: 'neutral' },
+};
+
+// Set a temporary emotion on an agent — rebuilds face sprite, reverts after duration
+export function setEmotion(agent, emotion, duration) {
+  var preset = EMOTION_MAP[emotion];
+  if (!preset) return;
+  duration = duration || 4;
+
+  var face = agent.parts.faceSprite;
+  if (!face) return;
+
+  // Don't rebuild if already showing this emotion
+  if (face.userData._currentEmotion === emotion) return;
+
+  // Save original styles for revert
+  if (!face.userData._baseEyes) {
+    face.userData._baseEyes = face.userData.eyeStyle;
+    face.userData._baseMouth = face.userData.mouthStyle;
+  }
+
+  // Rebuild face with emotion preset
+  var newFace = buildFaceSprite(preset.eyes, preset.mouth, false);
+  newFace.position.copy(face.position);
+  newFace.userData._baseEyes = face.userData._baseEyes;
+  newFace.userData._baseMouth = face.userData._baseMouth;
+  newFace.userData._currentEmotion = emotion;
+
+  agent.parts.head.remove(face);
+  if (face.material.map) face.material.map.dispose();
+  face.material.dispose();
+  agent.parts.head.add(newFace);
+  agent.parts.faceSprite = newFace;
+
+  // Schedule revert to original expression
+  clearTimeout(agent._emotionRevertTimer);
+  agent._emotionRevertTimer = setTimeout(function() {
+    var cur = agent.parts.faceSprite;
+    if (!cur || cur.userData._currentEmotion !== emotion) return;
+    var revert = buildFaceSprite(cur.userData._baseEyes, cur.userData._baseMouth, agent.state === 'sleeping');
+    revert.position.copy(cur.position);
+    revert.userData.eyeStyle = cur.userData._baseEyes;
+    revert.userData.mouthStyle = cur.userData._baseMouth;
+    agent.parts.head.remove(cur);
+    if (cur.material.map) cur.material.map.dispose();
+    cur.material.dispose();
+    agent.parts.head.add(revert);
+    agent.parts.faceSprite = revert;
+  }, duration * 1000);
 }

@@ -1,5 +1,47 @@
 # Changelog
 
+## [4.3.0] - 2026-03-17
+
+### Major — 3D Hub Game World, World Builder, Jukebox
+
+Built by a 5-agent team (Architect, Builder, Tester, Optimizer, Protocol) working in parallel.
+
+### Added — 3D Hub Game Features
+- **World Builder** — Press B in player mode to open builder panel. 16 placeable assets across 5 categories (structural, furniture, decor, tech, lighting). Grid snap, ghost preview, R to rotate, right-click delete, Ctrl+Z undo. Draggable panel, works in fullscreen.
+- **Jukebox** — Wurlitzer 1015-style jukebox in bar area with neon glow animation. Press E to interact. 4 playlist selector with YouTube popup player. Music persists while exploring.
+- **Minimap** — 140px radar overlay showing agent positions (color-coded by status) and player location. Only visible in fullscreen mode.
+- **Controls HUD** — Press H to toggle keybind reference panel. Auto-shows for 4 seconds on world entry.
+- **Fullscreen** — Dashboard fullscreen button now fullscreens only the 3D Hub (game mode), not the entire page.
+
+### Added — Character Intelligence
+- **Emotion system** — 11 emotion presets (happy, frustrated, thinking, excited, surprised, etc.) with auto-triggers from message content. Temporary face expression changes with auto-revert.
+- **Social visits** — Idle agents randomly walk to other agents' desks to chat (max 2 concurrent walks).
+- **Glance reactions** — Sitting agents turn heads toward speakers when messages are sent.
+- **Head nods** — Periodic nod animation when being visited by another agent.
+- **Auto coffee break** — Sleeping agents walk to rest area, return to desk when active again.
+- **Non-blocking input overlay** — Replaced browser prompt() dialogs with styled HTML overlay for click commands.
+
+### Added — Dashboard
+- **Respawn button** — One-click respawn for dead agents. Generates resume prompt from recovery snapshot + profile + tasks + recent history.
+- **Respawn API** — `GET /api/agents/:name/respawn-prompt` endpoint with full context generation.
+- **World Builder API** — `GET /api/world-layout` + `POST /api/world-save` for persistent world placements.
+- **3D-only fullscreen** — Fullscreen targets 3D container when on 3D Hub tab.
+
+### Fixed
+- **Manager chair spawn** — Stand-up now places player in front of desk (toward door), preventing wall collision.
+- **CSRF on 3D Hub** — Added X-LTT-Request header to all office module POST requests (builder save, command menu actions).
+- **Respawn endpoint validation** — Agent name validated (alphanumeric, max 20 chars) to prevent path traversal.
+- **Builder lazy-load** — Dynamic import() with silent failure prevents builder issues from breaking 3D Hub.
+- **Jukebox popup orphan** — Module-scoped reference survives overlay dismiss/reopen cycles.
+- **Builder drag listener leak** — Stored refs removed in hidePanel().
+- **Jukebox prompt cleanup** — dismissJukebox() called in office3dStop().
+
+### Security
+- npm audit: 0 vulnerabilities
+- CSRF protection verified on all mutating endpoints
+- Input validation on all user-facing API parameters
+- No hardcoded secrets or sensitive data in shipped package
+
 ## [4.2.0] - 2026-03-17
 
 ### Major — Team Intelligence, Dashboard Upgrade, Performance

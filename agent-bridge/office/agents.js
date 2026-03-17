@@ -1,9 +1,9 @@
 import { S } from './state.js';
-import { DESK_POSITIONS, SPAWN_POS } from './constants.js';
+import { DESK_POSITIONS, SPAWN_POS, REST_AREA_POS, REST_AREA_ENTRANCE } from './constants.js';
 import { createCharacter } from './character.js';
 import { resolveAppearance } from './appearance.js';
 import { buildHair } from './hair.js';
-import { buildFaceSprite } from './face.js';
+import { buildFaceSprite, setEmotion } from './face.js';
 import { buildOutfit, removeOutfit } from './outfits.js';
 import { getNavigationPath } from './navigation.js';
 
@@ -291,6 +291,36 @@ export function syncAgents() {
         }
       }
 
+      // --- Autonomous behaviors: sleeping → rest area, waking → back to desk ---
+      if (newState === 'sleeping' && oldState === 'active' && existing.location === 'desk' && existing.registered && !existing.dying) {
+        // Agent fell asleep — walk to rest area after a short delay
+        existing.location = 'walking';
+        (function(a) {
+          setTimeout(function() {
+            showBubble(a, 'Need a break...');
+            a.isSitting = false;
+            navigateTo(a, REST_AREA_ENTRANCE.x, REST_AREA_ENTRANCE.z, function() {
+              navigateTo(a, REST_AREA_POS.x, REST_AREA_POS.z, function() {
+                a.location = 'rest';
+                a.state = 'sleeping';
+                showBubble(a, 'zzz...');
+              });
+            });
+          }, 1000 + Math.random() * 2000);
+        })(existing);
+      }
+      if (newState === 'active' && (oldState === 'sleeping' || existing.location === 'rest') && existing.location !== 'desk' && existing.registered && !existing.dying) {
+        // Agent woke up — walk back to desk
+        existing.location = 'walking';
+        existing.state = 'active';
+        (function(a) {
+          showBubble(a, 'Back to work!');
+          navigateTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
+            a.location = 'desk';
+          });
+        })(existing);
+      }
+
       existing.displayName = info.display_name || name;
       var wasListening = existing.isListening;
       existing.isListening = !!(info.is_listening);
@@ -313,9 +343,19 @@ export function syncAgents() {
         if (prevTask && prevTask.status !== 'done' && task.status === 'done') {
           existing.taskCelebration = 2;
           existing.celebrateTimer = 1.5;
+          setEmotion(existing, 'happy', 6);
+        }
+        // Blocked task → frustrated face
+        if (task.status === 'blocked' && (!prevTask || prevTask.status !== 'blocked')) {
+          setEmotion(existing, 'frustrated', 8);
         }
       } else {
         existing.currentTask = null;
+      }
+
+      // Listening agents look focused
+      if (existing.isListening && !wasListening) {
+        setEmotion(existing, 'focused', 10);
       }
 
       var newApp = info.appearance || {};
@@ -326,6 +366,66 @@ export function syncAgents() {
 
       updateLabel(existing);
       if (existing.registered) updateDeskScreen(existing.deskIdx, existing.state, existing.isListening);
+    }
+  }
+
+  // --- Random social behavior: idle agents occasionally stretch or look around ---
+  // Limit concurrent social walks to prevent traffic jams (max 2 walking at once)
+  var walkingCount = 0;
+  for (var wn in S.agents3d) { if (S.agents3d[wn].location === 'walking') walkingCount++; }
+
+  for (var sn in S.agents3d) {
+    var sa = S.agents3d[sn];
+    if (!sa.registered || sa.state !== 'active' || sa.location !== 'desk' || sa.target) continue;
+    if (!sa._socialTimer) sa._socialTimer = 30 + Math.random() * 60;
+    sa._socialTimer -= 2; // syncAgents runs every ~2s
+    if (sa._socialTimer <= 0) {
+      sa._socialTimer = 40 + Math.random() * 80; // next social event in 40-120s
+      // Pick a random behavior: stretch, look around, or visit another agent
+      var roll = Math.random();
+      if (roll < 0.4) {
+        // Stretch at desk
+        sa.stretchTimer = 2;
+      } else if (roll < 0.7) {
+        // Look around curiously
+        sa.thinkTimer = 1.5;
+      } else if (walkingCount < 2) {
+        // Walk to a random nearby agent's desk to "chat" then return (max 2 concurrent)
+        var others = [];
+        for (var on in S.agents3d) {
+          if (on !== sn && S.agents3d[on].registered && S.agents3d[on].state === 'active' && S.agents3d[on].location === 'desk') {
+            others.push(S.agents3d[on]);
+          }
+        }
+        if (others.length > 0) {
+          var buddy = others[Math.floor(Math.random() * others.length)];
+          (function(a, b) {
+            a.location = 'walking';
+            a.isSitting = false;
+            showBubble(a, 'Hey ' + b.displayName + '!');
+            setEmotion(a, 'playful', 6);
+            var stopX = b.deskPos.x + 1.5;
+            var stopZ = b.deskPos.z + 0.7;
+            navigateTo(a, stopX, stopZ, function() {
+              // Face buddy
+              var dx = b.pos.x - a.pos.x;
+              var dz = b.pos.z - a.pos.z;
+              a.facingTarget = Math.atan2(dx, dz);
+              a.waveTimer = 0.8;
+              // Buddy turns toward visitor
+              b.facingTarget = Math.atan2(-dx, -dz);
+              setTimeout(function() {
+                showBubble(a, 'Back to it!');
+                navigateTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
+                  a.location = 'desk';
+                });
+                // Buddy turns back to desk
+                setTimeout(function() { b.facingTarget = Math.PI; }, 1500);
+              }, 3000 + Math.random() * 2000);
+            });
+          })(sa, buddy);
+        }
+      }
     }
   }
 
@@ -345,8 +445,11 @@ export function processMessages() {
   var history = window.cachedHistory;
   if (!history || history.length === 0) return;
 
-  var newMsgs = history.slice(S.lastProcessedMsg);
-  S.lastProcessedMsg = history.length;
+  // Use window-level counter so it persists across 3D stop/start cycles (tab switches)
+  // This prevents message replay when user switches from Messages tab back to 3D Hub
+  if (typeof window._lastProcessedMsg === 'undefined') window._lastProcessedMsg = 0;
+  var newMsgs = history.slice(window._lastProcessedMsg);
+  window._lastProcessedMsg = history.length;
 
   for (var i = 0; i < newMsgs.length; i++) {
     var msg = newMsgs[i];
@@ -357,12 +460,53 @@ export function processMessages() {
     from.lastMessageTime = Date.now();
     flashDeskScreen(from.deskIdx);
 
+    // Instant preview bubble — show short text immediately before walk animation
+    // Gives users instant visual feedback that the agent is about to speak
+    var preview = text.length > 30 ? text.substring(0, 27) + '...' : text;
+    showBubble(from, preview);
+
+    // Auto-celebrate on task completion events
+    if (text.indexOf('[EVENT] Task') >= 0 && text.indexOf('completed') >= 0) {
+      from.celebrateTimer = 1.5;
+      from.taskCelebration = 2;
+    }
+
+    // Emotion detection from message content
+    var textLower = text.toLowerCase();
+    if (textLower.indexOf('done') >= 0 || textLower.indexOf('pass') >= 0 || textLower.indexOf('success') >= 0 || textLower.indexOf('great') >= 0 || textLower.indexOf('shipped') >= 0) {
+      setEmotion(from, 'happy', 5);
+    } else if (textLower.indexOf('error') >= 0 || textLower.indexOf('fail') >= 0 || textLower.indexOf('bug') >= 0 || textLower.indexOf('broken') >= 0) {
+      setEmotion(from, 'frustrated', 5);
+    } else if (textLower.indexOf('?') >= 0 && (textLower.indexOf('how') >= 0 || textLower.indexOf('why') >= 0 || textLower.indexOf('what if') >= 0)) {
+      setEmotion(from, 'thinking', 4);
+    } else if (textLower.indexOf('!') >= 0 && (textLower.indexOf('wow') >= 0 || textLower.indexOf('amazing') >= 0 || textLower.indexOf('awesome') >= 0)) {
+      setEmotion(from, 'excited', 4);
+    }
+
+    // Target agent gets surprised when directly addressed
+    if (msg.to && msg.to !== 'all' && S.agents3d[msg.to]) {
+      var targetAgent = S.agents3d[msg.to];
+      if (targetAgent.registered && targetAgent.isSitting) {
+        setEmotion(targetAgent, 'surprised', 2);
+      }
+    }
+
     // Contextual gesture based on message type
     var isBC = !msg.to || msg.to === 'all';
     if (isBC) {
       from.waveTimer = 0.8;
     } else {
       from.pointTimer = 0.6;
+    }
+
+    // Glance reaction — nearby sitting agents glance toward the speaker
+    for (var gn in S.agents3d) {
+      var ga = S.agents3d[gn];
+      if (gn === msg.from || gn === msg.to || !ga.registered || ga.state !== 'active' || !ga.isSitting) continue;
+      var gdx = from.pos.x - ga.pos.x;
+      ga._glanceTarget = from.name;
+      ga._glanceDirection = gdx > 0 ? 1 : -1; // left or right glance
+      ga._glanceTimer = 0;
     }
 
     if (msg.to && msg.to !== 'all' && S.agents3d[msg.to]) {

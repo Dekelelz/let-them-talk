@@ -86,6 +86,7 @@ export function buildCampusEnvironment() {
 
   // ========== BAR & CAFÉ (back left) ==========
   buildBar(-14, -12, walnutMat, chromeMat, neonBlueMat, neonPurpleMat);
+  buildJukebox(-10, -13.5); // Right side of bar area, against the back wall
 
   // ========== RECREATION CENTER (back center) ==========
   buildRecCenter(0, -12, walnutMat, chromeMat, carpetMat);
@@ -595,13 +596,13 @@ function buildGamingDesk(x, z, index) {
   screen.position.set(0, 1.15, -0.234);
   group.add(screen);
 
-  // Monitor stand (V-shaped, chrome)
+  // Monitor stand (V-shaped, chrome — positioned BEHIND the screen to avoid clipping)
   var standMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.15, metalness: 0.7 });
   var standArm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.25, 0.04), standMat);
-  standArm.position.set(0, 0.92, -0.25);
+  standArm.position.set(0, 0.92, -0.27);
   group.add(standArm);
   var standBase = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.02, 0.15), standMat);
-  standBase.position.set(0, 0.78, -0.25);
+  standBase.position.set(0, 0.78, -0.27);
   group.add(standBase);
 
   // PC tower under desk (with RGB glow)
@@ -898,26 +899,25 @@ function buildManagerOffice(x, z, glassMat, frameMat, walnutMat, leatherMat, chr
   cablePanel.position.set(0, 0.5, 0.9);
   group.add(cablePanel);
 
-  // --- Dual ultrawide monitors ---
+  // --- Single 47" ultrawide monitor (replaces dual setup per owner request) ---
   var monMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.2 });
-  [-0.45, 0.45].forEach(function(mx) {
-    var mon = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.35, 0.025), monMat);
-    mon.position.set(mx, 1.15, 1.05); mon.castShadow = true;
-    group.add(mon);
-    // Screen
-    var scrMat = new THREE.MeshStandardMaterial({ color: 0x1a2a4a, emissive: 0x58a6ff, emissiveIntensity: 0.3, roughness: 0.1 });
-    var scr = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.3), scrMat);
-    scr.position.set(mx, 1.15, 1.037);
-    group.add(scr);
-    // Stand
-    var stand = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6), chromeMat);
-    stand.position.set(mx, 0.95, 1.05);
-    group.add(stand);
-  });
-  // Monitor arm (chrome, connecting both)
-  var monArm = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.03, 0.03), chromeMat);
-  monArm.position.set(0, 1.0, 1.05);
-  group.add(monArm);
+  // 47" = ~1.2m wide x 0.67m tall in world units (16:9 aspect ratio, scaled to desk)
+  var bigMon = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.67, 0.025), monMat);
+  bigMon.position.set(0, 1.2, 1.05); bigMon.castShadow = true;
+  group.add(bigMon);
+  // Screen (in FRONT of bezel — z offset +0.013 so stand doesn't clip through)
+  var scrMat = new THREE.MeshStandardMaterial({ color: 0x1a2a4a, emissive: 0x58a6ff, emissiveIntensity: 0.3, roughness: 0.1 });
+  var bigScr = new THREE.Mesh(new THREE.PlaneGeometry(1.14, 0.61), scrMat);
+  bigScr.position.set(0, 1.2, 1.063);
+  group.add(bigScr);
+  // Center stand (BEHIND screen — z offset -0.02 so it doesn't poke through)
+  var stand = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.28, 8), chromeMat);
+  stand.position.set(0, 0.92, 1.07);
+  group.add(stand);
+  // Stand base (BEHIND screen)
+  var standBase = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.02, 0.2), chromeMat);
+  standBase.position.set(0, 0.78, 1.07);
+  group.add(standBase);
 
   // --- Keyboard + mouse ---
   var kbMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5 });
@@ -1082,9 +1082,10 @@ function buildManagerOffice(x, z, glassMat, frameMat, walnutMat, leatherMat, chr
   S._managerOfficePos = { x: x, z: z };
 
   // Register manager desk in deskMeshes so monitor screen system works
+  // bigScr is the 47" monitor screen — used for click detection + iframe overlay
   var mgrDeskIdx = CAMPUS_DESKS.length - 1;
   var mgrScreenMat = new THREE.MeshStandardMaterial({ color: 0x333333, emissive: 0x333333, emissiveIntensity: 0.1, roughness: 0.2 });
-  S.deskMeshes[mgrDeskIdx] = { group: group, screen: null, screenMat: mgrScreenMat, index: mgrDeskIdx, x: x, z: z + 1.7 };
+  S.deskMeshes[mgrDeskIdx] = { group: group, screen: bigScr, screenMat: mgrScreenMat, index: mgrDeskIdx, x: x, z: z + 1.7 };
 }
 
 // ==================== DESIGNER STUDIO ====================
@@ -1197,6 +1198,101 @@ function buildBar(x, z, walnutMat, chromeMat, neonBlueMat, neonPurpleMat) {
   var sign = new CSS2DObject(signDiv);
   sign.position.set(x, 3.5, z - 1);
   S.furnitureGroup.add(sign);
+}
+
+// ==================== JUKEBOX (Wurlitzer 1015 style) ====================
+function buildJukebox(x, z) {
+  var group = new THREE.Group();
+  group.position.set(x, 0, z);
+
+  // Main body — rounded wooden cabinet
+  var bodyMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.5, metalness: 0.05 });
+  var body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.5, 0.5), bodyMat);
+  body.position.y = 0.75; body.castShadow = true;
+  group.add(body);
+
+  // Chrome trim top arch
+  var chromeMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.1, metalness: 0.8 });
+  var topArch = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.06, 16, 1, false, 0, Math.PI), chromeMat);
+  topArch.position.set(0, 1.53, 0);
+  topArch.rotation.z = Math.PI;
+  topArch.rotation.y = Math.PI / 2;
+  group.add(topArch);
+
+  // Glass viewing panel (curved top section)
+  var glassMat = new THREE.MeshStandardMaterial({ color: 0xaaddff, transparent: true, opacity: 0.4, roughness: 0.05 });
+  var glassPanel = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.08), glassMat);
+  glassPanel.position.set(0, 1.35, 0.22);
+  group.add(glassPanel);
+
+  // Neon glow strips (sides) — animated via S._jukeboxNeon
+  var neonColors = [0xff4488, 0xff8844, 0xffdd44, 0x44ff88, 0x4488ff, 0xaa44ff];
+  var neonMat = new THREE.MeshStandardMaterial({ color: 0xff4488, emissive: 0xff4488, emissiveIntensity: 0.8, roughness: 0.2 });
+  // Left neon strip
+  var neonL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.2, 0.04), neonMat);
+  neonL.position.set(-0.42, 0.75, 0.23);
+  group.add(neonL);
+  // Right neon strip
+  var neonR = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.2, 0.04), neonMat);
+  neonR.position.set(0.42, 0.75, 0.23);
+  group.add(neonR);
+  // Top neon arc
+  var neonTop = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.04), neonMat);
+  neonTop.position.set(0, 1.5, 0.23);
+  group.add(neonTop);
+
+  // Bubble tube columns (sides)
+  var bubbleMat = new THREE.MeshStandardMaterial({ color: 0x66ccff, transparent: true, opacity: 0.5, emissive: 0x66ccff, emissiveIntensity: 0.3 });
+  var bubbleL = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.3, 8), bubbleMat);
+  bubbleL.position.set(-0.38, 0.75, 0.18);
+  group.add(bubbleL);
+  var bubbleR = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.3, 8), bubbleMat);
+  bubbleR.position.set(0.38, 0.75, 0.18);
+  group.add(bubbleR);
+
+  // Chrome base
+  var baseMat = chromeMat;
+  var base = new THREE.Mesh(new THREE.BoxGeometry(1, 0.08, 0.55), baseMat);
+  base.position.y = 0.04;
+  group.add(base);
+
+  // Chrome grille (speaker area — lower section)
+  for (var gi = 0; gi < 6; gi++) {
+    var grille = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.01, 0.01), chromeMat);
+    grille.position.set(0, 0.15 + gi * 0.06, 0.26);
+    group.add(grille);
+  }
+
+  // Record selector buttons (front panel)
+  var buttonMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.3, metalness: 0.5 });
+  for (var bi = 0; bi < 3; bi++) {
+    var btn = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.02, 8), buttonMat);
+    btn.position.set(-0.15 + bi * 0.15, 0.85, 0.26);
+    btn.rotation.x = Math.PI / 2;
+    group.add(btn);
+  }
+
+  // "NOW PLAYING" CSS2D label (hidden by default, shown when music plays)
+  var labelDiv = document.createElement('div');
+  labelDiv.className = 'jukebox-label';
+  labelDiv.style.cssText = 'color:#ff4488;font-size:8px;font-weight:bold;font-family:monospace;text-shadow:0 0 6px #ff4488;text-align:center;pointer-events:none;opacity:0.9;';
+  labelDiv.innerHTML = '<div style="color:#ffdd44;font-size:10px">JUKEBOX</div><div style="font-size:7px;color:#aaa">Press E to play</div>';
+  var label = new CSS2DObject(labelDiv);
+  label.position.set(0, 1.8, 0);
+  group.add(label);
+
+  // Store references for interaction + animation
+  S._jukebox = {
+    group: group,
+    neonMat: neonMat,
+    neonColors: neonColors,
+    neonIndex: 0,
+    label: labelDiv,
+    pos: { x: x, z: z },
+    playing: false
+  };
+
+  S.furnitureGroup.add(group);
 }
 
 // ==================== RECREATION CENTER ====================

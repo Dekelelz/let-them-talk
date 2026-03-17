@@ -261,6 +261,10 @@ export function spawnPlayer() {
     camYaw: Math.PI,  // camera orbit angle around player (horizontal)
     camPitch: 0.4,    // camera pitch (vertical angle, 0=level, positive=looking down)
     camDist: 6,       // distance from player
+    _jumping: false,
+    _jumpVel: 0,
+    _jumpY: 0,
+    _landSquash: 0,
   };
 
   // Disable spectator camera movement but keep key/mouse tracking alive
@@ -278,6 +282,12 @@ export function spawnPlayer() {
 
 export function despawnPlayer() {
   if (!S._player) return;
+  // Clean up "Press E to sit" prompt so it doesn't leak to other tabs
+  if (S._player._sitPrompt) {
+    S._player._sitPrompt.style.display = 'none';
+    if (S._player._sitPrompt.parentElement) S._player._sitPrompt.remove();
+    S._player._sitPrompt = null;
+  }
   S.scene.remove(S._player.parts.group);
   S._player.parts.group.traverse(function(child) {
     if (child.geometry) child.geometry.dispose();
@@ -333,6 +343,27 @@ export function updatePlayer(dt, time, keys) {
   var isMoving = moveX !== 0 || moveZ !== 0;
   player.isMoving = isMoving;
 
+  // --- Jump with Space ---
+  if (keys['Space'] && !player.sitting && !player._jumping) {
+    player._jumping = true;
+    player._jumpVel = 5.5; // initial upward velocity
+    player._jumpY = 0;
+  }
+  if (player._jumping) {
+    player._jumpVel -= 18 * dt; // gravity
+    player._jumpY += player._jumpVel * dt;
+    if (player._jumpY <= 0) {
+      player._jumpY = 0;
+      player._jumping = false;
+      player._jumpVel = 0;
+      player._landSquash = 0.3; // trigger landing squash
+    }
+  }
+  // Landing squash/stretch decay
+  if (player._landSquash > 0) {
+    player._landSquash = Math.max(0, player._landSquash - dt * 3);
+  }
+
   if (isMoving) {
     // Movement relative to camera yaw (orbit angle)
     var camYaw = S.controls && S.controls._euler ? S.controls._euler.y : 0;
@@ -363,8 +394,22 @@ export function updatePlayer(dt, time, keys) {
   player.pos.y += (targetY - player.pos.y) * Math.min(1, dt * 8); // smooth height transition
 
   player.parts.group.position.x = player.pos.x;
-  player.parts.group.position.y = player.pos.y;
+  player.parts.group.position.y = player.pos.y + (player._jumpY || 0);
   player.parts.group.position.z = player.pos.z;
+
+  // Jump squash/stretch visual
+  var jumpSquash = player._landSquash || 0;
+  if (player._jumping && player._jumpVel > 0) {
+    // Stretch upward during ascent
+    player.parts.body.scale.set(0.9, 1.15, 0.9);
+  } else if (jumpSquash > 0) {
+    // Squash on landing — wide and short
+    var sq = 1 + jumpSquash * 0.5; // width: up to 1.15
+    var sy = 1 - jumpSquash * 0.4; // height: down to 0.88
+    player.parts.body.scale.set(sq, sy, sq);
+  } else if (!isMoving) {
+    // Reset to breathing (handled below)
+  }
 
   // Smooth rotation
   var currentRot = player.parts.group.rotation.y;
@@ -373,8 +418,20 @@ export function updatePlayer(dt, time, keys) {
   while (diff < -Math.PI) diff += Math.PI * 2;
   player.parts.group.rotation.y += diff * Math.min(1, dt * 8);
 
-  // --- Walking animation ---
-  if (isMoving) {
+  // --- Walking / Jump / Idle animation ---
+  if (player._jumping) {
+    // Jump pose — tuck legs, raise arms
+    var tuck = player._jumpVel > 0 ? 0.6 : 0.3; // more tuck on ascent
+    player.parts.leftLeg.rotation.x = -tuck;
+    player.parts.rightLeg.rotation.x = -tuck;
+    player.parts.leftLowerLeg.rotation.x = tuck * 1.2;
+    player.parts.rightLowerLeg.rotation.x = tuck * 1.2;
+    player.parts.leftArm.rotation.x = -1.2; // arms up
+    player.parts.rightArm.rotation.x = -1.2;
+    player.parts.leftForearm.rotation.x = -0.5;
+    player.parts.rightForearm.rotation.x = -0.5;
+  } else if (isMoving) {
+    player.parts.body.scale.set(1, 1, 1); // reset from jump squash
     var swing = Math.sin(time * 10) * 0.5;
     player.parts.leftLeg.rotation.x = swing;
     player.parts.rightLeg.rotation.x = -swing;
@@ -395,12 +452,125 @@ export function updatePlayer(dt, time, keys) {
     player.parts.leftForearm.rotation.x *= 0.9;
     player.parts.rightForearm.rotation.x *= 0.9;
     var breathe = 1 + Math.sin(time * 2) * 0.02;
-    player.parts.body.scale.y = breathe;
+    if (!player._landSquash) player.parts.body.scale.set(1, breathe, 1);
     player.parts.head.rotation.z = Math.sin(time * 0.5) * 0.03;
   }
 
-  // --- Third-person camera follow ---
-  updatePlayerCamera(dt);
+  // --- E-to-sit at desk system ---
+  var desks = S._campusDeskPositions || [];
+  var SIT_RANGE = 2.5; // max distance to sit at a desk
+  var nearestDesk = -1;
+  var nearestDist = SIT_RANGE;
+
+  if (!player.sitting) {
+    // Find nearest desk
+    for (var di = 0; di < desks.length; di++) {
+      var ddx = player.pos.x - desks[di].x;
+      var ddz = player.pos.z - (desks[di].z + 0.7); // chair is 0.7 in front of desk
+      var dd = Math.sqrt(ddx * ddx + ddz * ddz);
+      if (dd < nearestDist) { nearestDist = dd; nearestDesk = di; }
+    }
+  }
+
+  // Show/hide "Press E to sit" prompt
+  if (nearestDesk >= 0 && !player.sitting) {
+    if (!player._sitPrompt) {
+      player._sitPrompt = document.createElement('div');
+      player._sitPrompt.className = 'office3d-sit-prompt';
+      player._sitPrompt.textContent = 'Press E to sit';
+      player._sitPrompt.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#58a6ff;padding:8px 16px;border-radius:8px;font-size:14px;z-index:1000;pointer-events:none;border:1px solid #30363d;';
+      document.body.appendChild(player._sitPrompt);
+    }
+    player._sitPrompt.style.display = 'block';
+    player._nearDesk = nearestDesk;
+  } else if (player._sitPrompt && !player.sitting) {
+    player._sitPrompt.style.display = 'none';
+    player._nearDesk = -1;
+  }
+
+  // E key: sit down or stand up
+  if (keys['KeyE'] && !player._ePressed) {
+    player._ePressed = true;
+    if (!player.sitting && player._nearDesk >= 0) {
+      // Sit down at desk
+      player.sitting = true;
+      player.sittingDeskIdx = player._nearDesk;
+      player.sittingLerp = 0;
+      var deskPos = desks[player._nearDesk];
+      player._sitTarget = { x: deskPos.x, y: player.pos.y, z: deskPos.z + 0.7 };
+      if (player._sitPrompt) player._sitPrompt.style.display = 'none';
+      // Notify: player sat down (Builder's iframe hook)
+      if (typeof window.onPlayerSit === 'function') window.onPlayerSit(player.sittingDeskIdx);
+    } else if (player.sitting) {
+      // Stand up — push player AWAY from desk center to avoid collision trapping
+      var desks = S._campusDeskPositions || [];
+      var dIdx = player.sittingDeskIdx;
+      player.sitting = false;
+      player.sittingDeskIdx = -1;
+      if (dIdx >= 0 && desks[dIdx]) {
+        var ddx = player.pos.x - desks[dIdx].x;
+        var ddz = player.pos.z - desks[dIdx].z;
+        var dd = Math.sqrt(ddx * ddx + ddz * ddz) || 1;
+        player.pos.x += (ddx / dd) * 0.8;
+        player.pos.z += (ddz / dd) * 0.8;
+      } else {
+        player.pos.z += 0.8; // fallback
+      }
+      // Notify: player stood up
+      if (typeof window.onPlayerStand === 'function') window.onPlayerStand();
+    }
+  }
+  if (!keys['KeyE']) player._ePressed = false;
+
+  // --- Jukebox E-to-interact ---
+  if (S._jukebox && !player.sitting) {
+    var jbx = player.pos.x - S._jukebox.pos.x;
+    var jbz = player.pos.z - S._jukebox.pos.z;
+    var jbDist = Math.sqrt(jbx * jbx + jbz * jbz);
+    if (jbDist < 2.0) {
+      // Show prompt
+      if (!player._jukeboxPrompt) {
+        player._jukeboxPrompt = document.createElement('div');
+        player._jukeboxPrompt.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#ff4488;padding:8px 16px;border-radius:8px;font-size:14px;z-index:1000;pointer-events:none;border:1px solid #ff4488;';
+        player._jukeboxPrompt.textContent = 'Press E for Jukebox';
+        document.body.appendChild(player._jukeboxPrompt);
+      }
+      player._jukeboxPrompt.style.display = 'block';
+      // E key activates jukebox (only if not near a desk)
+      if (keys['KeyE'] && player._ePressed && nearestDesk < 0) {
+        if (typeof window.onJukeboxInteract === 'function') window.onJukeboxInteract();
+        if (player._jukeboxPrompt) player._jukeboxPrompt.style.display = 'none';
+      }
+    } else if (player._jukeboxPrompt) {
+      player._jukeboxPrompt.style.display = 'none';
+    }
+  }
+
+  // Sitting animation: lerp position to chair, set sitting pose
+  if (player.sitting && player._sitTarget) {
+    player.sittingLerp = Math.min(1, (player.sittingLerp || 0) + dt * 3);
+    var sl = player.sittingLerp;
+    player.pos.x += (player._sitTarget.x - player.pos.x) * Math.min(1, dt * 5);
+    player.pos.z += (player._sitTarget.z - player.pos.z) * Math.min(1, dt * 5);
+    player.facing = Math.PI; // face the desk
+
+    // Sitting pose (same as agent sitting)
+    var sitHip = -1.5 * sl;
+    player.parts.leftLeg.rotation.x = sitHip;
+    player.parts.rightLeg.rotation.x = sitHip;
+    player.parts.leftLowerLeg.rotation.x = 1.5 * sl;
+    player.parts.rightLowerLeg.rotation.x = 1.5 * sl;
+    player.parts.leftForearm.rotation.x = -0.4 * sl;
+    player.parts.rightForearm.rotation.x = -0.4 * sl;
+    player.parts.group.position.y = player.pos.y + sl * 0.14;
+  }
+
+  // --- Third-person camera follow (or desk POV when sitting) ---
+  if (player.sitting) {
+    updatePlayerCameraDesk(dt);
+  } else {
+    updatePlayerCamera(dt);
+  }
 }
 
 function updatePlayerCamera(dt) {
@@ -434,3 +604,55 @@ function updatePlayerCamera(dt) {
   );
   S.camera.lookAt(_tmpLookAt);
 }
+
+// Desk POV camera — when player is sitting, camera moves behind the character looking at the monitor
+function updatePlayerCameraDesk(dt) {
+  var player = S._player;
+  if (!player || !player._sitTarget) return;
+
+  // Camera behind player's head, looking at the desk/monitor
+  var deskX = player._sitTarget.x;
+  var deskZ = player._sitTarget.z;
+  var baseY = player.pos.y;
+
+  // Camera position: slightly behind and above the seated player
+  _tmpCamTarget.set(deskX, baseY + 1.6, deskZ + 1.8);
+  S.camera.position.lerp(_tmpCamTarget, Math.min(1, dt * 4));
+
+  // Look at the monitor (desk is at z, monitor is slightly behind at z - 0.3)
+  _tmpLookAt.set(deskX, baseY + 1.2, deskZ - 0.5);
+  S.camera.lookAt(_tmpLookAt);
+}
+
+// --- Public API for iframe integration ---
+export function isPlayerSitting() {
+  return S._player && S._player.sitting;
+}
+
+export function getPlayerDeskIdx() {
+  return S._player ? S._player.sittingDeskIdx : -1;
+}
+
+// Force stand from external code (LEAVE button, Escape key handler in iframe overlay)
+// Sets sitting=false so WASD movement resumes and camera returns to third-person
+window.playerForceStand = function() {
+  var player = S._player;
+  if (player && player.sitting) {
+    // Push player AWAY from desk center (works for all desk orientations)
+    var desks = S._campusDeskPositions || [];
+    var dIdx = player.sittingDeskIdx;
+    player.sitting = false;
+    player.sittingDeskIdx = -1;
+    if (player._sitPrompt) player._sitPrompt.style.display = 'none';
+    if (dIdx >= 0 && desks[dIdx]) {
+      // Always stand up FORWARD (toward camera/door side, negative Z in desk-local space)
+      // This avoids pushing into walls behind the desk
+      player.pos.z = desks[dIdx].z + 1.2; // 1.2 units in front of desk center
+      // Slight X offset to avoid chair mesh
+      var ddx = player.pos.x - desks[dIdx].x;
+      if (Math.abs(ddx) < 0.3) player.pos.x += 0.4;
+    } else {
+      player.pos.z += 0.8; // fallback
+    }
+  }
+};

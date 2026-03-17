@@ -1584,6 +1584,133 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true, removed: agentName }));
       });
     }
+    // Respawn prompt generator — creates copy-paste prompt to revive a dead agent
+    else if (url.pathname.startsWith('/api/agents/') && url.pathname.endsWith('/respawn-prompt') && req.method === 'GET') {
+      const agentName = decodeURIComponent(url.pathname.split('/')[3]);
+      // Validate agent name (prevent path traversal)
+      if (!agentName || /[^a-zA-Z0-9_-]/.test(agentName) || agentName.length > 20) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid agent name' }));
+        return;
+      }
+      const projectPath = url.searchParams.get('project') || null;
+      const dataDir = resolveDataDir(projectPath);
+      const agents = readJson(filePath('agents.json', projectPath));
+      const profiles = readJson(filePath('profiles.json', projectPath));
+      const tasks = readJson(filePath('tasks.json', projectPath));
+      const config = readJson(filePath('config.json', projectPath));
+
+      if (!agents[agentName]) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Agent not found: ' + agentName }));
+        return;
+      }
+
+      // Gather recovery snapshot if exists
+      const recoveryFile = path.join(dataDir, 'recovery-' + agentName + '.json');
+      const recovery = fs.existsSync(recoveryFile) ? readJson(recoveryFile) : null;
+
+      // Gather profile
+      const profile = profiles[agentName] || {};
+
+      // Gather active tasks assigned to this agent
+      const taskList = Array.isArray(tasks) ? tasks : [];
+      const activeTasks = taskList.filter(t => t.assignee === agentName && (t.status === 'in_progress' || t.status === 'pending'));
+      const completedTasks = taskList.filter(t => t.assignee === agentName && t.status === 'done').slice(-5);
+
+      // Gather recent history context (last 15 messages)
+      const history = readJsonl(filePath('history.jsonl', projectPath));
+      const recentHistory = history.slice(-15).map(m => `[${m.from}→${m.to}]: ${(m.content || '').substring(0, 150)}`).join('\n');
+
+      // Gather who's online
+      const onlineAgents = Object.entries(agents)
+        .filter(([n, a]) => isPidAlive(a.pid, a.last_activity) && n !== agentName)
+        .map(([n]) => n);
+
+      // Gather workspace status
+      let workspaceStatus = '';
+      try {
+        const wsPath = path.join(dataDir, 'workspaces', agentName + '.json');
+        if (fs.existsSync(wsPath)) {
+          const ws = JSON.parse(fs.readFileSync(wsPath, 'utf8'));
+          if (ws._status) workspaceStatus = ws._status;
+        }
+      } catch {}
+
+      // Build the respawn prompt
+      const mode = config.conversation_mode || 'group';
+      let prompt = `You are resuming as agent "${agentName}" in a multi-agent team using Let Them Talk (MCP agent bridge).\n\n`;
+
+      if (profile.role) prompt += `**Your role:** ${profile.role}\n`;
+      if (profile.bio) prompt += `**Your bio:** ${profile.bio}\n`;
+      prompt += '\n';
+
+      prompt += `**Conversation mode:** ${mode}\n`;
+      prompt += `**Agents currently online:** ${onlineAgents.length > 0 ? onlineAgents.join(', ') : 'none'}\n\n`;
+
+      if (activeTasks.length > 0) {
+        prompt += `**Your active tasks:**\n`;
+        for (const t of activeTasks) {
+          prompt += `- [${t.status}] ${t.title}${t.description ? ' — ' + t.description.substring(0, 200) : ''}\n`;
+        }
+        prompt += '\n';
+      }
+
+      if (completedTasks.length > 0) {
+        prompt += `**Tasks you completed before disconnect:**\n`;
+        for (const t of completedTasks) {
+          prompt += `- ${t.title}\n`;
+        }
+        prompt += '\n';
+      }
+
+      if (recovery) {
+        if (recovery.locked_files && recovery.locked_files.length > 0) {
+          prompt += `**Files you had locked:** ${recovery.locked_files.join(', ')} — unlock these or continue editing them.\n\n`;
+        }
+        if (recovery.channels && recovery.channels.length > 0) {
+          prompt += `**Channels you were in:** ${recovery.channels.join(', ')}\n\n`;
+        }
+        if (recovery.decisions_made && recovery.decisions_made.length > 0) {
+          prompt += `**Decisions you made:**\n`;
+          for (const d of recovery.decisions_made) {
+            prompt += `- ${d.decision}${d.reasoning ? ' (reason: ' + d.reasoning + ')' : ''}\n`;
+          }
+          prompt += '\n';
+        }
+        if (recovery.last_messages_sent && recovery.last_messages_sent.length > 0) {
+          prompt += `**Your last messages before disconnect:**\n`;
+          for (const m of recovery.last_messages_sent) {
+            prompt += `- [→${m.to}]: ${m.content}\n`;
+          }
+          prompt += '\n';
+        }
+      }
+
+      if (workspaceStatus) {
+        prompt += `**Your last status:** ${workspaceStatus}\n\n`;
+      }
+
+      prompt += `**Recent team conversation:**\n${recentHistory}\n\n`;
+
+      prompt += `**Instructions:**\n`;
+      prompt += `1. Register as "${agentName}" using the register tool\n`;
+      prompt += `2. Call get_briefing() for full project context\n`;
+      prompt += `3. Call listen_group() to rejoin the conversation\n`;
+      prompt += `4. Announce you're back and pick up your active tasks\n`;
+      prompt += `5. Stay in listen_group() loop — never stop listening\n`;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        agent: agentName,
+        status: isPidAlive(agents[agentName].pid, agents[agentName].last_activity) ? 'alive' : 'dead',
+        prompt,
+        prompt_length: prompt.length,
+        has_recovery: !!recovery,
+        active_tasks: activeTasks.length,
+        online_agents: onlineAgents,
+      }));
+    }
     else if (url.pathname === '/api/status' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiStatus(url.searchParams)));
@@ -1713,6 +1840,39 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/discover' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiDiscover()));
+    }
+    // --- World Builder: load/save world layout ---
+    else if (url.pathname === '/api/world-layout' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const worldFile = filePath('world-layout.json', projectPath);
+      if (fs.existsSync(worldFile)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(worldFile, 'utf8'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('[]');
+        }
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+      }
+    }
+    else if (url.pathname === '/api/world-save' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      const worldFile = filePath('world-layout.json', projectPath);
+      if (!Array.isArray(body)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Expected array of placements' }));
+        return;
+      }
+      // Limit to 1000 placements for safety
+      const placements = body.slice(0, 1000);
+      fs.writeFileSync(worldFile, JSON.stringify(placements, null, 2));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: placements.length }));
     }
     // --- v3.0 API endpoints ---
     else if (url.pathname === '/api/profiles' && req.method === 'GET') {
@@ -1965,6 +2125,7 @@ const server = http.createServer(async (req, res) => {
       });
       res.end(html);
     }
+    // (World Builder API endpoints are handled earlier in the route chain by Architect's implementation)
     // Server-Sent Events endpoint for real-time updates
     else if (url.pathname === '/api/events' && req.method === 'GET') {
       if (sseClients.size >= 100) {

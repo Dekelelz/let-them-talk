@@ -120,6 +120,56 @@ export function updateAgent(agent, dt, time) {
     agent.parts.head.rotation.x = -stPhase * 0.2;
   }
 
+  // Active typing animation — subtle hand/finger movement when working at desk
+  if (agent.isSitting && agent.state === 'active' && !agent.isListening && !isWalking && !isSleeping) {
+    var typeSpeed = 8 + Math.sin(time * 0.7 + agent.name.length) * 2; // vary per agent
+    var typeL = Math.sin(time * typeSpeed) * 0.06;
+    var typeR = Math.sin(time * typeSpeed + 1.5) * 0.06; // offset for alternating hands
+    agent.parts.leftForearm.rotation.x += typeL;
+    agent.parts.rightForearm.rotation.x += typeR;
+    // Subtle head bob while typing (looking at screen)
+    agent.parts.head.rotation.x += Math.sin(time * 1.2) * 0.015;
+  }
+
+  // Frustrated gesture — when task is blocked, head in hands periodically
+  if (agent.currentTask && agent.currentTask.status === 'blocked' && agent.isSitting && !isWalking) {
+    if (!agent.frustratedTimer) agent.frustratedTimer = 3 + Math.random() * 5;
+    agent.frustratedTimer -= dt;
+    if (agent.frustratedTimer <= 0 && agent.frustratedTimer > -2.5) {
+      // Head drops, arms come up to cradle head
+      var fT = Math.min(1, (-agent.frustratedTimer) / 0.5);
+      agent.parts.head.rotation.x += fT * 0.3;
+      agent.parts.leftArm.rotation.x = -fT * 1.2;
+      agent.parts.rightArm.rotation.x = -fT * 1.2;
+      agent.parts.leftForearm.rotation.x = -fT * 1.0;
+      agent.parts.rightForearm.rotation.x = -fT * 1.0;
+    }
+    if (agent.frustratedTimer < -2.5) {
+      agent.frustratedTimer = 8 + Math.random() * 10; // reset
+    }
+  } else {
+    agent.frustratedTimer = 0;
+  }
+
+  // Listening lean-forward — body leans toward screen when in listen mode
+  if (agent.isListening && agent.isSitting && !isWalking && !isSleeping) {
+    agent.parts.body.rotation.x += -0.08; // slight forward lean
+    agent.parts.head.rotation.x += -0.05; // looking up at screen
+  }
+
+  // Head nod when being talked to (another agent is visiting)
+  if (agent._listeningTo && !isWalking && !isSleeping) {
+    if (!agent._nodTimer) agent._nodTimer = 0;
+    agent._nodTimer += dt;
+    // Periodic nod: quick down-up every ~2s
+    var nodCycle = agent._nodTimer % 2.2;
+    if (nodCycle < 0.3) {
+      agent.parts.head.rotation.x += Math.sin(nodCycle / 0.3 * Math.PI) * 0.12;
+    }
+  } else {
+    agent._nodTimer = 0;
+  }
+
   // Idle gesture system — random gestures when sitting and idle
   if (!agent.idleGestureTimer) agent.idleGestureTimer = 5 + Math.random() * 10;
   if (agent.isSitting && agent.state === 'active' && !isWalking && !agent.isListening) {
@@ -203,6 +253,24 @@ export function updateAgent(agent, dt, time) {
     agent.parts.rightLowerLeg.rotation.x *= 0.9;
     agent.parts.leftForearm.rotation.x *= 0.9;
     agent.parts.rightForearm.rotation.x *= 0.9;
+  }
+
+  // Glance at nearby speaking agent — head turns slightly toward speaker
+  if (agent._glanceTarget && agent.isSitting && !isWalking && !isSleeping) {
+    if (!agent._glanceTimer) agent._glanceTimer = 0;
+    agent._glanceTimer += dt;
+    if (agent._glanceTimer < 2.5) {
+      var glanceT = Math.min(1, agent._glanceTimer / 0.4);
+      agent.parts.head.rotation.y = agent._glanceDirection * 0.25 * glanceT;
+    } else {
+      // Fade back
+      agent.parts.head.rotation.y *= 0.9;
+      if (Math.abs(agent.parts.head.rotation.y) < 0.01) {
+        agent._glanceTarget = null;
+        agent._glanceTimer = 0;
+        agent.parts.head.rotation.y = 0;
+      }
+    }
   }
 
   // Idle breathing
