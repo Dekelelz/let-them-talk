@@ -144,6 +144,9 @@ const rateLimitWindow = 60000; // 1 minute window
 const rateLimitMax = 30; // max 30 messages per minute per agent
 let rateLimitMessages = []; // timestamps of recent messages
 
+// Stuck detector — tracks recent error tool calls to detect loops
+let recentErrorCalls = []; // { tool, argsHash, timestamp }
+
 function checkRateLimit() {
   const now = Date.now();
   rateLimitMessages = rateLimitMessages.filter(t => now - t < rateLimitWindow);
@@ -3175,7 +3178,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.10.0' },
+  { name: 'agent-bridge', version: '3.10.1' },
   { capabilities: { tools: {} } }
 );
 
@@ -3946,6 +3949,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (result.error) {
+      // Stuck detector: track repeated error calls
+      const argsHash = JSON.stringify(args || {}).substring(0, 100);
+      recentErrorCalls.push({ tool: name, argsHash, timestamp: Date.now() });
+      // Keep only last 10 entries, last 60 seconds
+      const cutoff = Date.now() - 60000;
+      recentErrorCalls = recentErrorCalls.filter(c => c.timestamp > cutoff).slice(-10);
+      // Check if last 3 calls are same tool with same args
+      const last3 = recentErrorCalls.slice(-3);
+      if (last3.length >= 3 && last3.every(c => c.tool === name && c.argsHash === argsHash)) {
+        result._stuck_hint = `You have called ${name} 3 times with the same error. Consider: broadcasting for help, trying a different approach, or calling suggest_task() to find other work.`;
+      }
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         isError: true,
@@ -4029,7 +4043,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.10.0 running (56 tools)');
+  console.error('Agent Bridge MCP server v3.10.1 running (56 tools)');
 }
 
 main().catch(console.error);
