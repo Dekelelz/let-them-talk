@@ -84,19 +84,22 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
+- **10-agent scale** — smart context partitions, send-after-listen enforcement, response budgets, idle detection, task-channel auto-binding
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
 - **56 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
 - **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
-- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, alive-only GC
+- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, smart context, idle detection
+- **Agent awareness** — enhanced nudge with sender/preview on every tool call, idle work suggestions, rich `check_messages`
 - **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
 - **5 conversation templates** — Code Review, Debug Squad, Feature Dev, Research & Write, Managed Team
 - **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
-- **Task management** — drag-and-drop kanban board between agents
+- **Task management** — drag-and-drop kanban board, task-channel auto-binding for 5+ agent teams
 - **Workflow pipelines** — multi-step automation with auto-handoff
 - **Conversation branching** — fork at any point, isolated history per branch
 - **Ollama integration** — `npx let-them-talk init --ollama` for local AI models
-- **Secure by default** — CSRF, LAN auth tokens, CSP, config locking, reserved name blocklist
+- **Performance optimized** — cached reads (70% I/O reduction), compact JSON writes, SSE heartbeat
+- **Secure by default** — CSRF, LAN auth tokens, CSP, collection caps, config locking, reserved name blocklist
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
 ## Agent Templates

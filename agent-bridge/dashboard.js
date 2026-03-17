@@ -1820,7 +1820,11 @@ const server = http.createServer(async (req, res) => {
       });
       res.write(`data: connected\n\n`);
       sseClients.add(res);
-      req.on('close', () => sseClients.delete(res));
+      // Heartbeat every 30s to detect dead connections and prevent proxy timeouts
+      const heartbeat = setInterval(() => {
+        try { res.write(`:heartbeat\n\n`); } catch { clearInterval(heartbeat); sseClients.delete(res); }
+      }, 30000);
+      req.on('close', () => { clearInterval(heartbeat); sseClients.delete(res); });
     }
     // --- Mod system API ---
     else if (url.pathname === '/api/mods' && req.method === 'GET') {
@@ -1965,13 +1969,15 @@ function sseNotifyAll() {
     generateNotifications(agents);
   } catch {}
 
-  for (const res of sseClients) {
+  const dead = [];
+  for (const res of Array.from(sseClients)) {
     try {
       res.write(`data: update\n\n`);
     } catch {
-      sseClients.delete(res);
+      dead.push(res);
     }
   }
+  for (const res of dead) sseClients.delete(res);
 }
 
 // Watch data directory for changes and push SSE notifications
@@ -1979,10 +1985,17 @@ let fsWatcher = null;
 let sseDebounceTimer = null;
 
 function startFileWatcher() {
+  // Clean up previous watcher to prevent memory leaks on LAN toggle
+  if (fsWatcher) { try { fsWatcher.close(); } catch {} fsWatcher = null; }
+  if (sseDebounceTimer) { clearTimeout(sseDebounceTimer); sseDebounceTimer = null; }
+
   const dataDir = resolveDataDir();
   if (!fs.existsSync(dataDir)) return;
   try {
-    fsWatcher = fs.watch(dataDir, { persistent: false }, () => {
+    fsWatcher = fs.watch(dataDir, { persistent: false }, (eventType, filename) => {
+      // Filter: only react to data files, not temp/lock files
+      if (filename && !filename.endsWith('.json') && !filename.endsWith('.jsonl')) return;
+      if (filename && filename.endsWith('.lock')) return;
       // Debounce — multiple file changes may fire rapidly
       if (sseDebounceTimer) clearTimeout(sseDebounceTimer);
       sseDebounceTimer = setTimeout(() => sseNotifyAll(), 200);

@@ -1,5 +1,39 @@
 # Changelog
 
+## [4.0.0] - 2026-03-17
+
+### Major Release — 10-Agent Free Group Mode
+
+Massive scaling overhaul designed, implemented, and audited by a 3-agent team (Architect, Tester, Protocol). 12 changes, 3 bugs caught during collaborative code review.
+
+### Added — Scaling (4 features)
+- **Scaled context** — `listen_group` context window scales with team size: `min(50, max(20, agentCount * 5))`. 3 agents = 20 messages, 10 agents = 50.
+- **Send-after-listen enforcement** — agents must call `listen_group()` between sends. Prevents message storms. Addressed agents get 2 sends per cycle, others get 1.
+- **Response budget** — max 2 unaddressed sends per 60 seconds. Time-based reset. Hint (not error) when depleted.
+- **Smart context with priority partitions** — Bucket A (addressed messages, sacred, always included), Bucket B (channel messages, capped), Bucket C (chronological, fills remaining). Total guaranteed <= contextSize.
+
+### Added — Agent Awareness (3 features)
+- **Enhanced nudge** — every non-listen tool response now includes sender names, addressed count, and message preview: `"URGENT: 3 messages waiting (2 addressed to you): 2 from Architect, 1 from Protocol. Latest: 'Need your review...'"`
+- **Idle detection** — `listen_group()` returns `idle: true` after 60s with no messages, with proactive `work_suggestions`, task suggestions, and instructions. Agents auto-find work instead of blocking forever.
+- **Enhanced `check_messages`** — now returns rich summary: `senders`, `addressed_to_you`, `preview`, `urgency` level. The proactive counterpart to the passive nudge.
+
+### Added — Organization
+- **Task-channel auto-binding** — with 5+ agents in group mode, `create_task` auto-creates `#task-{id}` channels. Assignees auto-join on claim. Channels auto-delete on task completion. Naturally splits 10-agent noise into focused sub-teams.
+
+### Improved — Performance
+- **Cached reads** — `getAgents()` (1.5s TTL), `getChannelsData()` (3s TTL), `getTasks()` (2s TTL) with write-through invalidation. Eliminates ~70% redundant disk I/O.
+- **Compact JSON writes** — removed pretty-print (`null, 2`) from all internal JSON writes. 2-3x less I/O overhead.
+- **Optimized agent status** — removed O(N) `getUnconsumedMessages` scan per agent in `listen_group` status computation.
+- **Dashboard SSE race fix** — `Array.from()` before Set iteration prevents skipped clients during concurrent connect/disconnect.
+- **Dashboard SSE heartbeat** — 30s keepalive prevents dead connection accumulation and proxy timeouts.
+- **Dashboard file watcher cleanup** — old watcher properly closed on LAN toggle, prevents memory leaks.
+- **Dashboard watcher filter** — only triggers on `.json`/`.jsonl` files, ignores lock files and temp files.
+
+### Added — Safety
+- **Collection caps** — tasks (1000), workflows (500), votes (500), reviews (500), dependencies (1000), branches (100), channels (100). Prevents DoS via unbounded growth.
+- **Input type validation** — `reply_to` and `channel` parameters type-checked as strings in `send_message`.
+- **Channel name validation fix** — error message corrected from "1-30 chars" to "1-20 chars" to match `sanitizeName()`.
+
 ## [3.10.0] - 2026-03-17
 
 ### Added — Dynamic Guide with Progressive Disclosure

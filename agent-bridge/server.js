@@ -37,6 +37,22 @@ let heartbeatInterval = null; // heartbeat timer reference
 let messageSeq = 0; // monotonic sequence counter for message ordering
 let currentBranch = 'main'; // which branch this agent is on
 let lastSentAt = 0; // timestamp of last sent message (for group cooldown)
+let sendsSinceLastListen = 0; // enforced: must listen between sends in group mode
+let sendLimit = 1; // default: 1 send per listen cycle (2 if addressed)
+let unaddressedSends = 0; // response budget: unaddressed sends counter
+let budgetResetTime = Date.now(); // resets every 60s
+
+// --- Read cache (eliminates 70%+ redundant disk I/O) ---
+const _cache = {};
+function cachedRead(key, readFn, ttlMs = 2000) {
+  const now = Date.now();
+  const entry = _cache[key];
+  if (entry && now - entry.ts < ttlMs) return entry.val;
+  const val = readFn();
+  _cache[key] = { val, ts: now };
+  return val;
+}
+function invalidateCache(key) { delete _cache[key]; }
 
 // --- Group conversation mode ---
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
@@ -63,7 +79,7 @@ function unlockConfigFile() { try { fs.unlinkSync(CONFIG_LOCK); } catch {} }
 
 function saveConfig(config) {
   ensureDataDir();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config));
 }
 
 function isGroupMode() {
@@ -222,16 +238,15 @@ function lockAgentsFile() {
 function unlockAgentsFile() { try { fs.unlinkSync(AGENTS_LOCK); } catch {} }
 
 function getAgents() {
-  if (!fs.existsSync(AGENTS_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
-  } catch {
-    return {};
-  }
+  return cachedRead('agents', () => {
+    if (!fs.existsSync(AGENTS_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')); } catch { return {}; }
+  }, 1500);
 }
 
 function saveAgents(agents) {
-  fs.writeFileSync(AGENTS_FILE, JSON.stringify(agents, null, 2));
+  fs.writeFileSync(AGENTS_FILE, JSON.stringify(agents));
+  invalidateCache('agents');
 }
 
 function getAcks() {
@@ -463,7 +478,7 @@ function markAsRead(agentName, messageId) {
   const receipts = getReadReceipts();
   if (!receipts[messageId]) receipts[messageId] = {};
   receipts[messageId][agentName] = new Date().toISOString();
-  fs.writeFileSync(READ_RECEIPTS_FILE, JSON.stringify(receipts, null, 2));
+  fs.writeFileSync(READ_RECEIPTS_FILE, JSON.stringify(receipts));
 }
 
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
@@ -494,7 +509,7 @@ function getProfiles() {
 }
 
 function saveProfiles(profiles) {
-  fs.writeFileSync(PROFILES_FILE, JSON.stringify(profiles, null, 2));
+  fs.writeFileSync(PROFILES_FILE, JSON.stringify(profiles));
 }
 
 // Built-in avatar SVGs — hash-based assignment
@@ -537,7 +552,7 @@ function getWorkspace(agentName) {
 
 function saveWorkspace(agentName, data) {
   ensureWorkspacesDir();
-  fs.writeFileSync(path.join(WORKSPACES_DIR, `${sanitizeName(agentName)}.json`), JSON.stringify(data, null, 2));
+  fs.writeFileSync(path.join(WORKSPACES_DIR, `${sanitizeName(agentName)}.json`), JSON.stringify(data));
 }
 
 // --- Workflow helpers ---
@@ -548,7 +563,7 @@ function getWorkflows() {
 }
 
 function saveWorkflows(workflows) {
-  fs.writeFileSync(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2));
+  fs.writeFileSync(WORKFLOWS_FILE, JSON.stringify(workflows));
 }
 
 // --- Branch helpers ---
@@ -559,7 +574,7 @@ function getBranches() {
 }
 
 function saveBranches(branches) {
-  fs.writeFileSync(BRANCHES_FILE, JSON.stringify(branches, null, 2));
+  fs.writeFileSync(BRANCHES_FILE, JSON.stringify(branches));
 }
 
 function getMessagesFile(branch) {
@@ -608,7 +623,8 @@ function buildGuide() {
 
   // Tier 3 — large teams (shown when 5+ agents)
   if (aliveCount >= 5) {
-    rules.push('If listen_group returns no messages for 2 polls, call suggest_task() to find work.');
+    rules.push('If listen_group returns idle: true, follow the work_suggestions. Do not sit idle.');
+    rules.push('Tasks auto-create channels (#task-xxx). Use them for focused discussion instead of #general.');
     rules.push('Use channels to split into sub-teams. Do not discuss everything in #general.');
   }
 
@@ -827,8 +843,23 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
     return { error: 'You must call register() first' };
   }
 
+  // Type validation for optional params
+  if (reply_to && typeof reply_to !== 'string') return { error: 'reply_to must be a string' };
+  if (channel && typeof channel !== 'string') return { error: 'channel must be a string' };
+
   const rateErr = checkRateLimit();
   if (rateErr) return rateErr;
+
+  // Send-after-listen enforcement: must call listen_group between sends in group mode
+  if (isGroupMode() && sendsSinceLastListen >= sendLimit) {
+    return { error: `You must call listen_group() before sending again. You've sent ${sendsSinceLastListen} message(s) without listening. This prevents message storms.` };
+  }
+
+  // Response budget: track unaddressed sends, hint when depleted
+  if (isGroupMode()) {
+    // Reset budget every 60 seconds
+    if (Date.now() - budgetResetTime > 60000) { unaddressedSends = 0; budgetResetTime = Date.now(); }
+  }
 
   // Group mode cooldown — per-channel aware + split by addressing (fast/slow lane)
   let _cooldownApplied = 0;
@@ -1033,10 +1064,18 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
     }
   }
 
+  // Update send counters
+  sendsSinceLastListen++;
+  if (isGroupMode() && !msg.addressed_to) { unaddressedSends++; }
+
   const result = { success: true, messageId: msg.id, from: msg.from, to: msg.to };
   if (_cooldownApplied > 0) result.cooldown_applied_ms = _cooldownApplied;
   if (channel) result.channel = channel;
   if (currentBranch !== 'main') result.branch = currentBranch;
+  // Response budget hint
+  if (isGroupMode() && unaddressedSends >= 2 && !msg.addressed_to) {
+    result._budget_hint = 'Response budget depleted (2 unaddressed sends in 60s). Wait to be addressed or wait for budget reset.';
+  }
   if (!recipientAlive) {
     result.warning = `Agent "${to}" appears offline (PID not running). Message queued but may not be received until they reconnect.`;
   } else if (agents[to] && !agents[to].listening_since) {
@@ -1071,6 +1110,11 @@ function toolBroadcast(content) {
     }
   }
 
+  // Send-after-listen enforcement applies to broadcast too
+  if (isGroupMode() && sendsSinceLastListen >= sendLimit) {
+    return { error: `You must call listen_group() before broadcasting again. You've sent ${sendsSinceLastListen} message(s) without listening.` };
+  }
+
   const rateErr = checkRateLimit();
   if (rateErr) return rateErr;
 
@@ -1102,6 +1146,8 @@ function toolBroadcast(content) {
     fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
     touchActivity();
     lastSentAt = Date.now();
+    sendsSinceLastListen++;
+    unaddressedSends++; // broadcasts are always unaddressed
     const aliveOthers = otherAgents.filter(n => { const a = agents[n]; return isPidAlive(a.pid, a.last_activity); });
     const result = { success: true, messageId: msg.id, recipient_count: aliveOthers.length, sent_to: aliveOthers.map(n => ({ to: n, messageId: msg.id })) };
     // Nudge for own unread messages
@@ -1217,7 +1263,16 @@ function toolCheckMessages(from = null) {
   }
 
   const unconsumed = getUnconsumedMessages(registeredName, from);
-  return {
+
+  // Rich summary: senders, addressed count, urgency — same as enhanced nudge
+  const senders = {};
+  let addressedCount = 0;
+  for (const m of unconsumed) {
+    senders[m.from] = (senders[m.from] || 0) + 1;
+    if (m.addressed_to && m.addressed_to.includes(registeredName)) addressedCount++;
+  }
+
+  const result = {
     count: unconsumed.length,
     messages: unconsumed.map(m => ({
       id: m.id,
@@ -1226,8 +1281,20 @@ function toolCheckMessages(from = null) {
       timestamp: m.timestamp,
       ...(m.reply_to && { reply_to: m.reply_to }),
       ...(m.thread_id && { thread_id: m.thread_id }),
+      ...(m.addressed_to && { addressed_to: m.addressed_to }),
     })),
   };
+
+  if (unconsumed.length > 0) {
+    result.senders = senders;
+    result.addressed_to_you = addressedCount;
+    const latest = unconsumed[unconsumed.length - 1];
+    result.preview = `${latest.from}: "${latest.content.substring(0, 80).replace(/\n/g, ' ')}..."`;
+    const oldestAge = Math.round((Date.now() - new Date(unconsumed[0].timestamp).getTime()) / 1000);
+    result.urgency = oldestAge > 120 ? 'critical' : oldestAge > 30 ? 'urgent' : 'normal';
+  }
+
+  return result;
 }
 
 function toolAckMessage(messageId) {
@@ -1246,7 +1313,7 @@ function toolAckMessage(messageId) {
     acked_by: registeredName,
     acked_at: new Date().toISOString(),
   };
-  fs.writeFileSync(ACKS_FILE, JSON.stringify(acks, null, 2));
+  fs.writeFileSync(ACKS_FILE, JSON.stringify(acks));
   touchActivity();
 
   return { success: true, message: `Message ${messageId} acknowledged` };
@@ -1572,6 +1639,8 @@ async function toolListenGroup() {
   setListening(true);
 
   const consumed = getConsumedIds(registeredName);
+  const idleThreshold = 60000; // 60s of no messages → return idle suggestions
+  const listenStarted = Date.now();
 
   // Poll indefinitely (in 5-min chunks to stay within any MCP limits, same as listen())
   while (true) {
@@ -1614,6 +1683,12 @@ async function toolListenGroup() {
       touchActivity();
       setListening(false);
 
+      // Reset send counters: listening resets the send-after-listen enforcement
+      sendsSinceLastListen = 0;
+      // Set send limit based on whether any message addresses this agent
+      const wasAddressed = batch.some(m => m.addressed_to && m.addressed_to.includes(registeredName));
+      sendLimit = wasAddressed ? 2 : 1; // addressed = 2 sends (response + follow-up), otherwise 1
+
       // Post-receive stagger: deterministic delay based on agent name
       // Prevents all agents from responding simultaneously to the same batch
       const staggerMs = hashStagger(registeredName);
@@ -1650,16 +1725,39 @@ async function toolListenGroup() {
       }
       const batchSummary = `${batch.length} messages: ${summaryParts.join(', ')}`;
 
-      // Get recent history for context
-      const history = readJsonl(getHistoryFile(currentBranch));
-      const recentHistory = history.slice(-20).map(m => ({
-        from: m.from, to: m.to, content: m.content.substring(0, 500),
-        timestamp: m.timestamp, id: m.id,
-      }));
-
-      // Count agents and who hasn't spoken recently
+      // Count agents first (needed by smart context sizing)
       const agents = getAgents();
       const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+
+      // Smart context — priority partitions instead of dumb chronological
+      const history = readJsonl(getHistoryFile(currentBranch));
+      const contextSize = Math.min(50, Math.max(20, agentNames.length * 5));
+      const myChannels = getAgentChannels(registeredName);
+      const seen = new Set();
+
+      // Bucket A: messages addressed to me (sacred — always included, up to 10)
+      const bucketA = history.filter(m => m.addressed_to && m.addressed_to.includes(registeredName)).slice(-10);
+      bucketA.forEach(m => seen.add(m.id));
+
+      // Bucket B: messages from my channels (capped to fit after A)
+      const maxB = Math.min(15, contextSize - bucketA.length);
+      const bucketB = maxB > 0 ? history.filter(m => m.channel && myChannels.includes(m.channel) && !seen.has(m.id)).slice(-maxB) : [];
+      bucketB.forEach(m => seen.add(m.id));
+
+      // Bucket C: recent chronological (fill remaining after A+B)
+      const remaining = contextSize - bucketA.length - bucketB.length;
+      const bucketC = remaining > 0 ? history.filter(m => !seen.has(m.id)).slice(-remaining) : [];
+
+      // Merge and sort — total guaranteed <= contextSize, A always survives
+      const smartHistory = [...bucketA, ...bucketB, ...bucketC].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      const recentHistory = smartHistory.map(m => ({
+        from: m.from, to: m.to, content: m.content.substring(0, 500),
+        timestamp: m.timestamp, id: m.id,
+        ...(m.channel && { channel: m.channel }),
+        ...(m.addressed_to && { addressed_to: m.addressed_to }),
+      }));
+
+      // Who hasn't spoken recently (agents/agentNames already declared above)
       const recentSpeakers = new Set(history.slice(-10).map(m => m.from));
       const silent = agentNames.filter(n => !recentSpeakers.has(n) && n !== registeredName);
 
@@ -1692,11 +1790,10 @@ async function toolListenGroup() {
           if (agents[n].listening_since) {
             acc[n] = 'listening';
           } else {
-            // Check for unresponsive: not listening, >2min since last listen, has pending messages
+            // Check for unresponsive: not listening, >2min since last listen
             const lastListened = agents[n].last_listened_at;
             const sinceLastListen = lastListened ? Date.now() - new Date(lastListened).getTime() : Infinity;
-            const pendingForAgent = getUnconsumedMessages(n);
-            if (sinceLastListen > 120000 && pendingForAgent.length > 0) {
+            if (sinceLastListen > 120000) {
               acc[n] = 'unresponsive';
             } else {
               acc[n] = 'working';
@@ -1741,6 +1838,44 @@ async function toolListenGroup() {
 
       result.next_action = 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
       return result;
+    }
+
+    // Idle detection: after 60s of no messages, return with work suggestions
+    if (Date.now() - listenStarted > idleThreshold) {
+      setListening(false);
+      touchActivity();
+
+      // Reset send counters (listening counts as a listen cycle)
+      sendsSinceLastListen = 0;
+      sendLimit = 1;
+
+      const agents = getAgents();
+      const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+
+      // Proactive work suggestions
+      const suggestion = toolSuggestTask();
+      const myTasks = getTasks().filter(t => t.assignee === registeredName && t.status === 'in_progress');
+      const pendingReviews = getReviews().filter(r => r.status === 'pending' && r.requested_by !== registeredName);
+      const unresolved = getDeps().filter(d => !d.resolved);
+
+      const workItems = [];
+      if (myTasks.length > 0) workItems.push(`You have ${myTasks.length} task(s) in progress: ${myTasks.map(t => `"${t.title}" (${t.id})`).join(', ')}`);
+      if (pendingReviews.length > 0) workItems.push(`${pendingReviews.length} code review(s) waiting`);
+      if (unresolved.length > 0) workItems.push(`${unresolved.length} blocked dependency(s) to resolve`);
+
+      return {
+        idle: true,
+        idle_seconds: Math.round((Date.now() - listenStarted) / 1000),
+        messages: [],
+        message_count: 0,
+        agents_online: agentNames.length,
+        work_suggestions: workItems.length > 0 ? workItems : ['No pending work. Ask the team what needs doing, or propose a new task.'],
+        suggestion: suggestion.suggestion !== 'none' ? suggestion : undefined,
+        instructions: myTasks.length > 0
+          ? `No new messages for ${Math.round((Date.now() - listenStarted) / 1000)}s. Continue working on your in-progress task(s), then call listen_group() again.`
+          : `No new messages for ${Math.round((Date.now() - listenStarted) / 1000)}s. ${suggestion.message || 'Ask the team what needs doing next.'}`,
+        next_action: 'Do some work (suggest_task, continue tasks, review code), then call listen_group() again.',
+      };
     }
 
     await adaptiveSleep(0);
@@ -1928,12 +2063,15 @@ function toolShareFile(filePath, to = null, summary = null) {
 // --- Task management ---
 
 function getTasks() {
-  if (!fs.existsSync(TASKS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8')); } catch { return []; }
+  return cachedRead('tasks', () => {
+    if (!fs.existsSync(TASKS_FILE)) return [];
+    try { return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8')); } catch { return []; }
+  }, 2000);
 }
 
 function saveTasks(tasks) {
-  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
+  invalidateCache('tasks');
+  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks));
 }
 
 function toolCreateTask(title, description = '', assignee = null) {
@@ -1968,12 +2106,38 @@ function toolCreateTask(title, description = '', assignee = null) {
   };
 
   ensureDataDir();
+
+  // Task-channel auto-binding: with 5+ agents and an assignee, auto-create a task channel
+  // This naturally splits 10-agent noise into focused sub-teams
+  let taskChannel = null;
+  const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+  if (assignee && aliveCount >= 5 && isGroupMode()) {
+    const shortId = task.id.replace('task_', '').substring(0, 6);
+    taskChannel = `task-${shortId}`;
+    const channels = getChannelsData();
+    if (!channels[taskChannel]) {
+      channels[taskChannel] = {
+        description: `Task: ${title.substring(0, 100)}`,
+        members: [registeredName],
+        created_by: '__system__',
+        created_at: new Date().toISOString(),
+        task_id: task.id,
+      };
+      if (assignee && assignee !== registeredName) channels[taskChannel].members.push(assignee);
+      saveChannelsData(channels);
+    }
+    task.channel = taskChannel;
+  }
+
   const tasks = getTasks();
+  if (tasks.length >= 1000) return { error: 'Task limit reached (max 1000). Complete or remove existing tasks first.' };
   tasks.push(task);
   saveTasks(tasks);
   touchActivity();
 
-  return { success: true, task_id: task.id, assignee: task.assignee };
+  const result = { success: true, task_id: task.id, assignee: task.assignee };
+  if (taskChannel) result.channel = taskChannel;
+  return result;
 }
 
 function toolUpdateTask(taskId, status, notes = null) {
@@ -2010,6 +2174,15 @@ function toolUpdateTask(taskId, status, notes = null) {
   saveTasks(tasks);
   touchActivity();
 
+  // Task-channel auto-join: when claiming a task that has a channel, auto-join it
+  if (status === 'in_progress' && task.channel) {
+    const channels = getChannelsData();
+    if (channels[task.channel] && !channels[task.channel].members.includes(registeredName)) {
+      channels[task.channel].members.push(registeredName);
+      saveChannelsData(channels);
+    }
+  }
+
   // Event hooks: task completion
   if (status === 'done') {
     fireEvent('task_complete', { title: task.title, created_by: task.created_by });
@@ -2025,6 +2198,15 @@ function toolUpdateTask(taskId, status, notes = null) {
       }
     }
     writeJsonFile(DEPS_FILE, deps);
+
+    // Task-channel auto-cleanup: archive task channel when task is done
+    if (task.channel) {
+      const channels = getChannelsData();
+      if (channels[task.channel]) {
+        delete channels[task.channel];
+        saveChannelsData(channels);
+      }
+    }
   }
 
   return { success: true, task_id: task.id, status: task.status, title: task.title };
@@ -2278,6 +2460,7 @@ function toolCreateWorkflow(name, steps) {
     updated_at: new Date().toISOString(),
   };
 
+  if (workflows.length >= 500) return { error: 'Workflow limit reached (max 500).' };
   workflows.push(workflow);
   ensureDataDir();
   saveWorkflows(workflows);
@@ -2371,6 +2554,7 @@ function toolForkConversation(fromMessageId, branchName) {
   sanitizeName(branchName);
 
   const branches = getBranches();
+  if (Object.keys(branches).length >= 100) return { error: 'Branch limit reached (max 100).' };
   if (branches[branchName]) return { error: `Branch "${branchName}" already exists` };
 
   const history = readJsonl(getHistoryFile(currentBranch));
@@ -2444,7 +2628,7 @@ function toolListBranches() {
 
 // Helpers for new data files
 function readJsonFile(file) { if (!fs.existsSync(file)) return null; try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
-function writeJsonFile(file, data) { ensureDataDir(); fs.writeFileSync(file, JSON.stringify(data, null, 2)); }
+function writeJsonFile(file, data) { ensureDataDir(); fs.writeFileSync(file, JSON.stringify(data)); }
 
 function getDecisions() { return readJsonFile(DECISIONS_FILE) || []; }
 function getKB() { return readJsonFile(KB_FILE) || {}; }
@@ -2458,12 +2642,14 @@ function getDeps() { return readJsonFile(DEPS_FILE) || []; }
 const CHANNELS_FILE_PATH = path.join(DATA_DIR, 'channels.json');
 
 function getChannelsData() {
-  const data = readJsonFile(CHANNELS_FILE_PATH);
-  if (!data) return { general: { description: 'General channel — all agents', members: ['*'], created_by: 'system', created_at: new Date().toISOString() } };
-  return data;
+  return cachedRead('channels', () => {
+    const data = readJsonFile(CHANNELS_FILE_PATH);
+    if (!data) return { general: { description: 'General channel — all agents', members: ['*'], created_by: 'system', created_at: new Date().toISOString() } };
+    return data;
+  }, 3000);
 }
 
-function saveChannelsData(channels) { writeJsonFile(CHANNELS_FILE_PATH, channels); }
+function saveChannelsData(channels) { writeJsonFile(CHANNELS_FILE_PATH, channels); invalidateCache('channels'); }
 
 function getChannelMessagesFile(channelName) {
   if (!channelName || channelName === 'general') return getMessagesFile(currentBranch);
@@ -2502,11 +2688,12 @@ function cleanStaleChannelMembers() {
 
 function toolJoinChannel(channelName, description) {
   if (!registeredName) return { error: 'You must call register() first' };
-  if (typeof channelName !== 'string' || channelName.length < 1 || channelName.length > 30) return { error: 'Channel name must be 1-30 chars' };
+  if (typeof channelName !== 'string' || channelName.length < 1 || channelName.length > 20) return { error: 'Channel name must be 1-20 chars' };
   sanitizeName(channelName);
 
   const channels = getChannelsData();
   if (!channels[channelName]) {
+    if (Object.keys(channels).length >= 100) return { error: 'Channel limit reached (max 100).' };
     // Create new channel
     channels[channelName] = {
       description: (description || '').substring(0, 200),
@@ -2841,6 +3028,7 @@ function toolCallVote(question, options) {
   if (!Array.isArray(options) || options.length < 2 || options.length > 10) return { error: 'Need 2-10 options' };
 
   const votes = getVotes();
+  if (votes.length >= 500) return { error: 'Vote limit reached (max 500).' };
   const vote = {
     id: 'vote_' + generateId(),
     question,
@@ -2907,6 +3095,7 @@ function toolRequestReview(filePath, description) {
   if (typeof filePath !== 'string' || filePath.length < 1) return { error: 'File path required' };
 
   const reviews = getReviews();
+  if (reviews.length >= 500) return { error: 'Review limit reached (max 500).' };
   const review = {
     id: 'rev_' + generateId(),
     file: filePath.replace(/\\/g, '/'),
@@ -2962,6 +3151,7 @@ function toolDeclareDependency(taskId, dependsOnTaskId) {
   if (!depTask) return { error: `Dependency task not found: ${dependsOnTaskId}` };
 
   const deps = getDeps();
+  if (deps.length >= 1000) return { error: 'Dependency limit reached (max 1000).' };
   deps.push({
     id: 'dep_' + generateId(),
     task_id: taskId,
@@ -3178,7 +3368,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.10.1' },
+  { name: 'agent-bridge', version: '4.0.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -3967,24 +4157,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // Global hook: on non-listen tools, check for pending messages and nudge with escalating urgency
+    // Enhanced nudge: includes sender names, addressed count, and message preview
     const listenTools = ['listen', 'listen_group', 'listen_codex', 'wait_for_reply', 'check_messages'];
     if (registeredName && !listenTools.includes(name) && (isGroupMode() || isManagedMode())) {
       try {
         const pending = getUnconsumedMessages(registeredName);
         if (pending.length > 0 && !result.you_have_messages) {
+          // Build rich nudge: WHO sent, WHETHER addressed, WHAT preview
+          const senders = {};
+          let addressedCount = 0;
+          for (const m of pending) {
+            senders[m.from] = (senders[m.from] || 0) + 1;
+            if (m.addressed_to && m.addressed_to.includes(registeredName)) addressedCount++;
+          }
+          const senderSummary = Object.entries(senders).map(([n, c]) => `${c} from ${n}`).join(', ');
+          const latest = pending[pending.length - 1];
+          const preview = latest.content.substring(0, 80).replace(/\n/g, ' ');
+
           result._pending_messages = pending.length;
+          result._senders = senders;
+          result._addressed_to_you = addressedCount;
+          result._preview = `${latest.from}: "${preview}..."`;
+
           // Escalate urgency based on oldest pending message age
           const oldestAge = pending.reduce((max, m) => {
             const age = Date.now() - new Date(m.timestamp).getTime();
             return age > max ? age : max;
           }, 0);
           const ageSec = Math.round(oldestAge / 1000);
+          const addressedHint = addressedCount > 0 ? ` (${addressedCount} addressed to you)` : '';
           if (ageSec > 120) {
-            result._nudge = `CRITICAL: ${pending.length} message(s) waiting ${Math.round(ageSec / 60)}+ min. Team is likely blocked on you. Call listen_group() NOW.`;
+            result._nudge = `CRITICAL: ${pending.length} messages waiting ${Math.round(ageSec / 60)}+ min${addressedHint}: ${senderSummary}. Latest: "${preview}...". Call listen_group() NOW.`;
           } else if (ageSec > 30) {
-            result._nudge = `URGENT: ${pending.length} message(s) waiting ${ageSec}s. Team may be blocked. Call listen_group() soon.`;
+            result._nudge = `URGENT: ${pending.length} messages waiting ${ageSec}s${addressedHint}: ${senderSummary}. Latest: "${preview}...". Call listen_group() soon.`;
           } else {
-            result._nudge = `You have ${pending.length} unread message(s). Call listen_group() after this to read them.`;
+            result._nudge = `${pending.length} messages waiting${addressedHint}: ${senderSummary}. Latest: "${preview}...". Call listen_group().`;
           }
         }
       } catch {}
