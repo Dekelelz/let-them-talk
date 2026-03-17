@@ -1,6 +1,6 @@
 {
   "name": "let-them-talk",
-  "version": "3.9.1",
+  "version": "3.10.0",
   "description": "MCP message broker + web dashboard for inter-agent communication. Let AI CLI agents talk to each other.",
   "main": "server.js",
   "bin": {

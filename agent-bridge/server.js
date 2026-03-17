@@ -569,6 +569,75 @@ function getHistoryFile(branch) {
   return path.join(DATA_DIR, `branch-${sanitizeName(branch)}-history.jsonl`);
 }
 
+// --- Dynamic Guide (progressive disclosure) ---
+
+function buildGuide() {
+  const agents = getAgents();
+  const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+  const mode = getConfig().conversation_mode || 'direct';
+  const channels = getChannelsData();
+  const hasChannels = Object.keys(channels).length > 1; // more than just #general
+  const hasTasks = getTasks().length > 0;
+
+  const rules = [];
+
+  // Tier 0 — THE one rule (always)
+  rules.push('AFTER EVERY ACTION, call listen_group(). This is how you receive messages. Never skip this.');
+
+  // Tier 1 — core behavior (always)
+  rules.push('Call get_briefing() when joining a project or after being away.');
+  rules.push('Keep messages to 2-3 paragraphs max.');
+  rules.push('When you finish work, report what you did and what files you changed.');
+  rules.push('Lock files before editing shared code (lock_file / unlock_file).');
+
+  // Tier 2 — group mode features (shown when group or managed mode)
+  if (mode === 'group' || mode === 'managed') {
+    rules.push('Use reply_to when responding — you get faster cooldown (500ms vs default).');
+    rules.push('Messages not addressed to you show should_respond: false. Only respond if you have something new to add.');
+    rules.push('Log team decisions with log_decision() so they are not re-debated.');
+  }
+
+  // Tier 2b — channels (shown when channels exist beyond #general)
+  if (hasChannels) {
+    rules.push('Join relevant channels with join_channel(). You only see messages from channels you joined.');
+    rules.push('Use channel parameter on send_message to keep discussions focused.');
+  }
+
+  // Tier 3 — large teams (shown when 5+ agents)
+  if (aliveCount >= 5) {
+    rules.push('If listen_group returns no messages for 2 polls, call suggest_task() to find work.');
+    rules.push('Use channels to split into sub-teams. Do not discuss everything in #general.');
+  }
+
+  // User-customizable project-specific rules from .agent-bridge/guide.md
+  const guideFile = path.join(DATA_DIR, 'guide.md');
+  let projectRules = [];
+  if (fs.existsSync(guideFile)) {
+    try {
+      const content = fs.readFileSync(guideFile, 'utf8').trim();
+      if (content) projectRules = content.split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+    } catch {}
+  }
+
+  return {
+    rules,
+    project_rules: projectRules.length > 0 ? projectRules : undefined,
+    tier_info: `${rules.length} rules (${aliveCount} agents, ${mode} mode${hasChannels ? ', channels active' : ''})`,
+    first_steps: mode === 'direct'
+      ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait.'
+      : '1. Call get_briefing() for project context. 2. Call listen_group() to join. 3. Respond and listen_group() again.',
+    tool_categories: {
+      'MESSAGING': 'send_message, broadcast, listen_group, listen, check_messages, get_history, get_summary, handoff, share_file',
+      'COORDINATION': 'get_briefing, log_decision, get_decisions, kb_write, kb_read, kb_list, call_vote, cast_vote, vote_status',
+      'TASKS': 'create_task, update_task, list_tasks, declare_dependency, check_dependencies, suggest_task',
+      'QUALITY': 'update_progress, get_progress, request_review, submit_review, get_reputation',
+      'SAFETY': 'lock_file, unlock_file',
+      'CHANNELS': 'join_channel, leave_channel, list_channels',
+      ...(mode === 'managed' ? { 'MANAGED MODE': 'claim_manager, yield_floor, set_phase' } : {}),
+    },
+  };
+}
+
 // --- Tool implementations ---
 
 function toolRegister(name, provider = null) {
@@ -667,33 +736,7 @@ function toolRegister(name, provider = null) {
       message: `Registered as Agent ${name} (PID ${process.pid})`,
       conversation_mode: mode,
       agents_online: otherAgents,
-      guide: {
-        critical_rules: [
-          'AFTER EVERY ACTION YOU TAKE, call listen_group() (group/managed mode) or listen() (direct mode) immediately. This is how you receive messages. If you stop listening, you are invisible to the team.',
-          'Never send multiple messages in a row without calling listen_group() between them — you will miss responses.',
-          'Keep messages concise. 2-3 paragraphs max. No essays.',
-          'When you finish a task, report what you did AND what files you changed, then listen again.',
-        ],
-        first_steps: mode === 'direct'
-          ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait for one.'
-          : '1. Call get_briefing() for full project context. 2. Call listen_group() to join the conversation. 3. When you receive messages, respond and immediately call listen_group() again.',
-        tool_categories: {
-          'MESSAGING (always use these)': 'send_message, broadcast, listen_group (group/managed), listen (direct), check_messages, get_history, get_summary, handoff, share_file',
-          'TEAM COORDINATION': 'get_briefing (project overview), log_decision / get_decisions (prevent re-debating), kb_write / kb_read (shared knowledge), call_vote / cast_vote (team decisions)',
-          'TASK MANAGEMENT': 'create_task, update_task, list_tasks, declare_dependency, check_dependencies, suggest_task (what should I do next?)',
-          'PROGRESS & QUALITY': 'update_progress / get_progress (feature %), request_review / submit_review (code review), get_reputation (leaderboard)',
-          'FILE SAFETY': 'lock_file / unlock_file (prevent conflicts — ALWAYS lock before editing shared files)',
-          'PROFILES & WORKSPACES': 'update_profile, workspace_write / workspace_read (personal storage)',
-          'MANAGED MODE (if active)': 'claim_manager, yield_floor, set_phase — only the manager uses these',
-        },
-        patterns: {
-          'Starting work': 'get_briefing → check list_tasks → claim a task with update_task(id, "in_progress") → lock_file → do the work → unlock_file → update_task(id, "done") → listen_group',
-          'Sharing knowledge': 'kb_write("api-schema", "POST /auth → {token}") — so others can kb_read it without asking you',
-          'Making decisions': 'log_decision("Use PostgreSQL", "Better JSON support") — so no one re-debates this later',
-          'Disagreements': 'call_vote("Use Redis for caching?", ["yes", "no"]) — let the team decide democratically',
-          'Code review': 'request_review("src/auth.ts", "Check token expiry logic") — another agent will review and approve/request changes',
-        },
-      },
+      guide: buildGuide(),
     };
 
     // Recovery: if this agent has prior data, include it
@@ -2566,30 +2609,10 @@ function fireEvent(eventName, data) {
 
 function toolGetGuide() {
   if (!registeredName) return { error: 'You must call register() first' };
-  const config = getConfig();
-  const mode = config.conversation_mode || 'direct';
-  return {
-    your_name: registeredName,
-    conversation_mode: mode,
-    critical_rules: [
-      'AFTER EVERY ACTION, call listen_group() (group/managed) or listen() (direct). This is how you receive messages.',
-      'Never send multiple messages without listening between them.',
-      'Keep messages concise — 2-3 paragraphs max.',
-      'When you finish a task, report what you did + files changed, then listen again.',
-      'ALWAYS lock_file() before editing shared files, unlock_file() when done.',
-      'Use log_decision() for any team decisions so they are not re-debated.',
-      'Use kb_write() to share knowledge (API specs, conventions) so others can read without asking.',
-    ],
-    tool_categories: {
-      'MESSAGING': 'send_message, broadcast, listen_group, listen, check_messages, get_history, get_summary, handoff, share_file',
-      'COORDINATION': 'get_briefing, log_decision, get_decisions, kb_write, kb_read, kb_list, call_vote, cast_vote, vote_status',
-      'TASKS': 'create_task, update_task, list_tasks, declare_dependency, check_dependencies, suggest_task',
-      'QUALITY': 'update_progress, get_progress, request_review, submit_review, get_reputation',
-      'SAFETY': 'lock_file, unlock_file',
-      'MANAGED MODE': 'claim_manager, yield_floor, set_phase (manager only)',
-    },
-    workflow: '1. get_briefing → 2. check list_tasks/suggest_task → 3. claim task → 4. lock_file → 5. do work → 6. unlock_file → 7. update_task done → 8. listen_group',
-  };
+  const guide = buildGuide();
+  guide.your_name = registeredName;
+  guide.workflow = '1. get_briefing → 2. list_tasks/suggest_task → 3. claim task → 4. lock_file → 5. work → 6. unlock_file → 7. update_task done → 8. listen_group';
+  return guide;
 }
 
 function toolGetBriefing() {
@@ -3152,7 +3175,7 @@ function toolSuggestTask() {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '3.9.1' },
+  { name: 'agent-bridge', version: '3.10.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -4006,7 +4029,7 @@ async function main() {
   ensureDataDir();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Agent Bridge MCP server v3.9.1 running (56 tools)');
+  console.error('Agent Bridge MCP server v3.10.0 running (56 tools)');
 }
 
 main().catch(console.error);
