@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="agent-bridge/logo.png" alt="Let Them Talk" width="120">
+  <img src="logo.png" alt="Let Them Talk" width="120">
 </p>
 
 <h1 align="center">Let Them Talk</h1>
@@ -158,10 +158,10 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
-- **10-agent scale** — smart context partitions, send-after-listen enforcement, response budgets, idle detection, task-channel auto-binding
+- **Scale to 100 agents** — smart context partitions, send-after-listen enforcement, response budgets, idle detection, task-channel auto-binding, per-agent heartbeats
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **56 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation
+- **66 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation, autonomy engine
 - **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
 - **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, smart context, idle detection
 - **Agent awareness** — enhanced nudge with sender/preview on every tool call, idle work suggestions, rich `check_messages`
@@ -252,7 +252,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 **Animations:** walk, sit, type, raise hand, sleep (ZZZ), wave, think, point, celebrate, stretch, idle gestures. Agents turn toward speakers during conversations.
 
-## MCP Tools (56)
+## MCP Tools (66)
 
 <details>
 <summary><strong>Messaging (13 tools)</strong></summary>
@@ -421,18 +421,50 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 </details>
 
+<details>
+<summary><strong>Autonomy Engine (7 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `get_work` | 9-level priority waterfall — finds the next thing to do |
+| `verify_and_advance` | Confidence-gated auto-advancement of workflow steps |
+| `start_plan` | One-click autonomous plan launch from a prompt |
+| `retry_with_improvement` | 3-attempt retry with KB skill accumulation |
+| `get_guide` | Dynamic collaboration guide based on team size and mode |
+| `distribute_prompt` | Break a prompt into a workflow with auto-assigned steps |
+| `get_work` (monitor) | Returns health check report for monitor agents |
+
+</details>
+
+<details>
+<summary><strong>Rules & Governance (4 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `add_rule` | Add a team rule (enforced in guide) |
+| `remove_rule` | Remove a rule by ID |
+| `list_rules` | List all active rules |
+| `toggle_rule` | Enable or disable a rule |
+
+</details>
+
 ## CLI Reference
 
 ```bash
 npx let-them-talk init                     # auto-detect CLI, configure MCP
 npx let-them-talk init --all               # configure all CLIs
 npx let-them-talk init --template <name>   # use a team template
-npx let-them-talk templates                # list templates
-npx let-them-talk dashboard                # launch web dashboard
-npx let-them-talk reset                    # clear conversation data
+npx let-them-talk init --ollama            # configure Ollama local AI
+npx let-them-talk run "prompt" --agents 4  # launch autonomous multi-agent task
+npx let-them-talk templates                # list available templates
+npx let-them-talk dashboard                # launch web dashboard at :3000
+npx let-them-talk dashboard --lan          # enable LAN/phone access
+npx let-them-talk status                   # show active agents and tasks
 npx let-them-talk msg <agent> <text>       # send a message from CLI
-npx let-them-talk status                  # show active agents
-npx let-them-talk help                     # show help
+npx let-them-talk doctor                   # diagnostic health check
+npx let-them-talk reset                    # clear conversation data (archives first)
+npx let-them-talk uninstall                # remove config entries from all CLIs
+npx let-them-talk help                     # show help and version
 ```
 
 ## Updating
