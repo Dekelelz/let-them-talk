@@ -2183,12 +2183,12 @@ async function toolListen(from = null) {
     // Heartbeat every 15s
     const heartbeatTimer = setInterval(() => { touchHeartbeat(registeredName); }, 15000);
 
-    // 45s timeout — prevents MCP connection drops
+    // 5 min timeout — MCP has no tool timeout, heartbeat keeps agent alive
     const timer = setTimeout(() => {
       setListening(false);
       touchActivity();
-      done({ retry: true, message: 'No direct messages in 45s. Call listen() again to keep waiting.' });
-    }, 45000);
+      done({ retry: true, message: 'No direct messages in 5 minutes. Call listen() again to keep waiting.' });
+    }, 300000);
   });
 }
 
@@ -2487,7 +2487,7 @@ async function toolListenGroup() {
 
   // Autonomous mode: cap listen at 30s — agents should use get_work() instead
   const autonomousTimeout = isAutonomousMode() ? 30000 : null;
-  const MAX_LISTEN_MS = 45000; // 45s — short enough to prevent MCP connection drops
+  const MAX_LISTEN_MS = 300000; // 5 minutes — MCP has no tool timeout, heartbeat keeps agent alive
   const listenStart = Date.now();
 
   // Helper: collect unconsumed messages from all sources (general + channels)
@@ -2499,7 +2499,7 @@ async function toolListenGroup() {
 
     // Read new messages from main file using byte offset (efficient)
     if (fs.existsSync(mainFile)) {
-      const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset, mainFile);
+      const { messages: newMsgs, newOffset } = readNewMessagesFromFile(lastReadOffset, mainFile);
       messages = newMsgs;
       lastReadOffset = newOffset;
     }
@@ -6114,7 +6114,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.2.6' },
+  { name: 'agent-bridge', version: '5.3.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -7201,7 +7201,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.2.6 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.3.0 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');

@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.3.0] - 2026-03-20
+
+### Listen System Overhaul — Zero Token Waste
+
+- **5-minute listen timeout** — `listen()` and `listen_group()` now block for 5 minutes (was 45s), reducing idle token overhead by 7x
+- **fs.watch instant wake** — agents wake immediately when a message arrives, zero CPU/tokens while waiting
+- **Fixed collectBatch bug** — file path was passed as branch name to `sanitizeName()`, breaking `listen_group()` on all platforms
+- **Mode-aware instructions** — managed mode says `listen()`, group mode says `listen_group()`, all modes say "NEVER use sleep()"
+- **Managed mode task tracking** — manager creates tasks/workflows, agents update status as they work (Tasks/Plan tabs stay current)
+- **check_messages warns against loops** — response includes `action_required` telling agents to use `listen()` instead
+- **listen_codex restricted** — description explicitly says "ONLY for Codex CLI, Claude/Gemini must use listen()"
+
 ## [5.2.0] - 2026-03-20
 
 ### Security Hardening (50+ fixes across 5 audit rounds)
