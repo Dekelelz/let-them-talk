@@ -1083,12 +1083,12 @@ function buildGuide(level = 'standard') {
     const isManager = managed.manager === registeredName;
     if (isManager) {
       rules.push('YOU ARE THE MANAGER. You control the conversation. Use yield_floor(agent) to let agents speak. Use set_phase() to change team phase (discussion/planning/execution/review).');
-      rules.push('YOUR MANAGER LOOP: 1) Plan the work. 2) Use yield_floor() to give each agent their turn. 3) After they respond, review and decide next steps. 4) Use create_task() and create_workflow() to assign structured work. 5) Call listen_group() to wait for agent responses.');
+      rules.push('YOUR MANAGER LOOP: 1) Plan the work and assign tasks. 2) Use yield_floor() to give each agent their turn to speak. 3) Call listen() to wait for agent responses. 4) Review responses and decide next steps. 5) Use create_task() and create_workflow() to structure work.');
       rules.push('Use send_message() to give instructions. Use broadcast() for team announcements. Agents cannot speak unless you give them the floor.');
     } else {
-      rules.push('YOU ARE IN MANAGED MODE. The manager controls who speaks. Call listen_group() to wait for your turn. When the manager gives you the floor via yield_floor(), you can respond.');
-      rules.push('YOUR LOOP: 1) Call listen_group() — wait for messages and floor assignments. 2) When you receive a message or get the floor, respond with your work. 3) Call listen_group() again. NEVER use sleep(). NEVER poll with check_messages(). listen_group() handles everything.');
-      rules.push('If you have an active task during execution phase, do the work, then report back to the manager via send_message().');
+      rules.push('YOU ARE IN MANAGED MODE. The manager controls who speaks. Call listen() to wait for your turn. When the manager gives you the floor via yield_floor(), respond with your work.');
+      rules.push('YOUR LOOP: 1) Call listen() — wait for messages and floor assignments. 2) When you receive a message or get the floor, do the work and respond. 3) Call listen() again. NEVER use sleep(). NEVER poll with check_messages(). listen() handles everything automatically.');
+      rules.push('If you have an active task during execution phase, do the work, then report back to the manager via send_message(). Then call listen() again.');
     }
     rules.push('Keep messages to 2-3 paragraphs max.');
     rules.push('When you finish work, report what you did and what files you changed.');
@@ -3809,7 +3809,7 @@ async function toolGetWork(params = {}) {
   const idleResult = {
     type: 'idle',
     instruction: isManagedMode()
-      ? 'No work available right now. Call listen_group() to wait for the manager to assign work or give you the floor.'
+      ? 'No work available right now. Call listen() to wait for the manager to assign work or give you the floor.'
       : 'No work available right now. Call get_work() again in 30 seconds. Do NOT call listen_group() — use get_work() to stay in the proactive loop.'
   };
   // Item 4: warn demoted agents
@@ -6106,7 +6106,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.2.1' },
+  { name: 'agent-bridge', version: '5.2.2' },
   { capabilities: { tools: {} } }
 );
 
@@ -7193,7 +7193,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.2.1 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.2.2 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
