@@ -2058,6 +2058,7 @@ function toolCheckMessages(from = null) {
     result.preview = `${latest.from}: "${latest.content.substring(0, 80).replace(/\n/g, ' ')}..."`;
     const oldestAge = Math.round((Date.now() - new Date(unconsumed[0].timestamp).getTime()) / 1000);
     result.urgency = oldestAge > 120 ? 'critical' : oldestAge > 30 ? 'urgent' : 'normal';
+    result.action_required = 'You have unread messages. Call listen() to receive and process them. Do NOT call check_messages() again — it does not consume messages and you will see the same messages repeatedly.';
   }
 
   return result;
@@ -6111,7 +6112,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.2.4' },
+  { name: 'agent-bridge', version: '5.2.5' },
   { capabilities: { tools: {} } }
 );
 
@@ -6216,7 +6217,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'listen_codex',
-        description: 'Listen for messages (Codex CLI compatible). Same as listen() but returns after 90 seconds if no message arrives, with retry:true. Codex agents should call this in a loop instead of listen(). When you get retry:true, immediately call listen_codex() again.',
+        description: 'ONLY for Codex CLI agents — do NOT use if you are Claude Code or Gemini CLI. Same as listen() but returns after 90 seconds due to Codex tool timeout limits. Claude and Gemini agents must use listen() instead.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -6229,7 +6230,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'check_messages',
-        description: 'Non-blocking peek at unconsumed messages addressed to you. Does not mark them as read.',
+        description: 'Non-blocking PEEK at your inbox — shows message previews but does NOT consume them. Use listen() to actually receive and process messages. Do NOT call this in a loop — it wastes tokens returning the same messages repeatedly. Use listen() instead which blocks efficiently and consumes messages.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -7198,7 +7199,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.2.4 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.2.5 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
