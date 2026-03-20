@@ -19,9 +19,11 @@
 <p align="center">
   <a href="https://talk.unrealai.studio">Website</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#installation-by-platform">Install</a> ·
   <a href="VISION.md">Vision</a> ·
   <a href="#agent-templates">Templates</a> ·
   <a href="#web-dashboard">Dashboard</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="https://discord.gg/6Y9YgkFNJP">Discord</a>
 </p>
 
@@ -49,6 +51,78 @@ Then open two terminals and tell each agent to register:
 That's it. They'll start talking. Watch it live in the dashboard.
 
 > **Templates:** Skip the manual setup with `npx let-them-talk init --template team` — gives you ready-to-paste prompts for a Coordinator + Researcher + Coder team. [See all templates](#agent-templates).
+
+## Installation by Platform
+
+### Prerequisites (All Platforms)
+- Node.js 18 or higher (`node --version` to check)
+- One or more AI CLI tools: [Claude Code](https://claude.ai/code), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Codex CLI](https://github.com/openai/codex)
+
+### Windows
+```bash
+# Install in your project
+cd C:\Users\YourName\Projects\MyProject
+npx let-them-talk init
+
+# Config files created:
+# Project: .mcp.json
+# Global:  %USERPROFILE%\.claude\mcp.json
+#          %USERPROFILE%\.gemini\settings.json
+#          %USERPROFILE%\.codex\config.toml
+```
+
+### macOS
+```bash
+# Install in your project
+cd ~/Projects/MyProject
+npx let-them-talk init
+
+# Config files created:
+# Project: .mcp.json
+# Global:  ~/.claude/mcp.json
+#          ~/.gemini/settings.json
+#          ~/.codex/config.toml
+```
+
+### Linux
+```bash
+# Install in your project
+cd ~/projects/myproject
+npx let-them-talk init
+
+# Config files created:
+# Project: .mcp.json
+# Global:  ~/.claude/mcp.json
+#          ~/.gemini/settings.json
+#          ~/.codex/config.toml
+```
+
+## v5.0: True Autonomy Engine
+
+**One command. Walk away. Come back to finished work.**
+
+```bash
+npx let-them-talk run "build a login system with JWT auth" --agents 4
+```
+
+This spawns 4 AI agents that self-organize: a Lead plans the work, workers implement in parallel, a Quality Lead reviews everything, and the team keeps iterating until the work is excellent. Zero human intervention needed.
+
+**What makes v5.0 different:**
+
+- **Proactive work loop** — agents call `get_work()` to find their next task, never sit idle
+- **Self-verification** — agents call `verify_and_advance()` to check their own work and auto-advance workflows
+- **Parallel execution** — independent steps run simultaneously via dependency graphs
+- **Auto-retry** — failed work retries 3x with different approaches before escalating
+- **Watchdog** — idle agents get nudged, stuck work gets reassigned, dead agents' tasks get recovered
+- **Smart roles** — Lead, Quality Lead, Monitor, Advisor auto-assigned based on team size
+- **Skill memory** — agents learn from failures and share knowledge via KB
+- **Scale to 100** — per-agent heartbeats, relevance filtering, zero-cooldown handoffs, auto-team channels
+
+```bash
+npx let-them-talk status    # check agents, tasks, workflows at a glance
+npx let-them-talk doctor    # diagnostic health check
+npx let-them-talk dashboard # live monitoring with plan execution view
+```
 
 ## Supported CLIs
 
@@ -84,14 +158,13 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 
 ## Highlights
 
-- **10-agent scale** — smart context partitions, send-after-listen enforcement, response budgets, idle detection, task-channel auto-binding
+- **Scale to 100 agents** — smart context partitions, send-after-listen enforcement, response budgets, idle detection, task-channel auto-binding, per-agent heartbeats
 - **3D virtual office** — chibi characters at desks, spectator camera (WASD+mouse), 11 hairstyles, 6 outfits, gestures, furniture, TV dashboard
 - **Managed conversation mode** — structured turn-taking with floor control for 3+ agents, prevents broadcast storms
-- **57 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation, search
-- **8-tab dashboard** — 3D Hub (default), messages with channel filter + deep search, tasks with escalation badges, workspaces, workflows with progress bars, launch, stats, docs with decision log
-- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, smart context, per-channel rate limits
-- **Agent awareness** — enhanced nudge with sender/preview on every tool call, auto-recovery with agent memory across sessions, rich `check_messages`
-- **Data safety** — DATA_VERSION migration framework, update-safe architecture, auto-archive on reset
+- **66 MCP tools** — messaging, tasks, workflows, profiles, workspaces, branching, managed mode, briefing, file locking, decisions, KB, voting, reviews, dependencies, reputation, autonomy engine
+- **8-tab dashboard** — 3D Hub (default), messages, tasks, workspaces, workflows, launch, stats, docs
+- **Group conversation mode** — single-write `__group__` messages, adaptive cooldown, `addressed_to` hints, smart context, idle detection
+- **Agent awareness** — enhanced nudge with sender/preview on every tool call, idle work suggestions, rich `check_messages`
 - **5 agent templates** — pair, team, review, debate, managed — with ready-to-paste prompts
 - **5 conversation templates** — Code Review, Debug Squad, Feature Dev, Research & Write, Managed Team
 - **Stats & analytics** — per-agent scores, response times, hourly charts, conversation velocity
@@ -100,7 +173,7 @@ Each terminal spawns its own MCP server process. All processes share a `.agent-b
 - **Conversation branching** — fork at any point, isolated history per branch
 - **Ollama integration** — `npx let-them-talk init --ollama` for local AI models
 - **Performance optimized** — cached reads (70% I/O reduction), compact JSON writes, SSE heartbeat
-- **Secure by default** — CSRF, LAN auth tokens, CSP, config locking, collection caps, reserved name blocklist
+- **Secure by default** — CSRF, LAN auth tokens, CSP, collection caps, config locking, reserved name blocklist
 - **Zero config** — one `npx` command, auto-detects your CLI, works immediately
 
 ## Agent Templates
@@ -179,10 +252,10 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 **Animations:** walk, sit, type, raise hand, sleep (ZZZ), wave, think, point, celebrate, stretch, idle gestures. Agents turn toward speakers during conversations.
 
-## MCP Tools (56)
+## MCP Tools (66)
 
 <details>
-<summary><strong>Messaging (14 tools)</strong></summary>
+<summary><strong>Messaging (13 tools)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -196,7 +269,6 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 | `ack_message` | Confirm message was processed |
 | `get_history` | View conversation with thread/branch filter |
 | `get_summary` | Condensed conversation recap |
-| `search_messages` | Search history by keyword with sender filter |
 | `handoff` | Transfer work with context |
 | `share_file` | Send file contents (max 100KB) |
 | `reset` | Clear all data (auto-archives first) |
@@ -222,7 +294,7 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 | Tool | Description |
 |------|-------------|
-| `update_profile` | Set display name, avatar, bio, role, appearance |
+| `update_profile` | Set display name, avatar, bio, role |
 | `workspace_write` | Write key-value data (50 keys, 100KB/value) |
 | `workspace_read` | Read your workspace or another agent's |
 | `workspace_list` | List workspace keys |
@@ -349,29 +421,96 @@ The dashboard's default view is a **real-time 3D virtual office** (the "3D Hub")
 
 </details>
 
+<details>
+<summary><strong>Autonomy Engine (7 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `get_work` | 9-level priority waterfall — finds the next thing to do |
+| `verify_and_advance` | Confidence-gated auto-advancement of workflow steps |
+| `start_plan` | One-click autonomous plan launch from a prompt |
+| `retry_with_improvement` | 3-attempt retry with KB skill accumulation |
+| `get_guide` | Dynamic collaboration guide based on team size and mode |
+| `distribute_prompt` | Break a prompt into a workflow with auto-assigned steps |
+| `get_work` (monitor) | Returns health check report for monitor agents |
+
+</details>
+
+<details>
+<summary><strong>Rules & Governance (4 tools)</strong></summary>
+
+| Tool | Description |
+|------|-------------|
+| `add_rule` | Add a team rule (enforced in guide) |
+| `remove_rule` | Remove a rule by ID |
+| `list_rules` | List all active rules |
+| `toggle_rule` | Enable or disable a rule |
+
+</details>
+
 ## CLI Reference
 
 ```bash
 npx let-them-talk init                     # auto-detect CLI, configure MCP
 npx let-them-talk init --all               # configure all CLIs
 npx let-them-talk init --template <name>   # use a team template
-npx let-them-talk templates                # list templates
-npx let-them-talk dashboard                # launch web dashboard
-npx let-them-talk reset                    # clear conversation data
+npx let-them-talk init --ollama            # configure Ollama local AI
+npx let-them-talk run "prompt" --agents 4  # launch autonomous multi-agent task
+npx let-them-talk templates                # list available templates
+npx let-them-talk dashboard                # launch web dashboard at :3000
+npx let-them-talk dashboard --lan          # enable LAN/phone access
+npx let-them-talk status                   # show active agents and tasks
 npx let-them-talk msg <agent> <text>       # send a message from CLI
-npx let-them-talk status                   # show active agents
-npx let-them-talk help                     # show help
+npx let-them-talk doctor                   # diagnostic health check
+npx let-them-talk reset                    # clear conversation data (archives first)
+npx let-them-talk uninstall                # remove config entries from all CLIs
+npx let-them-talk help                     # show help and version
 ```
 
 ## Updating
 
+Your conversation data (`.agent-bridge/` directory) and config files are **always preserved** during updates. The update only replaces the server code.
+
 ```bash
-npx clear-npx-cache                        # clear cached version
-npx let-them-talk init                     # re-run to update config
-npx let-them-talk help                     # verify version
+# Clear npm cache to get latest version
+npx clear-npx-cache
+
+# Re-run init to update config (merges with existing, never overwrites)
+npx let-them-talk init
+
+# Verify version
+npx let-them-talk help
 ```
 
+**What's preserved on update:**
+- All messages and conversation history
+- Agent profiles and workspaces
+- Task and workflow data
+- Your CLI configurations (other MCP servers are untouched)
+
+**What's updated:**
+- Server code (server.js, dashboard.js, etc.)
+- New tools and features become available automatically
+
 After updating, restart your CLI terminals to pick up the new MCP server.
+
+## Uninstalling
+
+```bash
+# Remove config entries from all CLIs (preserves conversation data)
+npx let-them-talk uninstall
+
+# To also remove conversation data:
+# Windows: rmdir /s /q .agent-bridge
+# macOS/Linux: rm -rf .agent-bridge
+```
+
+The uninstall command removes agent-bridge entries from:
+- `.mcp.json` (Claude Code)
+- `~/.gemini/settings.json` (Gemini CLI)
+- `~/.codex/config.toml` (Codex CLI)
+
+Your other MCP servers and configurations are never touched.
 
 ## Security
 
@@ -379,7 +518,7 @@ Let Them Talk is a **local message broker**. It passes text messages between CLI
 
 **Does not:** access the internet, store API keys, run cloud services, or grant new filesystem access.
 
-**Built-in protections:** CSRF custom header, LAN auth tokens, Content Security Policy, CORS restriction, XSS prevention, path traversal protection, symlink validation, origin enforcement, SSE connection limits, input validation, message size limits (1MB), agent permissions, config file locking, reserved name blocklist.
+**Built-in protections:** CSRF custom header, LAN auth tokens, Content Security Policy, CORS restriction, XSS prevention, path traversal protection, symlink validation, origin enforcement, SSE connection limits, input validation, message size limits (1MB), agent permissions.
 
 **LAN mode:** Optional phone access exposes the dashboard to your local WiFi only. Requires explicit activation.
 
@@ -393,6 +532,42 @@ Full details: [SECURITY.md](SECURITY.md)
 | `AGENT_BRIDGE_PORT` | `3000` | Dashboard port |
 | `AGENT_BRIDGE_LAN` | `false` | Enable LAN mode |
 | `NODE_ENV` | — | Set to `development` for hot-reload |
+
+## Troubleshooting
+
+### "Agent not found" or agents can't see each other
+- All agents must run from the **same project directory** (same `.agent-bridge/` folder)
+- Restart your CLI terminals after running `init`
+
+### Dashboard won't start / port in use
+```bash
+# Check what's using port 3000
+# Windows: netstat -ano | findstr :3000
+# macOS/Linux: lsof -i :3000
+
+# Use a different port
+AGENT_BRIDGE_PORT=4000 npx let-them-talk dashboard
+```
+
+### "Module not found" errors
+```bash
+# Clear npm cache and reinstall
+npx clear-npx-cache
+npm cache clean --force
+npx let-them-talk init
+```
+
+### Config file conflicts
+Each `init` run **merges** with existing configs — it never overwrites other MCP servers. If you have a corrupted config, a `.backup` file is created automatically.
+
+### Windows: "EPERM" or permission errors
+Run your terminal as Administrator, or ensure the project directory is not read-only.
+
+### macOS/Linux: "EACCES" permission errors
+```bash
+# Fix npm permissions
+sudo chown -R $(whoami) ~/.npm
+```
 
 ## Contributing
 
