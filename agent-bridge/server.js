@@ -1082,15 +1082,17 @@ function buildGuide(level = 'standard') {
     const managed = getManagedConfig();
     const isManager = managed.manager === registeredName;
     if (isManager) {
-      rules.push('YOU ARE THE MANAGER. You control the conversation. Use yield_floor(agent) to let agents speak. Use set_phase() to change team phase (discussion/planning/execution/review).');
-      rules.push('YOUR MANAGER LOOP: 1) Plan the work and assign tasks. 2) Use yield_floor() to give each agent their turn to speak. 3) Call listen() to wait for agent responses. 4) Review responses and decide next steps. 5) Use create_task() and create_workflow() to structure work.');
-      rules.push('Use send_message() to give instructions. Use broadcast() for team announcements. Agents cannot speak unless you give them the floor.');
-      rules.push('STRICT RULE: After EVERY action, call listen() to wait for responses. NEVER use sleep(). NEVER use check_messages() in a loop. NEVER stop managing. Your loop is: act → listen() → act → listen(). This loop NEVER ends.');
+      rules.push('YOU ARE THE MANAGER. You control the conversation flow, assign work, and track progress.');
+      rules.push('TASK MANAGEMENT: Use create_task(title, description, assignee) to assign work to agents. Use create_workflow(name, steps) to create multi-step plans. These show up in the Tasks and Plan tabs of the dashboard.');
+      rules.push('YOUR MANAGER LOOP: 1) Plan the work — create tasks and workflows for the team. 2) Use yield_floor(agent) to give each agent their turn to speak. 3) Call listen() to wait for responses. 4) When agents report completion, use update_task(id, status="done") to mark tasks done and advance_workflow() to move the plan forward. 5) Assign next tasks and repeat.');
+      rules.push('PHASES: Use set_phase("discussion") for brainstorming, set_phase("planning") to assign tasks, set_phase("execution") for agents to work, set_phase("review") to collect results.');
+      rules.push('Use send_message() to give instructions. Use broadcast() for team announcements.');
+      rules.push('STRICT RULE: After EVERY action, call listen() to wait for responses. NEVER use sleep(). Your loop is: act → listen() → act → listen(). This loop NEVER ends.');
     } else {
-      rules.push('YOU ARE IN MANAGED MODE. The manager controls who speaks. Call listen() to wait for your turn. When the manager gives you the floor via yield_floor(), respond with your work.');
-      rules.push('YOUR LOOP: 1) Call listen() — wait for messages and floor assignments. 2) When you receive a message or get the floor, do the work and respond. 3) Call listen() again immediately. This loop NEVER ends.');
-      rules.push('If you have an active task during execution phase, do the work, then report back to the manager via send_message(). Then call listen() again immediately.');
-      rules.push('STRICT RULES: NEVER use sleep(). NEVER use check_messages() in a polling loop. NEVER call get_work() in managed mode. NEVER stop listening. Your ONLY loop is: listen() → work → respond → listen(). If listen() times out, call listen() again immediately.');
+      rules.push('YOU ARE IN MANAGED MODE. The manager controls who speaks. Call listen() to wait for your turn.');
+      rules.push('TASK TRACKING: When the manager assigns you a task, call update_task(id, status="in_progress") to claim it. When you finish, call update_task(id, status="done") and report back to the manager. If your task is a workflow step, call advance_workflow() after completing it.');
+      rules.push('YOUR LOOP: 1) Call listen() — wait for messages and floor assignments. 2) When you receive work, update the task to "in_progress", do the work, update to "done", respond to the manager. 3) Call listen() again immediately. This loop NEVER ends.');
+      rules.push('STRICT RULES: NEVER use sleep(). NEVER use check_messages() in a loop. NEVER call get_work() in managed mode. Your ONLY loop is: listen() → work → update task → respond → listen(). If listen() times out, call listen() again immediately.');
     }
     rules.push('Keep messages to 2-3 paragraphs max.');
     rules.push('When you finish work, report what you did and what files you changed.');
@@ -6112,7 +6114,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.2.5' },
+  { name: 'agent-bridge', version: '5.2.6' },
   { capabilities: { tools: {} } }
 );
 
@@ -7199,7 +7201,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.2.5 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.2.6 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
