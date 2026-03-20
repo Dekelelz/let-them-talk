@@ -1,5 +1,63 @@
 # Changelog
 
+## [5.1.0] - 2026-03-19
+
+### Major — True Autonomy Engine + Team Intelligence + Scale to 100
+
+Built by a 4-agent team (Backend, Protocol, Tester, Coordinator) + Advisor agent, working autonomously.
+
+### Added — Autonomy Engine (v5.0)
+- **get_work** — 9-level priority waterfall: workflow step > messages > unclaimed tasks > help requests > reviews > blocked tasks > 30s listen > prep work > idle
+- **verify_and_advance** — confidence-gated auto-advancement (>=70 auto, 40-69 flag, <40 help)
+- **start_plan** — one-click autonomous plan launch with parallel step activation
+- **retry_with_improvement** — 3-attempt retry with KB skill accumulation, team escalation
+- **Parallel workflow steps** — dependency graph with `depends_on`, `findReadySteps` resolver
+- **Autonomous mode** — proactive work loop guide, tiered cooldowns (0ms handoffs), 30s listen cap, relaxed send limits
+
+### Added — Team Intelligence
+- **Auto-role assignment** — lead/quality/implementer/monitor/advisor roles based on team size
+- **Quality Lead** — always-on checker with dedicated guide, review-retry loop, auto-approve after 2 rounds
+- **Monitor Agent** — system health overseer at 10+ agents: idle detection, circular escalation detection, auto-intervention, failover
+- **Advisor Agent** — strategic thinker at 5+ agents: reads all work, gives ideas, challenges assumptions
+- **Self-continuation** — agents never ask user, find next work automatically
+- **Smart prompt distribution** — auto-generates workflows from natural language prompts
+
+### Added — Advanced Autonomy (10 features)
+- Task-level circuit breaker (blocked_permanent after 3 agent failures)
+- Quality Lead instant failover (highest reputation auto-promoted)
+- Context inheritance on escalation (full failure history)
+- Agent circuit breaker (consecutive_rejections tracking, auto-demotion)
+- Dynamic role fluidity (workload-based rebalancing)
+- Skill-based task routing (agent affinity scoring)
+- Work stealing (idle agents claim from busy agents)
+- Checkpointing (resumable work via workspace snapshots)
+- Retrospective learning (aggregate failure pattern analysis)
+- Backpressure signal (queue depth warnings)
+
+### Added — Scale to 100 Agents
+- Per-agent heartbeat files (zero write contention)
+- Cooldown cap (3s max regardless of agent count, 0ms for handoffs)
+- Byte-offset message reads (O(new_messages) not O(all))
+- Exponential backoff on file locks (1ms-500ms, not 50ms busy-wait)
+- isPidAlive cache (5s TTL, saves 10K syscalls/sec)
+- SSE debounce (heartbeat files filtered, 2s debounce)
+- Task keyword cache (30s TTL)
+- Sticky roles (no churn on agent reconnect)
+- Zero cooldown for channel messages + handoffs in autonomous mode
+
+### Added — Dashboard & CLI
+- **Plan execution view** — progress bar, step cards, confidence, controls (pause/stop/skip/reassign)
+- **Monitor health panel** — agent health grid, intervention log, system metrics
+- **`npx let-them-talk run "prompt" --agents N`** — one-command autonomous execution
+- **npm test** wires v5 test suite (158+ tests on every run)
+- Updated conversation templates (autonomous format with depends_on)
+
+### Stats
+- server.js: 6,200+ lines, 62+ tools
+- 175+ automated tests, 0 fail
+- 5 conversation templates (autonomous format)
+- Built in ~2 hours by autonomous agent team
+
 ## [4.3.0] - 2026-03-17
 
 ### Major — 3D Hub Game World, World Builder, Jukebox

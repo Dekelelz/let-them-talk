@@ -1,0 +1,22 @@
+{
+  "id": "autonomous-feature",
+  "name": "Autonomous Feature Build",
+  "description": "Full autonomous feature build: architecture, parallel backend+frontend, integration testing. Zero human intervention.",
+  "agents": [
+    { "name": "Architect", "role": "Software Architect", "skills": ["design", "interfaces", "architecture"], "prompt": "You are a software architect. Design the feature architecture with clear interfaces. Call verify_and_advance() when done. Use get_work() to stay in the proactive loop." },
+    { "name": "Backend", "role": "Backend Developer", "skills": ["api", "database", "server", "backend"], "prompt": "You are a backend developer. Implement server-side logic, APIs, and data models. Write unit tests. Call verify_and_advance() when done. Never wait for approval." },
+    { "name": "Frontend", "role": "Frontend Developer", "skills": ["ui", "css", "components", "frontend"], "prompt": "You are a frontend developer. Implement UI components, pages, and client-side logic. Write component tests. Call verify_and_advance() when done. Never wait for approval." },
+    { "name": "Tester", "role": "QA Engineer", "skills": ["testing", "qa", "integration", "verification"], "prompt": "You are a QA engineer. Write and run integration tests. Verify all components work together. Call verify_and_advance() when done." }
+  ],
+  "workflow": {
+    "name": "Autonomous Feature",
+    "autonomous": true,
+    "parallel": true,
+    "steps": [
+      { "description": "Design architecture and define interfaces", "assignee": "Architect" },
+      { "description": "Implement backend API and data layer", "assignee": "Backend", "depends_on": [1] },
+      { "description": "Implement frontend UI and components", "assignee": "Frontend", "depends_on": [1] },
+      { "description": "Write and run integration tests", "assignee": "Tester", "depends_on": [2, 3] }
+    ]
+  }
+}

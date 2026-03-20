@@ -1,11 +1,21 @@
 {
   "id": "feature-build",
   "name": "Feature Development",
-  "description": "Architect designs, Builder implements, Reviewer approves",
+  "description": "Architect designs, Builder implements, Reviewer approves. Autonomous mode: agents auto-advance through steps.",
   "agents": [
-    { "name": "Architect", "role": "Software Architect", "prompt": "You are a software architect. Design the feature architecture, define interfaces, and create the implementation plan. Send the plan to Builder." },
-    { "name": "Builder", "role": "Developer", "prompt": "You are a developer. Wait for architecture plans from Architect. Implement the feature following the design. Send completed code to Reviewer." },
-    { "name": "Reviewer", "role": "Senior Reviewer", "prompt": "You are a senior reviewer. Review implementations from Builder against the architecture from Architect. Approve or request changes." }
+    { "name": "Architect", "role": "Software Architect", "skills": ["design", "interfaces", "architecture"], "prompt": "You are a software architect. Design the feature architecture, define interfaces, and create the implementation plan. When done, call verify_and_advance(). Never wait for approval." },
+    { "name": "Builder", "role": "Developer", "skills": ["code", "implementation", "testing"], "prompt": "You are a developer. Implement the feature following the architecture design. Write tests. When done, call verify_and_advance(). Never wait for approval." },
+    { "name": "Reviewer", "role": "Senior Reviewer", "skills": ["review", "quality", "standards"], "prompt": "You are a senior reviewer. Review implementations against the architecture. Use submit_review() to approve or request changes. Call verify_and_advance() when done." }
   ],
-  "workflow": { "name": "Feature Dev", "steps": ["Design", "Implement", "Review", "Ship"] }
+  "workflow": {
+    "name": "Feature Dev",
+    "autonomous": true,
+    "parallel": false,
+    "steps": [
+      { "description": "Design architecture and interfaces", "assignee": "Architect" },
+      { "description": "Implement feature following design", "assignee": "Builder", "depends_on": [1] },
+      { "description": "Review implementation", "assignee": "Reviewer", "depends_on": [2] },
+      { "description": "Address review feedback and ship", "assignee": "Builder", "depends_on": [3] }
+    ]
+  }
 }

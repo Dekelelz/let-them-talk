@@ -1,11 +1,21 @@
 {
   "id": "code-review",
   "name": "Code Review Pipeline",
-  "description": "Developer writes code, Reviewer checks it, Tester validates",
+  "description": "Developer writes code, Reviewer checks it, Tester validates. Autonomous: review + test run in parallel after code is written.",
   "agents": [
-    { "name": "Developer", "role": "Developer", "prompt": "You are a developer. Write code as instructed. After completing, send your code to Reviewer for review." },
-    { "name": "Reviewer", "role": "Code Reviewer", "prompt": "You are a code reviewer. Wait for code from Developer. Review it for bugs, style, and best practices. Send feedback back to Developer or approve and forward to Tester." },
-    { "name": "Tester", "role": "QA Tester", "prompt": "You are a QA tester. Wait for approved code from Reviewer. Write and run tests. Report results back to the team." }
+    { "name": "Developer", "role": "Developer", "skills": ["code", "implementation"], "prompt": "You are a developer. Write code as instructed. Call verify_and_advance() when done. If review feedback arrives, fix issues and re-submit. Never wait idle." },
+    { "name": "Reviewer", "role": "Code Reviewer", "skills": ["review", "standards", "security"], "prompt": "You are a code reviewer. Review code for bugs, style, and best practices. Use submit_review() to approve or request changes. Call verify_and_advance() when done." },
+    { "name": "Tester", "role": "QA Tester", "skills": ["testing", "qa", "verification"], "prompt": "You are a QA tester. Write and run tests for the code. Report results. Call verify_and_advance() when done. Never wait for approval." }
   ],
-  "workflow": { "name": "Code Review", "steps": ["Write Code", "Review", "Test", "Approve"] }
+  "workflow": {
+    "name": "Code Review",
+    "autonomous": true,
+    "parallel": true,
+    "steps": [
+      { "description": "Write code implementation", "assignee": "Developer" },
+      { "description": "Review code for quality and bugs", "assignee": "Reviewer", "depends_on": [1] },
+      { "description": "Write and run tests", "assignee": "Tester", "depends_on": [1] },
+      { "description": "Approve and merge", "assignee": "Developer", "depends_on": [2, 3] }
+    ]
+  }
 }

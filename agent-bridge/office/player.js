@@ -84,12 +84,12 @@ function getCampusColliders() {
     { x: -14, z: -2 }, { x: -11, z: -2 },
   ];
   CAMPUS_DESKS.forEach(function(d) {
-    // Desk body + chair: box around the desk area (ground floor)
-    colliders.push({ minX: d.x - 1.1, maxX: d.x + 1.1, minZ: d.z - 0.5, maxZ: d.z + 1, floor: 'ground' });
+    // Desk body only — chair area excluded so player can stand up without getting stuck
+    colliders.push({ minX: d.x - 1.1, maxX: d.x + 1.1, minZ: d.z - 0.5, maxZ: d.z + 0.3, floor: 'ground' });
   });
 
-  // Manager's desk inside office (ground floor)
-  colliders.push({ minX: 10.5, maxX: 14.5, minZ: 5.5, maxZ: 7.5, floor: 'ground' });
+  // Manager's desk inside office — chair side excluded (ground floor)
+  colliders.push({ minX: 10.5, maxX: 14.5, minZ: 5.5, maxZ: 6.8, floor: 'ground' });
 
   // Bar counter (ground floor)
   // Pool table, foosball (ground floor) — already added above without tag, let me not duplicate

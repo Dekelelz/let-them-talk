@@ -27,6 +27,7 @@ const REVIEWS_FILE = path.join(DATA_DIR, 'reviews.json');
 const DEPS_FILE = path.join(DATA_DIR, 'dependencies.json');
 const REPUTATION_FILE = path.join(DATA_DIR, 'reputation.json');
 const COMPRESSED_FILE = path.join(DATA_DIR, 'compressed.json');
+const RULES_FILE = path.join(DATA_DIR, 'rules.json');
 // Plugins removed in v3.4.3 — unnecessary attack surface, CLIs have their own extension systems
 
 // In-memory state for this process
@@ -89,13 +90,13 @@ function isGroupMode() {
 }
 
 function getGroupCooldown() {
-  // Adaptive cooldown: scales with online agent count — max(500, N * 500)
-  // 2 agents = 1s, 3 = 1.5s, 4 = 2s, 6 = 3s, 10 = 5s
+  // Adaptive cooldown: scales with agent count, CAPPED at 3s for 100-agent scalability
+  // 2 agents = 1s, 3 = 1.5s, 6 = 3s, 100 = still 3s (capped)
   const configured = getConfig().group_cooldown;
   if (configured) return configured; // respect explicit config
   const agents = getAgents();
   const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
-  return Math.max(500, aliveCount * 500);
+  return Math.max(500, Math.min(aliveCount * 500, 3000));
 }
 
 // --- Managed conversation mode ---
@@ -149,11 +150,21 @@ function sendSystemMessage(toAgent, content) {
 
 // Send a system message to all registered agents
 function broadcastSystemMessage(content, excludeAgent = null) {
-  const agents = getAgents();
-  for (const name of Object.keys(agents)) {
-    if (name === excludeAgent) continue;
-    sendSystemMessage(name, content);
-  }
+  // O(1) write: single __group__ system message instead of N individual writes
+  messageSeq++;
+  const msg = {
+    id: generateId(),
+    seq: messageSeq,
+    from: '__system__',
+    to: '__group__',
+    content,
+    timestamp: new Date().toISOString(),
+    system: true,
+  };
+  if (excludeAgent) msg.exclude_agent = excludeAgent;
+  ensureDataDir();
+  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
 }
 
 // Rate limiting — prevent broadcast storms and message flooding
@@ -236,7 +247,32 @@ function getConsumedIds(agentName) {
 }
 
 function saveConsumedIds(agentName, ids) {
+  // Auto-prune when consumed set exceeds 500 entries to prevent unbounded growth
+  if (ids.size > 500) {
+    trimConsumedIds(agentName, ids);
+  }
   fs.writeFileSync(consumedFile(agentName), JSON.stringify([...ids]));
+}
+
+// Prune consumed IDs: remove IDs no longer present in messages.jsonl
+// At 100 agents with 5000+ messages, this prevents 500KB+ JSON per agent
+function trimConsumedIds(agentName, ids) {
+  try {
+    const msgFile = getMessagesFile(currentBranch);
+    if (!fs.existsSync(msgFile)) { ids.clear(); return; }
+    const content = fs.readFileSync(msgFile, 'utf8').trim();
+    if (!content) { ids.clear(); return; }
+    // Build set of current message IDs (fast: just extract IDs, don't parse full objects)
+    const currentIds = new Set();
+    for (const line of content.split('\n')) {
+      const match = line.match(/"id"\s*:\s*"([^"]+)"/);
+      if (match) currentIds.add(match[1]);
+    }
+    // Remove consumed IDs that no longer exist in messages
+    for (const id of ids) {
+      if (!currentIds.has(id)) ids.delete(id);
+    }
+  } catch {}
 }
 
 function readJsonl(file) {
@@ -248,14 +284,57 @@ function readJsonl(file) {
   }).filter(Boolean);
 }
 
+// Optimized: read only NEW lines from a JSONL file starting at byte offset
+// Returns { messages, newOffset } — caller tracks offset between calls
+function readJsonlFromOffset(file, offset) {
+  if (!fs.existsSync(file)) return { messages: [], newOffset: 0 };
+  const stat = fs.statSync(file);
+  if (stat.size <= offset) return { messages: [], newOffset: offset };
+  const fd = fs.openSync(file, 'r');
+  const buf = Buffer.alloc(stat.size - offset);
+  fs.readSync(fd, buf, 0, buf.length, offset);
+  fs.closeSync(fd);
+  const content = buf.toString('utf8').trim();
+  if (!content) return { messages: [], newOffset: stat.size };
+  const messages = content.split('\n').map(line => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+  return { messages, newOffset: stat.size };
+}
+
+// Scale fix: read only last N lines of a JSONL file (for history context)
+// Seeks near end of file instead of parsing entire file — O(N) instead of O(all)
+function tailReadJsonl(file, lineCount = 100) {
+  if (!fs.existsSync(file)) return [];
+  const stat = fs.statSync(file);
+  if (stat.size === 0) return [];
+  // Estimate ~300 bytes per line, read enough from the end
+  const readSize = Math.min(stat.size, lineCount * 300);
+  const offset = Math.max(0, stat.size - readSize);
+  const fd = fs.openSync(file, 'r');
+  const buf = Buffer.alloc(readSize);
+  fs.readSync(fd, buf, 0, readSize, offset);
+  fs.closeSync(fd);
+  const content = buf.toString('utf8');
+  const lines = content.split('\n').filter(l => l.trim());
+  // If we started mid-file, first line may be partial — skip it
+  if (offset > 0 && lines.length > 0) lines.shift();
+  const messages = lines.map(line => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+  return messages.slice(-lineCount);
+}
+
 // File-based lock for agents.json (prevents registration race conditions)
 const AGENTS_LOCK = AGENTS_FILE + '.lock';
 function lockAgentsFile() {
   const maxWait = 5000; const start = Date.now();
+  let backoff = 1; // exponential backoff: 1ms → 2ms → 4ms → ... → 500ms max
   while (Date.now() - start < maxWait) {
     try { fs.writeFileSync(AGENTS_LOCK, String(process.pid), { flag: 'wx' }); return true; }
-    catch { /* lock exists, wait */ }
-    const wait = Date.now(); while (Date.now() - wait < 50) {} // busy-wait 50ms
+    catch { /* lock exists, wait with exponential backoff */ }
+    const wait = Date.now(); while (Date.now() - wait < backoff) {}
+    backoff = Math.min(backoff * 2, 500);
   }
   // Force-break stale lock after timeout
   try { fs.unlinkSync(AGENTS_LOCK); } catch {}
@@ -267,14 +346,49 @@ function unlockAgentsFile() { try { fs.unlinkSync(AGENTS_LOCK); } catch {} }
 function getAgents() {
   return cachedRead('agents', () => {
     if (!fs.existsSync(AGENTS_FILE)) return {};
-    try { return JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')); } catch { return {}; }
+    let agents;
+    try { agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')); } catch { return {}; }
+    // Scale fix: merge per-agent heartbeat files for live activity data
+    try {
+      const files = fs.readdirSync(DATA_DIR).filter(f => f.startsWith('heartbeat-') && f.endsWith('.json'));
+      for (const f of files) {
+        const name = f.slice(10, -5); // extract name from 'heartbeat-{name}.json'
+        if (agents[name]) {
+          try {
+            const hb = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
+            if (hb.last_activity) agents[name].last_activity = hb.last_activity;
+            if (hb.pid) agents[name].pid = hb.pid;
+          } catch {}
+        }
+      }
+    } catch {}
+    return agents;
   }, 1500);
 }
 
 function saveAgents(agents) {
-  fs.writeFileSync(AGENTS_FILE, JSON.stringify(agents));
+  // Safe write: serialize first, then write complete string
+  // This minimizes the window where the file could be truncated
+  const data = JSON.stringify(agents);
+  if (data && data.length > 2) {
+    fs.writeFileSync(AGENTS_FILE, data);
+  }
   invalidateCache('agents');
 }
+
+// --- Per-agent heartbeat files (scale fix: eliminates agents.json write contention at 100+ agents) ---
+function heartbeatFile(name) { return path.join(DATA_DIR, `heartbeat-${name}.json`); }
+
+function touchHeartbeat(name) {
+  if (!name) return;
+  try {
+    fs.writeFileSync(heartbeatFile(name), JSON.stringify({
+      last_activity: new Date().toISOString(),
+      pid: process.pid,
+    }));
+  } catch {}
+}
+
 
 function getAcks() {
   if (!fs.existsSync(ACKS_FILE)) return {};
@@ -285,19 +399,46 @@ function getAcks() {
   }
 }
 
+// Cache for isPidAlive results — avoids redundant process.kill calls at 100-agent scale
+const _pidAliveCache = {};
 function isPidAlive(pid, lastActivity) {
-  try {
-    process.kill(pid, 0);
-    // On Windows, PIDs get reused. If the heartbeat stopped (no activity for 30s = 3 missed
-    // heartbeats), treat as stale even if PID exists (it's likely a different process now)
-    if (lastActivity) {
-      const stale = Date.now() - new Date(lastActivity).getTime();
-      if (stale > 30000) return false; // 30s = 3 missed heartbeats
+  // Cache with 5s TTL — PID status doesn't change faster than heartbeats
+  const cacheKey = `${pid}_${lastActivity}`;
+  const cached = _pidAliveCache[cacheKey];
+  if (cached && Date.now() - cached.ts < 5000) return cached.alive;
+
+  // Faster stale detection in autonomous mode (30s vs 60s) for quicker dead agent recovery
+  const STALE_THRESHOLD = isAutonomousMode() ? 30000 : 60000;
+  let alive = false;
+
+  // PRIORITY 1: Trust heartbeat freshness over PID status
+  // Heartbeat files are written by the actual running process — if fresh, agent is alive
+  // regardless of whether process.kill can see the PID (cross-process PID visibility issues)
+  if (lastActivity) {
+    const stale = Date.now() - new Date(lastActivity).getTime();
+    if (stale < STALE_THRESHOLD) {
+      alive = true;
     }
-    return true;
-  } catch {
-    return false;
   }
+
+  // PRIORITY 2: If heartbeat is stale, verify PID is actually dead
+  if (!alive) {
+    try {
+      process.kill(pid, 0);
+      alive = true; // PID exists — agent is alive even with stale heartbeat
+    } catch {
+      // PID dead AND heartbeat stale — agent is truly dead
+      alive = false;
+    }
+  }
+  _pidAliveCache[cacheKey] = { alive, ts: Date.now() };
+  // Evict old entries (keep cache small)
+  const keys = Object.keys(_pidAliveCache);
+  if (keys.length > 200) {
+    const cutoff = Date.now() - 10000;
+    for (const k of keys) { if (_pidAliveCache[k].ts < cutoff) delete _pidAliveCache[k]; }
+  }
+  return alive;
 }
 
 const MAX_CONTENT_BYTES = 1000000; // 1 MB max message size
@@ -370,17 +511,17 @@ function buildMessageResponse(msg, consumedIds) {
   const agents = getAgents();
   const agentsOnline = Object.entries(agents).filter(([, info]) => isPidAlive(info.pid, info.last_activity)).length;
 
-  // Count total messages for context window management
+  // Scale fix: estimate total messages from file size instead of reading entire file
   let totalMessages = 0;
   try {
     const histFile = getHistoryFile(currentBranch);
     if (fs.existsSync(histFile)) {
-      const content = fs.readFileSync(histFile, 'utf8').trim();
-      if (content) totalMessages = content.split('\n').length;
+      const size = fs.statSync(histFile).size;
+      totalMessages = Math.round(size / 300); // ~300 bytes per message average
     }
   } catch {}
 
-  const result = {
+  return {
     success: true,
     message: {
       id: msg.id,
@@ -392,14 +533,7 @@ function buildMessageResponse(msg, consumedIds) {
     },
     pending_count: pendingCount,
     agents_online: agentsOnline,
-    message_count: totalMessages,
   };
-
-  if (totalMessages > 50) {
-    result.hint = 'Conversation is getting long (' + totalMessages + ' messages). Consider calling get_summary() to refresh your context.';
-  }
-
-  return result;
 }
 
 // Auto-compact messages.jsonl when it gets too large
@@ -445,6 +579,15 @@ function autoCompact() {
       if (!allConsumed.has(m.id)) return true;
       return false;
     });
+
+    // Scale fix: archive consumed messages to date-based files before removing
+    const archived = messages.filter(m => !active.includes(m));
+    if (archived.length > 0) {
+      const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const archiveFile = path.join(DATA_DIR, `archive-${dateStr}.jsonl`);
+      const archiveContent = archived.map(m => JSON.stringify(m)).join('\n') + '\n';
+      try { fs.appendFileSync(archiveFile, archiveContent); } catch {}
+    }
 
     // Rewrite messages.jsonl atomically — write to temp file then rename
     const newContent = active.map(m => JSON.stringify(m)).join('\n') + (active.length ? '\n' : '');
@@ -517,20 +660,64 @@ function markAsRead(agentName, messageId) {
 
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
 function getUnconsumedMessages(agentName, fromFilter = null) {
-  const messages = readJsonl(getMessagesFile(currentBranch));
+  // Optimization: read only new bytes since last offset for scalability (100+ agents)
+  const msgFile = getMessagesFile(currentBranch);
+  const { messages: newMessages, newOffset } = readJsonlFromOffset(msgFile, lastReadOffset);
+
+  // If we have new messages, filter them; also check any previously unread messages
+  // For correctness, on first call (offset=0), this reads the full file
+  let messages;
+  if (lastReadOffset === 0) {
+    messages = newMessages; // Full read on first call
+  } else if (newMessages.length > 0) {
+    messages = newMessages; // Only new messages since last offset
+  } else {
+    return []; // No new data — nothing to filter
+  }
+  // Don't update lastReadOffset here — let listen/listen_group handle it
+  // to avoid skipping messages that arrive between get_work checks
+
   const consumed = getConsumedIds(agentName);
   const perms = getPermissions();
+
+  // Relevance filtering: at 20+ agents, skip group messages not relevant to this agent
+  const agents = getAgents();
+  const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+  const useRelevanceFilter = aliveCount >= 20;
+  const myChannels = useRelevanceFilter ? new Set(getAgentChannels(agentName)) : null;
+  const myTaskIds = useRelevanceFilter ? new Set(getTasks().filter(t => t.assignee === agentName && t.status === 'in_progress').map(t => t.id)) : null;
+
   return messages.filter(m => {
     if (m.to !== agentName && m.to !== '__group__' && m.to !== '__all__') return false;
-    // Skip own group messages
     if (m.to === '__group__' && m.from === agentName) return false;
+    if (m.exclude_agent && m.exclude_agent === agentName) return false;
     if (consumed.has(m.id)) return false;
     if (fromFilter && m.from !== fromFilter && !m.system) return false;
-    // Permission check: skip messages from senders this agent can't read
     if (perms[agentName] && perms[agentName].can_read) {
       const allowed = perms[agentName].can_read;
       if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(m.from) && !m.system) return false;
     }
+
+    // Relevance filter for group messages at scale (20+ agents)
+    if (useRelevanceFilter && m.to === '__group__') {
+      // Always show: system messages, broadcasts, messages addressed to this agent
+      if (m.system) return true;
+      if (m.addressed_to && m.addressed_to.includes(agentName)) return true;
+      // Show messages on agent's subscribed channels
+      if (m.channel && myChannels.has(m.channel)) return true;
+      // Show messages mentioning agent's active task IDs
+      if (myTaskIds.size > 0 && m.content) {
+        for (const taskId of myTaskIds) {
+          if (m.content.includes(taskId)) return true;
+        }
+      }
+      // Show handoffs and workflow messages (always relevant)
+      if (m.type === 'handoff') return true;
+      if (m.content && (m.content.includes('[Workflow') || m.content.includes('[PLAN') || m.content.includes('[AUTO-PLAN'))) return true;
+      // Skip unaddressed group messages at scale — too much noise
+      return false;
+    }
+
     return true;
   });
 }
@@ -538,11 +725,14 @@ function getUnconsumedMessages(agentName, fromFilter = null) {
 // --- Profile helpers ---
 
 function getProfiles() {
-  if (!fs.existsSync(PROFILES_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8')); } catch { return {}; }
+  return cachedRead('profiles', () => {
+    if (!fs.existsSync(PROFILES_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8')); } catch { return {}; }
+  }, 2000);
 }
 
 function saveProfiles(profiles) {
+  invalidateCache('profiles');
   fs.writeFileSync(PROFILES_FILE, JSON.stringify(profiles));
 }
 
@@ -592,12 +782,199 @@ function saveWorkspace(agentName, data) {
 // --- Workflow helpers ---
 
 function getWorkflows() {
-  if (!fs.existsSync(WORKFLOWS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(WORKFLOWS_FILE, 'utf8')); } catch { return []; }
+  return cachedRead('workflows', () => {
+    if (!fs.existsSync(WORKFLOWS_FILE)) return [];
+    try { return JSON.parse(fs.readFileSync(WORKFLOWS_FILE, 'utf8')); } catch { return []; }
+  }, 2000);
 }
 
 function saveWorkflows(workflows) {
+  invalidateCache('workflows');
   fs.writeFileSync(WORKFLOWS_FILE, JSON.stringify(workflows));
+}
+
+// --- Autonomous mode detection ---
+function isAutonomousMode() {
+  const workflows = getWorkflows();
+  return workflows.some(wf => wf.status === 'active' && wf.autonomous === true);
+}
+
+function hasActiveWorkflowStep(agentName) {
+  const workflows = getWorkflows();
+  return workflows.some(wf =>
+    wf.status === 'active' &&
+    wf.steps.some(s => s.assignee === agentName && s.status === 'in_progress')
+  );
+}
+
+// --- Autonomous work loop helpers (get_work / verify_and_advance support) ---
+
+function findMyActiveWorkflowStep() {
+  if (!registeredName) return null;
+  const workflows = getWorkflows();
+  for (const wf of workflows) {
+    if (wf.status !== 'active') continue;
+    const step = wf.steps.find(s => s.assignee === registeredName && s.status === 'in_progress');
+    if (step) return { ...step, workflow_id: wf.id, workflow_name: wf.name };
+  }
+  return null;
+}
+
+function findReadySteps(workflow) {
+  return workflow.steps.filter(step => {
+    if (step.status !== 'pending') return false;
+    if (!step.depends_on || step.depends_on.length === 0) return true;
+    return step.depends_on.every(depId => {
+      const dep = workflow.steps.find(s => s.id === depId);
+      return dep && dep.status === 'done';
+    });
+  });
+}
+
+function findUnassignedTasks(skills) {
+  const tasks = getTasks();
+  // Exclude blocked_permanent tasks and tasks this agent already failed
+  const pending = tasks.filter(t => {
+    if (t.status !== 'pending' || t.assignee) return false;
+    if (t.status === 'blocked_permanent') return false;
+    if (t.attempt_agents && t.attempt_agents.includes(registeredName)) return false;
+    return true;
+  });
+  if (pending.length === 0) return pending;
+
+  // Skill-based routing: score by explicit skills + completed task history + KB skills
+  const allTasks = tasks;
+  const myDone = allTasks.filter(t => t.assignee === registeredName && t.status === 'done');
+  const historyKeywords = new Set();
+  for (const t of myDone) {
+    const words = ((t.title || '') + ' ' + (t.description || '')).toLowerCase().split(/\W+/).filter(w => w.length > 3);
+    words.forEach(w => historyKeywords.add(w));
+  }
+  // Add explicit skills
+  if (skills) skills.forEach(s => historyKeywords.add(s.toLowerCase()));
+
+  // Score each task by affinity (keyword overlap with agent's history + skills)
+  // Scale fix: cache task keyword sets to avoid O(N*M) recomputation at 100 agents
+  return pending.sort((a, b) => {
+    const aKey = 'taskwords_' + a.id;
+    const bKey = 'taskwords_' + b.id;
+    const aWords = cachedRead(aKey, () => ((a.title || '') + ' ' + (a.description || '')).toLowerCase().split(/\W+/).filter(w => w.length > 3), 30000);
+    const bWords = cachedRead(bKey, () => ((b.title || '') + ' ' + (b.description || '')).toLowerCase().split(/\W+/).filter(w => w.length > 3), 30000);
+    const aScore = aWords.filter(w => historyKeywords.has(w)).length;
+    const bScore = bWords.filter(w => historyKeywords.has(w)).length;
+    return bScore - aScore;
+  });
+}
+
+// Work stealing: find tasks from overloaded agents that can be split
+function findStealableWork() {
+  if (!registeredName) return null;
+  const tasks = getTasks();
+  const agents = getAgents();
+  const aliveNames = Object.entries(agents)
+    .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name);
+
+  // Count in-progress tasks per agent
+  const agentLoad = {};
+  for (const name of aliveNames) {
+    agentLoad[name] = tasks.filter(t => t.assignee === name && t.status === 'in_progress').length;
+  }
+
+  const myLoad = agentLoad[registeredName] || 0;
+  if (myLoad > 0) return null; // Only steal if idle
+
+  // Find agents with 2+ in-progress tasks — steal their oldest pending task
+  for (const [name, load] of Object.entries(agentLoad)) {
+    if (name === registeredName) continue;
+    if (load < 2) continue;
+    // Find a pending task assigned to this overloaded agent
+    const stealable = tasks.find(t => t.assignee === name && t.status === 'pending');
+    if (stealable) {
+      return {
+        task: stealable,
+        from_agent: name,
+        their_load: load,
+        message: `${name} has ${load} tasks in progress. Stealing their pending task "${stealable.title}" to help.`,
+      };
+    }
+  }
+  return null;
+}
+
+function findHelpRequests() {
+  // Scale fix: only read last 50 messages — help requests are always recent
+  const messages = tailReadJsonl(getMessagesFile(currentBranch), 50);
+  const recentCutoff = Date.now() - 300000;
+  return messages.filter(m => {
+    if (new Date(m.timestamp).getTime() < recentCutoff) return false;
+    if (m.from === registeredName) return false;
+    if (m.system && (m.content.includes('[HELP NEEDED]') || m.content.includes('[ESCALATION]'))) return true;
+    return false;
+  }).map(m => ({ id: m.id, from: m.from, content: m.content, timestamp: m.timestamp }));
+}
+
+function findPendingReviews() {
+  const reviews = getReviews();
+  return reviews.filter(r => r.status === 'pending' && r.requested_by !== registeredName);
+}
+
+function findBlockedTasks() {
+  const tasks = getTasks();
+  return tasks.filter(t => t.status === 'blocked');
+}
+
+function findUpcomingStepsForMe() {
+  if (!registeredName) return null;
+  const workflows = getWorkflows();
+  for (const wf of workflows) {
+    if (wf.status !== 'active') continue;
+    const step = wf.steps.find(s => s.assignee === registeredName && s.status === 'pending');
+    if (step) return { ...step, workflow_id: wf.id, workflow_name: wf.name };
+  }
+  return null;
+}
+
+async function listenWithTimeout(timeoutMs) {
+  // Check immediately first
+  const immediate = getUnconsumedMessages(registeredName);
+  if (immediate.length > 0) return immediate;
+
+  // Use fs.watch for instant wake on new messages (falls back to polling)
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result) => {
+      if (resolved) return;
+      resolved = true;
+      try { if (watcher) watcher.close(); } catch {}
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    let watcher;
+    try {
+      const msgFile = getMessagesFile(currentBranch);
+      watcher = fs.watch(msgFile, () => {
+        const batch = getUnconsumedMessages(registeredName);
+        if (batch.length > 0) done(batch);
+      });
+      watcher.on('error', () => {}); // ignore watch errors
+    } catch {
+      // fs.watch not available — fall back to polling
+      const pollInterval = setInterval(() => {
+        const batch = getUnconsumedMessages(registeredName);
+        if (batch.length > 0) {
+          clearInterval(pollInterval);
+          done(batch);
+        }
+      }, 1000);
+      setTimeout(() => { clearInterval(pollInterval); done([]); }, timeoutMs);
+      return;
+    }
+
+    // Timeout: don't wait forever
+    const timer = setTimeout(() => done([]), timeoutMs);
+  });
 }
 
 // --- Branch helpers ---
@@ -623,14 +1000,125 @@ function getHistoryFile(branch) {
 
 // --- Dynamic Guide (progressive disclosure) ---
 
+// Cache guide output — only rebuild when rules.json or agent count changes
+let _guideCache = { key: null, result: null };
 function buildGuide(level = 'standard') {
   const agents = getAgents();
   const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
   const mode = getConfig().conversation_mode || 'direct';
+
+  // Cache check: reuse cached guide if nothing changed (saves rebuilding 20-50 rules)
+  let rulesMtime = 0;
+  try { rulesMtime = fs.existsSync(RULES_FILE) ? fs.statSync(RULES_FILE).mtimeMs : 0; } catch {}
+  const cacheKey = `${level}:${aliveCount}:${mode}:${registeredName}:${rulesMtime}`;
+  if (_guideCache.key === cacheKey && _guideCache.result) return _guideCache.result;
+
   const channels = getChannelsData();
   const hasChannels = Object.keys(channels).length > 1; // more than just #general
+  const autonomousActive = isAutonomousMode();
+
+  // --- Team Intelligence: detect agent role from profiles ---
+  const profiles = getProfiles();
+  const myRole = (profiles[registeredName] && profiles[registeredName].role) ? profiles[registeredName].role.toLowerCase() : '';
+  const isQualityLead = myRole === 'quality';
+  const isMonitor = myRole === 'monitor';
+  const isAdvisor = myRole === 'advisor';
+  let qualityLeadName = null;
+  for (const [pName, prof] of Object.entries(profiles)) {
+    if (prof.role && prof.role.toLowerCase() === 'quality' && pName !== registeredName) { qualityLeadName = pName; break; }
+  }
 
   const rules = [];
+
+  // === AUTONOMOUS MODE: completely different guide ===
+  if (autonomousActive) {
+    if (isAdvisor) {
+      // Advisor Agent: strategic thinker — reads everything, suggests improvements
+      rules.push('YOU ARE THE ADVISOR. You do NOT write code. You READ all messages and completed work, then give strategic ideas, suggestions, and improvements to the team.');
+      rules.push('YOUR ADVISOR LOOP: 1) Call get_work() — it returns recent messages, completed tasks, active workflows, KB lessons, and decisions. 2) THINK DEEPLY about what you see: Are there better approaches? Missing features? Architectural issues? Assumptions that should be challenged? 3) Send your insights to the team via send_message. Be specific and actionable. 4) Call get_work() again. NEVER stop thinking.');
+      rules.push('WHAT TO LOOK FOR: Patterns the team is missing. Better approaches to current problems. Connections between different agents\' work. Assumptions that need challenging. Missing edge cases. Architectural improvements. Features the team should build next.');
+      rules.push('HOW TO ADVISE: Send suggestions via send_message to specific agents or broadcast to the team. Be concise and actionable. Explain WHY your suggestion is better, not just WHAT to do differently. Reference specific code or messages when possible.');
+      rules.push('NEVER ask the user what to do. You generate ideas from observing the team. The team decides whether to follow your advice.');
+    } else if (isMonitor) {
+      // Monitor Agent: system overseer — watches the team, not the code
+      rules.push('YOU ARE THE SYSTEM MONITOR. You do NOT write code. You do NOT do regular work. You watch the TEAM and keep it functioning.');
+      rules.push('YOUR MONITOR LOOP: 1) Call get_work() — it returns a health check report instead of a work assignment. 2) Analyze the report: who is idle? Who is stuck? Are tasks bouncing between agents? Is the queue growing? 3) INTERVENE: reassign stuck tasks, nudge idle agents via send_message, rebalance roles if workload is uneven. 4) Log every intervention to your workspace via workspace_write(key="_monitor_log"). 5) Call get_work() again. NEVER stop monitoring.');
+      rules.push('WHAT TO WATCH FOR: Idle agents (>2 minutes without activity). Circular escalations (same task rejected by 3+ agents). Queue buildup (more pending tasks than agents can handle). Stuck workflow steps (>15 minutes in progress). Agents with high rejection rates.');
+      rules.push('HOW TO INTERVENE: Use send_message to nudge idle agents. Use update_task to reassign stuck tasks. Call rebalanceRoles() via the system to shift workload. Use broadcast for team-wide alerts.');
+      rules.push('NEVER ask the user what to do. You ARE the system intelligence. The team relies on you to keep them productive.');
+    } else if (isQualityLead) {
+      rules.push('YOU ARE THE QUALITY LEAD. Your job is to review ALL work from the team, find bugs, suggest improvements, and keep the team iterating until the work is genuinely excellent. Never approve without checking. Never let mediocre work pass.');
+      rules.push('YOUR QUALITY LOOP: 1) Call get_work() — prioritize review requests and completed steps. 2) Review the work thoroughly — read the code, check for bugs, verify correctness. 3) If good: approve via submit_review() and call verify_and_advance(). 4) If needs improvement: use submit_review(status="changes_requested") with specific feedback. The author will fix and re-submit automatically. 5) Call get_work() again. NEVER stop reviewing.');
+      rules.push('QUALITY STANDARDS: Check for bugs, edge cases, security issues, code style, and correctness. Read the actual files — do not trust summaries. If something looks wrong, flag it.');
+      rules.push('NEVER ask the user what to do. NEVER wait for human approval. You ARE the approval gate. The team works, you review, they improve, you re-review. This cycle continues until the work is excellent.');
+    } else {
+      rules.push('YOUR WORK LOOP (follow this ALWAYS): 1) Call get_work() — it gives you your next assignment. 2) Do the work — write code, run tests, implement features. 3) Call verify_and_advance() — verify your work, auto-advance the workflow. 4) Call get_work() again — get your next assignment. 5) NEVER stop. NEVER wait for approval. NEVER call listen_group() in autonomous mode — use get_work() instead.');
+      rules.push(qualityLeadName
+        ? 'SELF-CONTINUATION: After completing work, report results to ' + qualityLeadName + ' (Quality Lead) via send_message. After Quality Lead approves, find next work via get_work(). NEVER ask the user what to do next — the system assigns work automatically.'
+        : 'SELF-CONTINUATION: After completing work, call get_work() to find your next task. NEVER ask the user what to do next — the system assigns work automatically. NEVER stop working.');
+    }
+    rules.push('IF STUCK: Try a different approach (max 3 attempts). Ask the team for help via send_message. If still stuck after help, move to next available task. NEVER wait silently. ALWAYS be working on something.');
+    rules.push('IF YOUR WORK FAILS: Analyze WHY it failed. Record the learning via verify_and_advance(learnings: "..."). Retry with improvements. After 3 retries, escalate to team and move to other work.');
+    rules.push('IF NOTHING TO DO: get_work() handles this — it checks workflows, tasks, reviews, and help requests. It will find you something. Trust the loop.');
+    rules.push('Keep messages to 2-3 paragraphs max.');
+    rules.push('When you finish work, report what you did and what files you changed.');
+    rules.push('Lock files before editing shared code (lock_file / unlock_file).');
+    // UE5 safety rules — prevent concurrent editor operations
+    rules.push('UE5 SAFETY: BEFORE any Unreal Engine editor operation (spawning, modifying scene, placing assets): call lock_file("ue5-editor"). BEFORE compiling/building: call lock_file("ue5-compile"). Unlock immediately after. Only ONE agent can hold each lock — others must wait.');
+    rules.push('Log team decisions with log_decision() so they are not re-debated.');
+
+    // User-customizable project-specific rules
+    const guideFile = path.join(DATA_DIR, 'guide.md');
+    let projectRules = [];
+    if (fs.existsSync(guideFile)) {
+      try {
+        const content = fs.readFileSync(guideFile, 'utf8').trim();
+        if (content) projectRules = content.split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+      } catch {}
+    }
+
+    // Inject dashboard-managed rules into guide
+    const dashboardRules = getRules().filter(r => r.active);
+    if (dashboardRules.length > 0) {
+      for (const r of dashboardRules) {
+        rules.push(`[${r.category.toUpperCase()}] ${r.text}`);
+      }
+    }
+
+    return {
+      rules,
+      project_rules: projectRules.length > 0 ? projectRules : undefined,
+      tier_info: `${rules.length} rules (AUTONOMOUS MODE, ${aliveCount} agents, role: ${myRole || 'unassigned'})`,
+      first_steps: isAdvisor
+        ? '1. Call get_work() to get team context (messages, tasks, decisions). 2. Think deeply about patterns, improvements, missing features. 3. Send insights to team. 4. Call get_work() again. Never stop thinking.'
+        : isMonitor
+        ? '1. Call get_work() to get system health report. 2. Analyze: idle agents, stuck tasks, circular escalations. 3. Intervene: reassign, nudge, rebalance. 4. Call get_work() again. Never stop monitoring.'
+        : isQualityLead
+        ? '1. Call get_work() to find work to review. 2. Review thoroughly. 3. Approve or request changes. 4. Call get_work() again. Never stop.'
+        : '1. Call get_work() to get your assignment. 2. Do the work. 3. Call verify_and_advance(). 4. Call get_work() again. Never stop.',
+      autonomous_mode: true,
+      your_role: myRole || undefined,
+      quality_lead: qualityLeadName || undefined,
+      tool_categories: {
+        'WORK LOOP': 'get_work, verify_and_advance, retry_with_improvement',
+        'MESSAGING': 'send_message, broadcast, check_messages, get_history, handoff, share_file',
+        'COORDINATION': 'get_briefing, log_decision, get_decisions, kb_write, kb_read, kb_list',
+        'TASKS': 'create_task, update_task, list_tasks, suggest_task',
+        'QUALITY': 'request_review, submit_review',
+        'SAFETY': 'lock_file, unlock_file',
+      },
+    };
+  }
+
+  // === STANDARD MODE (non-autonomous) ===
+  // Self-continuation rules apply in standard mode too (for 2+ agent teams)
+  if (aliveCount >= 2 && (mode === 'group' || mode === 'managed')) {
+    if (isQualityLead) {
+      rules.push('YOU ARE THE QUALITY LEAD. Review all work from teammates. Use submit_review() to approve or request changes. Never let mediocre work pass. Never ask the user what to do — you are the approval gate.');
+    } else if (qualityLeadName) {
+      rules.push('SELF-CONTINUATION: After completing work, report to ' + qualityLeadName + ' (Quality Lead). After approval, find next work. NEVER ask the user what to do next.');
+    }
+  }
 
   // Tier 0 — THE one rule (always included at every level)
   rules.push('AFTER EVERY ACTION, call listen_group(). This is how you receive messages. Never skip this.');
@@ -657,6 +1145,8 @@ function buildGuide(level = 'standard') {
   rules.push('Keep messages to 2-3 paragraphs max.');
   rules.push('When you finish work, report what you did and what files you changed.');
   rules.push('Lock files before editing shared code (lock_file / unlock_file).');
+  // UE5 safety rules — prevent concurrent editor operations
+  rules.push('UE5 SAFETY: BEFORE any Unreal Engine editor operation (spawning, modifying scene, placing assets): call lock_file("ue5-editor"). BEFORE compiling/building: call lock_file("ue5-compile"). Unlock immediately after. Only ONE agent can hold each lock — others must wait.');
 
   // Tier 2 — group mode features (shown when group or managed mode)
   if (mode === 'group' || mode === 'managed') {
@@ -686,6 +1176,14 @@ function buildGuide(level = 'standard') {
       const content = fs.readFileSync(guideFile, 'utf8').trim();
       if (content) projectRules = content.split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
     } catch {}
+  }
+
+  // Inject dashboard-managed rules into guide
+  const dashboardRules = getRules().filter(r => r.active);
+  if (dashboardRules.length > 0) {
+    for (const r of dashboardRules) {
+      rules.push(`[${r.category.toUpperCase()}] ${r.text}`);
+    }
   }
 
   const result = {
@@ -722,6 +1220,8 @@ function buildGuide(level = 'standard') {
     };
   }
 
+  // Cache the result for subsequent calls with same params
+  _guideCache = { key: cacheKey, result };
   return result;
 }
 
@@ -772,17 +1272,10 @@ function toolRegister(name, provider = null) {
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   heartbeatInterval = setInterval(() => {
     try {
-      const agents = getAgents();
-      if (agents[registeredName]) {
-        lockAgentsFile();
-        try {
-          const freshAgents = getAgents(); // re-read inside lock
-          if (freshAgents[registeredName]) {
-            freshAgents[registeredName].last_activity = new Date().toISOString();
-            saveAgents(freshAgents);
-          }
-        } finally { unlockAgentsFile(); }
-      }
+      // Scale fix: write per-agent heartbeat file instead of lock+read+write agents.json
+      // Eliminates write contention — each agent writes only its own file, no locking needed
+      touchHeartbeat(registeredName);
+      const agents = getAgents(); // cached + merges heartbeat files automatically
       // Managed mode: detect dead manager and dead turn holder
       if (isManagedMode()) {
         const managed = getManagedConfig();
@@ -824,6 +1317,8 @@ function toolRegister(name, provider = null) {
       escalateBlockedTasks();
       // Stand-up meetings: periodic team check-ins
       triggerStandupIfDue();
+      // Watchdog: nudge idle agents, reassign stuck work (autonomous mode only)
+      watchdogCheck();
     } catch {}
   }, 10000 + heartbeatJitter);
   heartbeatInterval.unref(); // Don't prevent process exit
@@ -844,7 +1339,8 @@ function toolRegister(name, provider = null) {
     // Recovery: if this agent has prior data, include it
     const myTasks = getTasks().filter(t => t.assignee === name && t.status !== 'done');
     const myWorkspace = getWorkspace(name);
-    const recentHistory = readJsonl(getHistoryFile(currentBranch));
+    // Scale fix: tail-read last 30 messages instead of entire history
+    const recentHistory = tailReadJsonl(getHistoryFile(currentBranch), 30);
     const myRecentMsgs = recentHistory.filter(m => m.to === name || m.from === name).slice(-5);
 
     if (myTasks.length > 0 || Object.keys(myWorkspace).length > 0 || myRecentMsgs.length > 0) {
@@ -893,6 +1389,17 @@ function toolRegister(name, provider = null) {
     // Notify other agents
     fireEvent('agent_join', { agent: name });
 
+    // Auto-assign roles when 2+ agents are online
+    const aliveCount = Object.values(getAgents()).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+    if (aliveCount >= 2) {
+      try {
+        const roleAssignments = autoAssignRoles();
+        if (roleAssignments && roleAssignments[name]) {
+          result.your_role = roleAssignments[name];
+        }
+      } catch {}
+    }
+
     return result;
   } finally {
     unlockAgentsFile();
@@ -903,31 +1410,25 @@ function toolRegister(name, provider = null) {
 // Uses file lock to prevent race with heartbeat writes
 function touchActivity() {
   if (!registeredName) return;
-  try {
-    lockAgentsFile();
-    try {
-      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
-      if (agents[registeredName]) {
-        agents[registeredName].last_activity = new Date().toISOString();
-        saveAgents(agents);
-      }
-    } finally { unlockAgentsFile(); }
-  } catch {}
+  // Scale fix: write per-agent heartbeat file instead of lock+write agents.json
+  touchHeartbeat(registeredName);
 }
 
 // Set or clear the listening_since flag
 function setListening(isListening) {
   if (!registeredName) return;
   try {
-    const agents = getAgents();
-    if (agents[registeredName]) {
-      agents[registeredName].listening_since = isListening ? new Date().toISOString() : null;
-      // Persist last_listened_at so other agents can detect unresponsive agents
-      if (isListening) {
-        agents[registeredName].last_listened_at = new Date().toISOString();
+    lockAgentsFile();
+    try {
+      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
+      if (agents[registeredName]) {
+        agents[registeredName].listening_since = isListening ? new Date().toISOString() : null;
+        if (isListening) {
+          agents[registeredName].last_listened_at = new Date().toISOString();
+        }
+        saveAgents(agents);
       }
-      saveAgents(agents);
-    }
+    } finally { unlockAgentsFile(); }
   } catch {}
 }
 
@@ -978,8 +1479,10 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   if (rateErr) return rateErr;
 
   // Send-after-listen enforcement: must call listen_group between sends in group mode
-  if (isGroupMode() && sendsSinceLastListen >= sendLimit) {
-    return { error: `You must call listen_group() before sending again. You've sent ${sendsSinceLastListen} message(s) without listening. This prevents message storms.` };
+  // Autonomous mode: relaxed to 5 sends per listen cycle
+  const effectiveSendLimit = isAutonomousMode() ? 5 : sendLimit;
+  if (isGroupMode() && sendsSinceLastListen >= effectiveSendLimit) {
+    return { error: `You must call listen_group() before sending again. You've sent ${sendsSinceLastListen} message(s) without listening (limit: ${effectiveSendLimit}). This prevents message storms.` };
   }
 
   // Response budget: track unaddressed sends, hint when depleted
@@ -1017,15 +1520,31 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
     } else {
       memberCount = Object.values(agentsNow).filter(a => isPidAlive(a.pid, a.last_activity)).length;
     }
-    let cooldown = Math.max(500, memberCount * 500); // base: per-channel adaptive
-    // Split cooldown: reply_to addressed = fast lane, unaddressed = slow lane
-    if (reply_to) {
-      const allMsgs = readJsonl(channel ? getChannelMessagesFile(channel) : getMessagesFile(currentBranch));
-      const refMsg = allMsgs.find(m => m.id === reply_to);
-      if (refMsg && refMsg.addressed_to && refMsg.addressed_to.includes(registeredName)) {
-        cooldown = 500; // fast lane: I was addressed
-      } else {
-        cooldown = Math.max(2000, memberCount * 1000); // slow lane
+    let cooldown;
+    if (isAutonomousMode()) {
+      // Autonomous mode: zero cooldown for structured communication, minimal for general
+      const isHandoff = content && (content.includes('[Workflow') || content.includes('[HANDOFF]'));
+      const isChannelMsg = channel && channel !== 'general';
+      if (isHandoff || isChannelMsg) {
+        // Micro-cooldown circuit breaker: 50ms for same-agent-same-channel to prevent runaway spam
+        const channelKey = `${registeredName}:${channel || 'general'}`;
+        const lastChannelSend = _channelSendTimes[channelKey] || 0;
+        cooldown = (Date.now() - lastChannelSend < 1000) ? 50 : 0; // 50ms if sent to same channel within 1s
+        _channelSendTimes[channelKey] = Date.now();
+      }
+      else if (reply_to) cooldown = 100;           // fast replies
+      else cooldown = 300;                         // general broadcasts only
+    } else {
+      cooldown = Math.max(500, memberCount * 500); // base: per-channel adaptive
+      // Split cooldown: reply_to addressed = fast lane, unaddressed = slow lane
+      if (reply_to) {
+        const allMsgs = readJsonl(channel ? getChannelMessagesFile(channel) : getMessagesFile(currentBranch));
+        const refMsg = allMsgs.find(m => m.id === reply_to);
+        if (refMsg && refMsg.addressed_to && refMsg.addressed_to.includes(registeredName)) {
+          cooldown = 500; // fast lane: I was addressed
+        } else {
+          cooldown = Math.max(2000, memberCount * 1000); // slow lane
+        }
       }
     }
     _cooldownApplied = cooldown;
@@ -1128,7 +1647,8 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
       referencedMsg = chMsgs.find(m => m.id === reply_to);
     }
     if (!referencedMsg) {
-      const allMsgs = readJsonl(getMessagesFile(currentBranch));
+      // Scale fix: tail-read last 100 messages for thread lookup instead of entire file
+      const allMsgs = tailReadJsonl(getMessagesFile(currentBranch), 100);
       referencedMsg = allMsgs.find(m => m.id === reply_to);
     }
     if (referencedMsg) {
@@ -1241,9 +1761,15 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   if (_cooldownApplied > 0) result.cooldown_applied_ms = _cooldownApplied;
   if (channel) result.channel = channel;
   if (currentBranch !== 'main') result.branch = currentBranch;
-  // Response budget hint
-  if (isGroupMode() && unaddressedSends >= 2 && !msg.addressed_to) {
-    result._budget_hint = 'Response budget depleted (2 unaddressed sends in 60s). Wait to be addressed or wait for budget reset.';
+  // Response budget hint — relaxed in autonomous mode
+  if (isGroupMode() && !msg.addressed_to) {
+    if (isAutonomousMode() && hasActiveWorkflowStep(registeredName)) {
+      // No budget limit when actively working on a workflow step — unlimited sends
+    } else if (isAutonomousMode() && unaddressedSends >= 10) {
+      result._budget_hint = 'Response budget depleted (10 unaddressed sends in 60s, autonomous mode). Wait briefly or get addressed.';
+    } else if (!isAutonomousMode() && unaddressedSends >= 2) {
+      result._budget_hint = 'Response budget depleted (2 unaddressed sends in 60s). Wait to be addressed or wait for budget reset.';
+    }
   }
   if (!recipientAlive) {
     result.warning = `Agent "${to}" appears offline (PID not running). Message queued but may not be received until they reconnect.`;
@@ -1280,8 +1806,9 @@ function toolBroadcast(content) {
   }
 
   // Send-after-listen enforcement applies to broadcast too
-  if (isGroupMode() && sendsSinceLastListen >= sendLimit) {
-    return { error: `You must call listen_group() before broadcasting again. You've sent ${sendsSinceLastListen} message(s) without listening.` };
+  const effectiveSendLimitBcast = isAutonomousMode() ? 5 : sendLimit;
+  if (isGroupMode() && sendsSinceLastListen >= effectiveSendLimitBcast) {
+    return { error: `You must call listen_group() before broadcasting again. You've sent ${sendsSinceLastListen} message(s) without listening (limit: ${effectiveSendLimitBcast}).` };
   }
 
   const rateErr = checkRateLimit();
@@ -1369,7 +1896,8 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
-  timeoutSeconds = Math.min(Math.max(1, timeoutSeconds || 300), 3600);
+  // Cap at 120s to prevent MCP connection drops (was 3600s)
+  timeoutSeconds = Math.min(Math.max(1, timeoutSeconds || 120), 120);
 
   setListening(true);
 
@@ -1415,6 +1943,7 @@ async function toolWaitForReply(timeoutSeconds = 300, from = null) {
       setListening(false);
       return buildMessageResponse(msg, consumed);
     }
+    touchHeartbeat(registeredName); // stay alive while polling
     await adaptiveSleep(pollCount++);
   }
 
@@ -1443,13 +1972,12 @@ function toolCheckMessages(from = null) {
 
   const result = {
     count: unconsumed.length,
+    // Scale fix: return previews not full content — agent gets full content via listen_group()
     messages: unconsumed.map(m => ({
       id: m.id,
       from: m.from,
-      content: m.content,
+      preview: m.content.substring(0, 120),
       timestamp: m.timestamp,
-      ...(m.reply_to && { reply_to: m.reply_to }),
-      ...(m.thread_id && { thread_id: m.thread_id }),
       ...(m.addressed_to && { addressed_to: m.addressed_to }),
     })),
   };
@@ -1527,30 +2055,69 @@ async function toolListen(from = null) {
 
   const consumed = getConsumedIds(registeredName);
 
-  // Poll indefinitely (in 5-min chunks to stay within any MCP limits)
-  while (true) {
-    const chunkDeadline = Date.now() + 300000; // 5 minutes
-    let pollCount = 0;
+  // Use fs.watch for instant wake — no polling, zero CPU while waiting
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result) => {
+      if (resolved) return;
+      resolved = true;
+      try { if (watcher) watcher.close(); } catch {}
+      clearTimeout(timer);
+      clearTimeout(heartbeatTimer);
+      if (fallbackInterval) clearInterval(fallbackInterval);
+      resolve(result);
+    };
 
-    while (Date.now() < chunkDeadline) {
+    let watcher;
+    let fallbackInterval;
+
+    // Helper: check for new messages
+    const checkMessages = () => {
       const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset);
       lastReadOffset = newOffset;
-
       for (const msg of newMsgs) {
         if (msg.to !== registeredName || consumed.has(msg.id)) continue;
         if (from && msg.from !== from && !msg.system) continue;
-
         consumed.add(msg.id);
         saveConsumedIds(registeredName, consumed);
         markAsRead(registeredName, msg.id);
         touchActivity();
         setListening(false);
-        return buildMessageResponse(msg, consumed);
+        done(buildMessageResponse(msg, consumed));
+        return true;
       }
-      await adaptiveSleep(pollCount++);
+      return false;
+    };
+
+    try {
+      const msgFile = getMessagesFile(currentBranch);
+      watcher = fs.watch(msgFile, () => { checkMessages(); });
+      watcher.on('error', () => {});
+    } catch {
+      // Fallback: adaptive polling
+      let pollCount = 0;
+      fallbackInterval = setInterval(() => {
+        if (checkMessages()) { clearInterval(fallbackInterval); return; }
+        pollCount++;
+        if (pollCount === 10) {
+          clearInterval(fallbackInterval);
+          fallbackInterval = setInterval(() => {
+            if (checkMessages()) clearInterval(fallbackInterval);
+          }, 2000);
+        }
+      }, 500);
     }
-    // No message in this 5-min chunk — loop again (stay listening)
-  }
+
+    // Heartbeat every 15s
+    const heartbeatTimer = setInterval(() => { touchHeartbeat(registeredName); }, 15000);
+
+    // 45s timeout — prevents MCP connection drops
+    const timer = setTimeout(() => {
+      setListening(false);
+      touchActivity();
+      done({ retry: true, message: 'No direct messages in 45s. Call listen() again to keep waiting.' });
+    }, 45000);
+  });
 }
 
 // Codex-compatible listen — returns after 90s (under Codex's 120s tool timeout)
@@ -1585,32 +2152,62 @@ async function toolListenCodex(from = null) {
   }
 
   const consumed = getConsumedIds(registeredName);
-  const deadline = Date.now() + 90000; // 90 seconds — safely under Codex's 120s limit
-  let pollCount = 0;
 
-  while (Date.now() < deadline) {
-    const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset);
-    lastReadOffset = newOffset;
+  // Use fs.watch — same as toolListen, with 45s cap for Codex
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result) => {
+      if (resolved) return;
+      resolved = true;
+      try { if (watcher) watcher.close(); } catch {}
+      clearTimeout(timer);
+      if (fallbackInterval) clearInterval(fallbackInterval);
+      resolve(result);
+    };
 
-    for (const msg of newMsgs) {
-      if (msg.to !== registeredName || consumed.has(msg.id)) continue;
-      if (from && msg.from !== from && !msg.system) continue;
+    let watcher;
+    let fallbackInterval;
 
-      consumed.add(msg.id);
-      saveConsumedIds(registeredName, consumed);
-      markAsRead(registeredName, msg.id);
-      touchActivity();
-      setListening(false);
-      return buildMessageResponse(msg, consumed);
+    const checkMessages = () => {
+      const { messages: newMsgs, newOffset } = readNewMessages(lastReadOffset);
+      lastReadOffset = newOffset;
+      for (const msg of newMsgs) {
+        if (msg.to !== registeredName || consumed.has(msg.id)) continue;
+        if (from && msg.from !== from && !msg.system) continue;
+        consumed.add(msg.id);
+        saveConsumedIds(registeredName, consumed);
+        markAsRead(registeredName, msg.id);
+        touchActivity();
+        setListening(false);
+        done(buildMessageResponse(msg, consumed));
+        return true;
+      }
+      return false;
+    };
+
+    try {
+      const msgFile = getMessagesFile(currentBranch);
+      watcher = fs.watch(msgFile, () => { checkMessages(); });
+      watcher.on('error', () => {});
+    } catch {
+      let pollCount = 0;
+      fallbackInterval = setInterval(() => {
+        if (checkMessages()) { clearInterval(fallbackInterval); return; }
+        pollCount++;
+        if (pollCount === 10) {
+          clearInterval(fallbackInterval);
+          fallbackInterval = setInterval(() => {
+            if (checkMessages()) clearInterval(fallbackInterval);
+          }, 2000);
+        }
+      }, 500);
     }
-    await adaptiveSleep(pollCount++);
-  }
 
-  // Still listening — tell agent to call again
-  return {
-    retry: true,
-    message: 'No messages yet. Call listen_codex() again to keep waiting. You are still registered and listening.',
-  };
+    const timer = setTimeout(() => {
+      setListening(false);
+      done({ retry: true, message: 'No messages yet. Call listen_codex() again to keep waiting.' });
+    }, 45000);
+  });
 }
 
 // --- Group conversation tools ---
@@ -1809,33 +2406,30 @@ async function toolListenGroup() {
 
   const consumed = getConsumedIds(registeredName);
 
-  // Poll indefinitely (in 5-min chunks to stay within any MCP limits, same as listen())
-  while (true) {
-    const chunkDeadline = Date.now() + 300000;
+  // Autonomous mode: cap listen at 30s — agents should use get_work() instead
+  const autonomousTimeout = isAutonomousMode() ? 30000 : null;
+  const MAX_LISTEN_MS = 45000; // 45s — short enough to prevent MCP connection drops
+  const listenStart = Date.now();
 
-  while (Date.now() < chunkDeadline) {
-    // Collect ALL unconsumed messages from general + all subscribed channels
+  // Helper: collect unconsumed messages from all sources (general + channels)
+  function collectBatch() {
     const myChannels = getAgentChannels(registeredName);
-    let messages = readJsonl(getMessagesFile(currentBranch));
-    // Also read from channel-specific files
+    const mainFile = getMessagesFile(currentBranch);
+    let messages = readJsonl(mainFile);
     for (const ch of myChannels) {
-      if (ch === 'general') continue; // general uses the main messages file
+      if (ch === 'general') continue;
       const chFile = getChannelMessagesFile(ch);
       if (fs.existsSync(chFile)) {
-        const chMsgs = readJsonl(chFile);
-        messages = messages.concat(chMsgs);
+        messages = messages.concat(readJsonl(chFile));
       }
     }
-    // Sort by timestamp for consistent ordering
     messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     const batch = [];
+    const perms = getPermissions();
     for (const msg of messages) {
       if (consumed.has(msg.id)) continue;
-      // Skip own messages in group mode (agent already knows what it sent)
       if (msg.to === '__group__' && msg.from === registeredName) { consumed.add(msg.id); continue; }
       if (msg.to !== registeredName && msg.to !== '__all__' && msg.to !== '__group__') continue;
-      // Permission check
-      const perms = getPermissions();
       if (perms[registeredName] && perms[registeredName].can_read) {
         const allowed = perms[registeredName].can_read;
         if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(msg.from) && !msg.system) continue;
@@ -1844,197 +2438,216 @@ async function toolListenGroup() {
       consumed.add(msg.id);
       markAsRead(registeredName, msg.id);
     }
+    return batch;
+  }
 
-    if (batch.length > 0) {
-      saveConsumedIds(registeredName, consumed);
-      touchActivity();
-      setListening(false);
+  // Check immediately first — no need to wait if messages are already pending
+  const immediateBatch = collectBatch();
+  if (immediateBatch.length > 0) {
+    return buildListenGroupResponse(immediateBatch, consumed, registeredName, listenStart);
+  }
 
-      // Reset send counters: listening resets the send-after-listen enforcement
-      sendsSinceLastListen = 0;
-      // Set send limit based on whether any message addresses this agent
-      const wasAddressed = batch.some(m => m.addressed_to && m.addressed_to.includes(registeredName));
-      sendLimit = wasAddressed ? 2 : 1; // addressed = 2 sends (response + follow-up), otherwise 1
-
-      // Post-receive stagger: deterministic delay based on agent name
-      // Prevents all agents from responding simultaneously to the same batch
-      const staggerMs = hashStagger(registeredName);
-      if (staggerMs > 0) {
-        await new Promise(r => setTimeout(r, staggerMs));
+  // Use fs.watch for instant wake on new messages (no polling — zero CPU while waiting)
+  // Falls back to adaptive polling if fs.watch is unavailable
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (batch) => {
+      if (resolved) return;
+      resolved = true;
+      try { if (watcher) watcher.close(); } catch {}
+      try { if (channelWatchers) channelWatchers.forEach(w => { try { w.close(); } catch {} }); } catch {}
+      clearTimeout(timer);
+      clearTimeout(heartbeatTimer);
+      if (fallbackInterval) clearInterval(fallbackInterval);
+      if (batch && batch.length > 0) {
+        resolve(buildListenGroupResponse(batch, consumed, registeredName, listenStart));
+      } else {
+        // Timeout — return minimal empty response
+        setListening(false);
+        sendsSinceLastListen = 0;
+        sendLimit = 2;
+        touchHeartbeat(registeredName);
+        resolve({
+          messages: [],
+          message_count: 0,
+          retry: true,
+          batch_summary: 'No new messages — call listen_group() again to keep listening.',
+        });
       }
+    };
 
-      // Sort batch by priority: system > threaded replies > direct > broadcast
-      // Within each category, maintain chronological order
-      function messagePriority(m) {
-        if (m.system || m.from === '__system__') return 0;
-        if (m.reply_to || m.thread_id) return 1;
-        if (!m.broadcast) return 2;
-        return 3;
-      }
-      batch.sort((a, b) => {
-        const pa = messagePriority(a), pb = messagePriority(b);
-        if (pa !== pb) return pa - pb;
-        return new Date(a.timestamp) - new Date(b.timestamp);
+    let watcher;
+    let channelWatchers = [];
+    let fallbackInterval;
+
+    try {
+      // Watch main messages file for changes
+      const msgFile = getMessagesFile(currentBranch);
+      watcher = fs.watch(msgFile, () => {
+        const batch = collectBatch();
+        if (batch.length > 0) done(batch);
       });
+      watcher.on('error', () => {});
 
-      // Build batch summary for triage
-      const summaryCounts = {};
-      for (const m of batch) {
-        const type = m.system || m.from === '__system__' ? 'system'
-          : m.broadcast ? 'broadcast' : (m.reply_to || m.thread_id) ? 'thread' : 'direct';
-        const key = `${m.from}:${type}`;
-        summaryCounts[key] = (summaryCounts[key] || 0) + 1;
-      }
-      const summaryParts = [];
-      for (const [key, count] of Object.entries(summaryCounts)) {
-        const [from, type] = key.split(':');
-        summaryParts.push(`${count} ${type} from ${from}`);
-      }
-      const batchSummary = `${batch.length} messages: ${summaryParts.join(', ')}`;
-
-      // Count agents first (needed by smart context sizing)
-      const agents = getAgents();
-      const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
-
-      // Smart context — priority partitions instead of dumb chronological
-      const history = readJsonl(getHistoryFile(currentBranch));
-      const contextSize = Math.min(50, Math.max(20, agentNames.length * 5));
+      // Also watch channel files
       const myChannels = getAgentChannels(registeredName);
-      const seen = new Set();
-
-      // Bucket A: messages addressed to me (sacred — always included, up to 10)
-      const bucketA = history.filter(m => m.addressed_to && m.addressed_to.includes(registeredName)).slice(-10);
-      bucketA.forEach(m => seen.add(m.id));
-
-      // Bucket B: messages from my channels (capped to fit after A)
-      const maxB = Math.min(15, contextSize - bucketA.length);
-      const bucketB = maxB > 0 ? history.filter(m => m.channel && myChannels.includes(m.channel) && !seen.has(m.id)).slice(-maxB) : [];
-      bucketB.forEach(m => seen.add(m.id));
-
-      // Bucket C: recent chronological (fill remaining after A+B)
-      const remaining = contextSize - bucketA.length - bucketB.length;
-      const bucketC = remaining > 0 ? history.filter(m => !seen.has(m.id)).slice(-remaining) : [];
-
-      // Merge and sort — total guaranteed <= contextSize, A always survives
-      const smartHistory = [...bucketA, ...bucketB, ...bucketC].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-      const recentHistory = smartHistory.map(m => ({
-        from: m.from, to: m.to, content: m.content.substring(0, 500),
-        timestamp: m.timestamp, id: m.id,
-        ...(m.channel && { channel: m.channel }),
-        ...(m.addressed_to && { addressed_to: m.addressed_to }),
-      }));
-
-      // Who hasn't spoken recently (agents/agentNames already declared above)
-      const recentSpeakers = new Set(history.slice(-10).map(m => m.from));
-      const silent = agentNames.filter(n => !recentSpeakers.has(n) && n !== registeredName);
-
-      // KB hints: check if batch messages mention KB topics
-      let kbHints = [];
-      try {
-        const kb = getKB();
-        const kbKeys = Object.keys(kb);
-        if (kbKeys.length > 0) {
-          const batchText = batch.map(m => m.content).join(' ').toLowerCase();
-          kbHints = kbKeys.filter(k => batchText.includes(k.toLowerCase().replace(/[-_.]/g, ' '))).slice(0, 3);
-        }
-      } catch {}
-
-      const now = Date.now();
-      const result = {
-        messages: batch.map(m => {
-          const ageMs = now - new Date(m.timestamp).getTime();
-          const ageSec = Math.round(ageMs / 1000);
-          return {
-            id: m.id, from: m.from, to: m.to, content: m.content,
-            timestamp: m.timestamp,
-            age_seconds: ageSec,
-            ...(ageSec > 30 && { delayed: true }),
-            ...(m.reply_to && {
-              reply_to: m.reply_to,
-              // Thread context: include parent message preview so recipients have context
-              _reply_context: (() => {
-                const parent = history.find(h => h.id === m.reply_to);
-                return parent ? `${parent.from}: "${parent.content.substring(0, 100)}..."` : null;
-              })(),
-            }),
-            ...(m.thread_id && { thread_id: m.thread_id }),
-            // addressed_to hint for group messages
-            ...(m.addressed_to && { addressed_to: m.addressed_to }),
-            ...(m.to === '__group__' && {
-              addressed_to_you: !m.addressed_to || m.addressed_to.includes(registeredName),
-              should_respond: !m.addressed_to || m.addressed_to.includes(registeredName),
-            }),
-          };
-        }),
-        message_count: batch.length,
-        batch_summary: batchSummary,
-        context: recentHistory,
-        agents_online: agentNames.length,
-        agents_silent: silent,
-        agents_status: agentNames.reduce(function(acc, n) {
-          if (agents[n].listening_since) {
-            acc[n] = 'listening';
-          } else {
-            // Check for unresponsive: not listening, >2min since last listen
-            const lastListened = agents[n].last_listened_at;
-            const sinceLastListen = lastListened ? Date.now() - new Date(lastListened).getTime() : Infinity;
-            if (sinceLastListen > 120000) {
-              acc[n] = 'unresponsive';
-            } else {
-              acc[n] = 'working';
-            }
-          }
-          return acc;
-        }, {}),
-        hint: silent.length > 0
-          ? `${silent.join(', ')} haven't spoken recently. Consider addressing them.`
-          : 'All agents are active in the conversation.',
-      };
-
-      // Managed mode: add context so agents know whether to respond
-      if (isManagedMode()) {
-        const managed = getManagedConfig();
-        const youHaveFloor = managed.turn_current === registeredName;
-        const youAreManager = managed.manager === registeredName;
-
-        result.managed_context = {
-          phase: managed.phase,
-          floor: managed.floor,
-          manager: managed.manager,
-          you_have_floor: youHaveFloor,
-          you_are_manager: youAreManager,
-          turn_current: managed.turn_current,
-        };
-
-        if (youAreManager) {
-          result.should_respond = true;
-          result.instructions = 'You are the MANAGER. Decide who speaks next using yield_floor(), or advance the phase using set_phase().';
-        } else if (youHaveFloor) {
-          result.should_respond = true;
-          result.instructions = 'It is YOUR TURN to speak. Respond now, then the floor will return to the manager.';
-        } else if (managed.floor === 'execution') {
-          result.should_respond = false;
-          result.instructions = `EXECUTION PHASE: Focus on your assigned tasks. Only message the manager (${managed.manager}) if you need help or to report completion.`;
-        } else {
-          result.should_respond = false;
-          result.instructions = 'DO NOT RESPOND. Wait for the manager to give you the floor. Call listen() or listen_group() to wait.';
+      for (const ch of myChannels) {
+        if (ch === 'general') continue;
+        const chFile = getChannelMessagesFile(ch);
+        if (fs.existsSync(chFile)) {
+          try {
+            const chWatcher = fs.watch(chFile, () => {
+              const batch = collectBatch();
+              if (batch.length > 0) done(batch);
+            });
+            chWatcher.on('error', () => {});
+            channelWatchers.push(chWatcher);
+          } catch {}
         }
       }
-
-      if (kbHints.length > 0) {
-        result.kb_hints = kbHints.map(k => `Relevant KB entry: "${k}" — call kb_read("${k}") for context`);
-      }
-      result.next_action = 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
-      return result;
+    } catch {
+      // fs.watch not available — fall back to adaptive polling
+      let pollCount = 0;
+      fallbackInterval = setInterval(() => {
+        const batch = collectBatch();
+        if (batch.length > 0) {
+          clearInterval(fallbackInterval);
+          done(batch);
+        }
+        pollCount++;
+        // Adaptive: slow down after initial fast checks
+        if (pollCount === 10) {
+          clearInterval(fallbackInterval);
+          fallbackInterval = setInterval(() => {
+            const batch = collectBatch();
+            if (batch.length > 0) { clearInterval(fallbackInterval); done(batch); }
+          }, 2000); // slow poll every 2s
+        }
+      }, 500); // fast poll first 5s
     }
 
-    // Note: NO idle timeout here. listen_group blocks indefinitely until messages arrive.
-    // Work suggestions are delivered via enhanced nudge on other tool calls, not by breaking listen.
+    // Heartbeat every 15s while waiting — prevents dashboard from showing agent as dead
+    const heartbeatTimer = setInterval(() => {
+      touchHeartbeat(registeredName);
+    }, 15000);
 
-    await adaptiveSleep(0);
+    // Autonomous mode: shorter timeout
+    const effectiveTimeout = autonomousTimeout
+      ? Math.min(autonomousTimeout, MAX_LISTEN_MS)
+      : MAX_LISTEN_MS;
+
+    // Timeout: don't block forever
+    const timer = setTimeout(() => done([]), effectiveTimeout);
+  });
+}
+
+// Build the response for listen_group — kept lean to reduce context accumulation
+// Context/history removed: agents should call get_history() when they need it
+function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
+  saveConsumedIds(agentName, consumed);
+  touchActivity();
+  setListening(false);
+  sendsSinceLastListen = 0;
+  const wasAddressed = batch.some(m => m.addressed_to && m.addressed_to.includes(agentName));
+  sendLimit = wasAddressed ? 2 : 1;
+
+  // Sort batch by priority: system > threaded replies > direct > broadcast
+  function messagePriority(m) {
+    if (m.system || m.from === '__system__') return 0;
+    if (m.reply_to || m.thread_id) return 1;
+    if (!m.broadcast) return 2;
+    return 3;
   }
-    // No message in this 5-min chunk — loop again (stay listening forever)
+  batch.sort((a, b) => {
+    const pa = messagePriority(a), pb = messagePriority(b);
+    if (pa !== pb) return pa - pb;
+    return new Date(a.timestamp) - new Date(b.timestamp);
+  });
+
+  // Build batch summary for triage
+  const summaryCounts = {};
+  for (const m of batch) {
+    const type = m.system || m.from === '__system__' ? 'system'
+      : m.broadcast ? 'broadcast' : (m.reply_to || m.thread_id) ? 'thread' : 'direct';
+    const key = `${m.from}:${type}`;
+    summaryCounts[key] = (summaryCounts[key] || 0) + 1;
   }
+  const summaryParts = [];
+  for (const [key, count] of Object.entries(summaryCounts)) {
+    const [from, type] = key.split(':');
+    summaryParts.push(`${count} ${type} from ${from}`);
+  }
+  const batchSummary = `${batch.length} messages: ${summaryParts.join(', ')}`;
+
+  // Agent statuses — lightweight, no history reads
+  const agents = getAgents();
+  const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
+  const agentStatus = {};
+  for (const n of agentNames) {
+    if (agents[n].listening_since) {
+      agentStatus[n] = 'listening';
+    } else {
+      const lastListened = agents[n].last_listened_at;
+      const sinceLastListen = lastListened ? Date.now() - new Date(lastListened).getTime() : Infinity;
+      agentStatus[n] = sinceLastListen > 120000 ? 'unresponsive' : 'working';
+    }
+  }
+
+  const now = Date.now();
+  const result = {
+    messages: batch.map(m => {
+      const ageSec = Math.round((now - new Date(m.timestamp).getTime()) / 1000);
+      return {
+        id: m.id, from: m.from, to: m.to, content: m.content,
+        timestamp: m.timestamp,
+        age_seconds: ageSec,
+        ...(ageSec > 30 && { delayed: true }),
+        ...(m.reply_to && { reply_to: m.reply_to }),
+        ...(m.thread_id && { thread_id: m.thread_id }),
+        ...(m.addressed_to && { addressed_to: m.addressed_to }),
+        ...(m.to === '__group__' && {
+          addressed_to_you: !m.addressed_to || m.addressed_to.includes(agentName),
+          should_respond: !m.addressed_to || m.addressed_to.includes(agentName),
+        }),
+      };
+    }),
+    message_count: batch.length,
+    batch_summary: batchSummary,
+    agents_online: agentNames.length,
+    agents_status: agentStatus,
+  };
+
+  // Managed mode: add context so agents know whether to respond
+  if (isManagedMode()) {
+    const managed = getManagedConfig();
+    const youHaveFloor = managed.turn_current === agentName;
+    const youAreManager = managed.manager === agentName;
+
+    result.managed_context = {
+      phase: managed.phase, floor: managed.floor, manager: managed.manager,
+      you_have_floor: youHaveFloor, you_are_manager: youAreManager,
+      turn_current: managed.turn_current,
+    };
+
+    if (youAreManager) {
+      result.should_respond = true;
+      result.instructions = 'You are the MANAGER. Decide who speaks next using yield_floor(), or advance the phase using set_phase().';
+    } else if (youHaveFloor) {
+      result.should_respond = true;
+      result.instructions = 'It is YOUR TURN to speak. Respond now, then the floor will return to the manager.';
+    } else if (managed.floor === 'execution') {
+      result.should_respond = false;
+      result.instructions = `EXECUTION PHASE: Focus on your assigned tasks. Only message the manager (${managed.manager}) if you need help or to report completion.`;
+    } else {
+      result.should_respond = false;
+      result.instructions = 'DO NOT RESPOND. Wait for the manager to give you the floor. Call listen() or listen_group() to wait.';
+    }
+  }
+
+  result.next_action = isAutonomousMode()
+    ? 'Process these messages, then call get_work() to continue the proactive work loop. Do NOT call listen_group() — use get_work() instead.'
+    : 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
+  return result;
 }
 
 function toolGetHistory(limit = 50, thread_id = null) {
@@ -2232,6 +2845,9 @@ function toolCreateTask(title, description = '', assignee = null) {
     return { error: 'You must call register() first' };
   }
 
+  if (!title || !title.trim()) {
+    return { error: 'Task title cannot be empty' };
+  }
   if (title.length > 200) {
     return { error: 'Task title too long (max 200 characters)' };
   }
@@ -2298,7 +2914,7 @@ function toolUpdateTask(taskId, status, notes = null) {
     return { error: 'You must call register() first' };
   }
 
-  const validStatuses = ['pending', 'in_progress', 'done', 'blocked'];
+  const validStatuses = ['pending', 'in_progress', 'in_review', 'done', 'blocked', 'blocked_permanent'];
   if (!validStatuses.includes(status)) {
     return { error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` };
   }
@@ -2316,6 +2932,22 @@ function toolUpdateTask(taskId, status, notes = null) {
   // Auto-assign on claim
   if (status === 'in_progress' && !task.assignee) {
     task.assignee = registeredName;
+  }
+  // Track attempt agents on claim
+  if (status === 'in_progress') {
+    if (!task.attempt_agents) task.attempt_agents = [];
+    if (!task.attempt_agents.includes(registeredName)) task.attempt_agents.push(registeredName);
+  }
+
+  // Circuit breaker: if task goes back to pending and 3+ agents have failed, block permanently
+  if (status === 'pending' && task.attempt_agents && task.attempt_agents.length >= 3) {
+    task.status = 'blocked_permanent';
+    task.updated_at = new Date().toISOString();
+    task.block_reason = `Circuit breaker: ${task.attempt_agents.length} agents attempted and failed (${task.attempt_agents.join(', ')})`;
+    saveTasks(tasks);
+    broadcastSystemMessage(`[CIRCUIT BREAKER] Task "${task.title}" permanently blocked after ${task.attempt_agents.length} agents failed. Needs human review.`);
+    touchActivity();
+    return { success: true, task_id: task.id, status: 'blocked_permanent', circuit_breaker: true, message: 'Task permanently blocked — too many agents failed. Needs human review.' };
   }
 
   task.status = status;
@@ -2352,6 +2984,12 @@ function toolUpdateTask(taskId, status, notes = null) {
   // Event hooks: task completion
   if (status === 'done') {
     fireEvent('task_complete', { title: task.title, created_by: task.created_by });
+    // Economy: award credits for task completion
+    try {
+      const economyFile = path.join(DATA_DIR, 'economy.jsonl');
+      const creditEntry = JSON.stringify({ agent: registeredName, amount: 10, reason: 'task_completed', type: 'earn', task: task.title, timestamp: new Date().toISOString() }) + '\n';
+      fs.appendFileSync(economyFile, creditEntry);
+    } catch {}
     // Check if this resolves any dependencies
     const deps = getDeps();
     for (const dep of deps) {
@@ -2638,10 +3276,10 @@ function toolWorkspaceList(agent) {
 
 // --- Phase 3: Workflow tools ---
 
-function toolCreateWorkflow(name, steps) {
+function toolCreateWorkflow(name, steps, autonomous = false, parallel = false) {
   if (!registeredName) return { error: 'You must call register() first' };
   if (!name || typeof name !== 'string' || name.length > 50) return { error: 'name must be 1-50 chars' };
-  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 20) return { error: 'steps must be array of 2-20 items' };
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 30) return { error: 'steps must be array of 2-30 items' };
 
   const agents = getAgents();
   const workflows = getWorkflows();
@@ -2654,19 +3292,45 @@ function toolCreateWorkflow(name, steps) {
       id: i + 1,
       description: step.description.substring(0, 200),
       assignee: step.assignee || null,
-      status: i === 0 ? 'in_progress' : 'pending',
-      started_at: i === 0 ? new Date().toISOString() : null,
+      depends_on: Array.isArray(step.depends_on) ? step.depends_on : [],
+      status: 'pending', // all start pending; we'll activate ready ones below
+      started_at: null,
       completed_at: null,
       notes: '',
     };
   });
   if (parsedSteps.includes(null)) return { error: 'Each step must have a description' };
 
+  // Validate depends_on references
+  const stepIds = parsedSteps.map(s => s.id);
+  for (const step of parsedSteps) {
+    for (const depId of step.depends_on) {
+      if (!stepIds.includes(depId)) return { error: `Step ${step.id} depends_on non-existent step ${depId}` };
+      if (depId >= step.id) return { error: `Step ${step.id} cannot depend on step ${depId} (must depend on earlier steps)` };
+    }
+  }
+
+  // Find initially ready steps (no dependencies)
+  const readySteps = parsedSteps.filter(s => s.depends_on.length === 0);
+  if (parallel) {
+    // In parallel mode, start ALL steps with no dependencies
+    for (const s of readySteps) {
+      s.status = 'in_progress';
+      s.started_at = new Date().toISOString();
+    }
+  } else {
+    // Sequential: only start the first step
+    readySteps[0].status = 'in_progress';
+    readySteps[0].started_at = new Date().toISOString();
+  }
+
   const workflow = {
     id: workflowId,
     name,
     steps: parsedSteps,
     status: 'active',
+    autonomous: !!autonomous,
+    parallel: !!parallel,
     created_by: registeredName,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -2677,18 +3341,30 @@ function toolCreateWorkflow(name, steps) {
   ensureDataDir();
   saveWorkflows(workflows);
 
-  // Auto-handoff to first step's assignee if set
-  const firstStep = parsedSteps[0];
-  if (firstStep.assignee && agents[firstStep.assignee] && firstStep.assignee !== registeredName) {
-    const handoffContent = `[Workflow "${name}"] Step 1 assigned to you: ${firstStep.description}`;
-    messageSeq++;
-    const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: firstStep.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
-    fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-    fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+  // Auto-handoff to all in_progress steps' assignees
+  const startedSteps = parsedSteps.filter(s => s.status === 'in_progress');
+  for (const step of startedSteps) {
+    if (step.assignee && agents[step.assignee] && step.assignee !== registeredName) {
+      const handoffContent = `[Workflow "${name}"] Step ${step.id} assigned to you: ${step.description}` +
+        (autonomous ? '\n\nThis is an AUTONOMOUS workflow. Call get_work() to enter the proactive work loop. Do NOT wait for approval.' : '');
+      messageSeq++;
+      const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: step.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
+      fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+      fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+    }
   }
   touchActivity();
 
-  return { success: true, workflow_id: workflowId, name, step_count: parsedSteps.length, current_step: 1 };
+  return {
+    success: true,
+    workflow_id: workflowId,
+    name,
+    step_count: parsedSteps.length,
+    autonomous: !!autonomous,
+    parallel: !!parallel,
+    started_steps: startedSteps.map(s => ({ id: s.id, description: s.description, assignee: s.assignee })),
+    message: autonomous ? 'Autonomous workflow created. All agents should call get_work() to enter the proactive work loop.' : undefined,
+  };
 }
 
 function toolAdvanceWorkflow(workflowId, notes) {
@@ -2706,22 +3382,22 @@ function toolAdvanceWorkflow(workflowId, notes) {
   currentStep.completed_at = new Date().toISOString();
   if (notes) currentStep.notes = notes.substring(0, 500);
 
-  // Find next pending step
-  const nextStep = wf.steps.find(s => s.status === 'pending');
-  if (nextStep) {
-    nextStep.status = 'in_progress';
-    nextStep.started_at = new Date().toISOString();
-
-    // Auto-handoff to next assignee (respecting permissions)
+  // Find all ready steps (supports parallel via depends_on)
+  const nextSteps = findReadySteps(wf);
+  if (nextSteps.length > 0) {
     const agents = getAgents();
-    if (nextStep.assignee && agents[nextStep.assignee] && nextStep.assignee !== registeredName && canSendTo(registeredName, nextStep.assignee)) {
-      const handoffContent = `[Workflow "${wf.name}"] Step ${nextStep.id} assigned to you: ${nextStep.description}`;
-      messageSeq++;
-      const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: nextStep.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
-      fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-      fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+    for (const step of nextSteps) {
+      step.status = 'in_progress';
+      step.started_at = new Date().toISOString();
+      if (step.assignee && agents[step.assignee] && step.assignee !== registeredName && canSendTo(registeredName, step.assignee)) {
+        const handoffContent = `[Workflow "${wf.name}"] Step ${step.id} assigned to you: ${step.description}`;
+        messageSeq++;
+        const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: step.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
+        fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+        fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+      }
     }
-  } else {
+  } else if (wf.steps.every(s => s.status === 'done')) {
     wf.status = 'completed';
   }
   wf.updated_at = new Date().toISOString();
@@ -2735,7 +3411,7 @@ function toolAdvanceWorkflow(workflowId, notes) {
     success: true,
     workflow_id: wf.id,
     completed_step: currentStep.id,
-    next_step: nextStep ? { id: nextStep.id, description: nextStep.description, assignee: nextStep.assignee } : null,
+    next_steps: nextSteps.length > 0 ? nextSteps.map(s => ({ id: s.id, description: s.description, assignee: s.assignee })) : null,
     progress: `${doneCount}/${wf.steps.length} (${pct}%)`,
     workflow_status: wf.status,
   };
@@ -2748,7 +3424,9 @@ function toolWorkflowStatus(workflowId) {
     if (!wf) return { error: `Workflow not found: ${workflowId}` };
     const doneCount = wf.steps.filter(s => s.status === 'done').length;
     const pct = Math.round((doneCount / wf.steps.length) * 100);
-    return { workflow: wf, progress: `${doneCount}/${wf.steps.length} (${pct}%)` };
+    const result = { workflow: wf, progress: `${doneCount}/${wf.steps.length} (${pct}%)` };
+    if (wf.status === 'completed') result.report = generateCompletionReport(wf);
+    return result;
   }
   return {
     count: workflows.length,
@@ -2756,6 +3434,1331 @@ function toolWorkflowStatus(workflowId) {
       const doneCount = w.steps.filter(s => s.status === 'done').length;
       return { id: w.id, name: w.name, status: w.status, steps: w.steps.length, done: doneCount, progress: Math.round((doneCount / w.steps.length) * 100) + '%' };
     }),
+  };
+}
+
+// --- Context refresh (provides summary when conversation is long) ---
+
+function maybeRefreshContext(agentName) {
+  const consumed = getConsumedIds(agentName);
+  const consumedCount = consumed.size;
+
+  // Every 50 messages consumed, provide a context refresh
+  if (consumedCount > 50 && consumedCount % 50 < 5) { // window of 5 to avoid missing the boundary
+    const workflows = getWorkflows();
+    const activeWorkflows = workflows.filter(w => w.status === 'active');
+    const mySteps = [];
+    for (const wf of activeWorkflows) {
+      for (const s of wf.steps) {
+        if (s.assignee === agentName) mySteps.push({ workflow: wf.name, step: s.description, status: s.status });
+      }
+    }
+
+    const tasks = getTasks();
+    const myTasks = tasks.filter(t => t.assignee === agentName && t.status !== 'done');
+    const decisions = readJsonFile(DECISIONS_FILE) || [];
+    const recentDecisions = decisions.slice(-5);
+
+    return {
+      context_refresh: true,
+      messages_consumed: consumedCount,
+      summary: {
+        active_workflows: activeWorkflows.map(w => ({ name: w.name, status: w.status, autonomous: w.autonomous, progress: `${w.steps.filter(s => s.status === 'done').length}/${w.steps.length}` })),
+        your_assignments: mySteps,
+        your_tasks: myTasks.map(t => ({ title: t.title, status: t.status })),
+        recent_decisions: recentDecisions.map(d => d.decision),
+      },
+      instruction: 'CONTEXT REFRESH: Your conversation is long. Here is a summary of the current state. Use this as your ground truth.',
+    };
+  }
+  return null;
+}
+
+// --- Skill search for get_work (section 2.2) ---
+
+function searchKBForTask(taskDescription) {
+  const kb = getKB();
+  if (!kb || Object.keys(kb).length === 0) return [];
+  const keywords = taskDescription.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const results = [];
+  for (const [key, entry] of Object.entries(kb)) {
+    if (!key.startsWith('skill_') && !key.startsWith('lesson_')) continue;
+    const content = (typeof entry === 'string' ? entry : entry.content || '').toLowerCase();
+    const matchCount = keywords.filter(kw => content.includes(kw)).length;
+    if (matchCount > 0) results.push({ key, content: typeof entry === 'string' ? entry : entry.content, relevance: matchCount });
+  }
+  return results.sort((a, b) => b.relevance - a.relevance).slice(0, 3);
+}
+
+// Backpressure signal: warn when tasks are created faster than consumed
+function computeBackpressure() {
+  const tasks = getTasks();
+  const pendingTasks = tasks.filter(t => t.status === 'pending');
+  const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
+  const agents = getAgents();
+  const aliveCount = Object.values(agents).filter(a => isPidAlive(a.pid, a.last_activity)).length;
+  const queueDepth = pendingTasks.length;
+  const activeWork = inProgressTasks.length;
+  const capacity = Math.max(1, aliveCount);
+  const pressure = queueDepth / capacity;
+  if (pressure <= 2) return null; // normal load
+  return {
+    backpressure: true, queue_depth: queueDepth, active_work: activeWork,
+    agent_count: aliveCount, pressure_ratio: Math.round(pressure * 10) / 10,
+    warning: `High task load: ${queueDepth} pending tasks for ${aliveCount} agent(s) (${Math.round(pressure)}x capacity). Focus on completing current work.`
+  };
+}
+
+// --- Autonomy Engine tools ---
+
+async function toolGetWork(params = {}) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  // Special roles run their own loops instead of regular work
+  const profiles = getProfiles();
+  if (profiles[registeredName] && profiles[registeredName].role === 'monitor') {
+    return monitorHealthCheck();
+  }
+  if (profiles[registeredName] && profiles[registeredName].role === 'advisor') {
+    return advisorAnalysis();
+  }
+
+  // Context refresh check
+  const refresh = maybeRefreshContext(registeredName);
+
+  // Backpressure check
+  const backpressure = computeBackpressure();
+
+  const skills = params.available_skills || [];
+
+  // 1. Active workflow step assigned to me
+  const myStep = findMyActiveWorkflowStep();
+  if (myStep) {
+    const result = {
+      type: 'workflow_step', priority: 'assigned', step: myStep,
+      instruction: `You have assigned work: "${myStep.description}" (Workflow: "${myStep.workflow_name}"). Do this NOW. When done, call verify_and_advance().`
+    };
+    // Attach relevant KB skills for this task
+    const relevantSkills = searchKBForTask(myStep.description);
+    if (relevantSkills.length > 0) {
+      result.team_learnings = relevantSkills.map(s => s.content);
+      result.instruction += `\n\nTeam has learned from past work:\n${relevantSkills.map(s => `- ${s.content}`).join('\n')}`;
+    }
+    // Item 8: Attach checkpoint resume data if available
+    const checkpoint = getCheckpoint(registeredName, myStep.workflow_id, myStep.id);
+    if (checkpoint) {
+      result.checkpoint = checkpoint;
+      result.instruction += `\n\nRESUME FROM CHECKPOINT (saved ${checkpoint.saved_at}): ${typeof checkpoint.progress === 'string' ? checkpoint.progress : JSON.stringify(checkpoint.progress)}`;
+    }
+    // Attach context refresh if needed
+    if (refresh) result.context_refresh = refresh;
+    return result;
+  }
+
+  // 2. Pending messages
+  const pending = getUnconsumedMessages(registeredName);
+  if (pending.length > 0) {
+    return {
+      type: 'messages', priority: 'respond',
+      messages: pending.slice(0, 10), total: pending.length,
+      instruction: 'Process these messages first, then call get_work() again.'
+    };
+  }
+
+  // 3. Unassigned tasks matching skills
+  const unassigned = findUnassignedTasks(skills);
+  if (unassigned.length > 0) {
+    const best = unassigned[0];
+    const tasks = getTasks();
+    const task = tasks.find(t => t.id === best.id);
+    if (task) {
+      task.assignee = registeredName;
+      task.status = 'in_progress';
+      task.updated_at = new Date().toISOString();
+      // Track which agents have attempted this task (circuit breaker)
+      if (!task.attempt_agents) task.attempt_agents = [];
+      if (!task.attempt_agents.includes(registeredName)) task.attempt_agents.push(registeredName);
+      saveTasks(tasks);
+    }
+    const claimResult = {
+      type: 'claimed_task', priority: 'self_assigned', task: best,
+      instruction: `No one was working on "${best.title}". I've assigned it to you. Start working on it now.`
+    };
+    // Attach relevant KB skills for this task
+    const taskSkills = searchKBForTask(best.title + ' ' + (best.description || ''));
+    if (taskSkills.length > 0) {
+      claimResult.team_learnings = taskSkills.map(s => s.content);
+      claimResult.instruction += `\n\nTeam has learned from past work:\n${taskSkills.map(s => `- ${s.content}`).join('\n')}`;
+    }
+    if (refresh) claimResult.context_refresh = refresh;
+    return claimResult;
+  }
+
+  // 4. Help requests
+  const helpReqs = findHelpRequests();
+  if (helpReqs.length > 0) {
+    return {
+      type: 'help_teammate', priority: 'assist', request: helpReqs[0],
+      instruction: `${helpReqs[0].from || 'A teammate'} needs help: "${helpReqs[0].content.substring(0, 200)}". Assist them.`
+    };
+  }
+
+  // 5. Pending reviews
+  const reviews = findPendingReviews();
+  if (reviews.length > 0) {
+    return {
+      type: 'review', priority: 'review', review: reviews[0],
+      instruction: `Review request from ${reviews[0].requested_by}: "${reviews[0].file}". Review their work and submit_review().`
+    };
+  }
+
+  // 6. Blocked tasks
+  const blocked = findBlockedTasks();
+  if (blocked.length > 0) {
+    return {
+      type: 'unblock', priority: 'unblock', task: blocked[0],
+      instruction: `"${blocked[0].title}" is blocked. See if you can help unblock it.`
+    };
+  }
+
+  // 6.5. Work stealing — take work from overloaded agents
+  const stealable = findStealableWork();
+  if (stealable) {
+    const tasks = getTasks();
+    const task = tasks.find(t => t.id === stealable.task.id);
+    if (task) {
+      task.assignee = registeredName;
+      task.status = 'in_progress';
+      task.updated_at = new Date().toISOString();
+      if (!task.attempt_agents) task.attempt_agents = [];
+      if (!task.attempt_agents.includes(registeredName)) task.attempt_agents.push(registeredName);
+      saveTasks(tasks);
+    }
+    return {
+      type: 'stolen_task', priority: 'work_steal', task: stealable.task,
+      from_agent: stealable.from_agent,
+      instruction: stealable.message + ' Start working on it now.',
+    };
+  }
+
+  // 7. Short listen (30s max, NOT infinite) — configurable via env for testing
+  const listenTimeout = parseInt(process.env.AGENT_BRIDGE_LISTEN_TIMEOUT) || 30000;
+  const newMsgs = await listenWithTimeout(listenTimeout);
+  if (newMsgs.length > 0) {
+    return {
+      type: 'messages', priority: 'respond',
+      messages: newMsgs.slice(0, 10), total: newMsgs.length,
+      instruction: 'New messages arrived. Process them, then call get_work() again.'
+    };
+  }
+
+  // 8. Upcoming steps to prep for
+  const upcoming = findUpcomingStepsForMe();
+  if (upcoming) {
+    return {
+      type: 'prep_work', priority: 'proactive', step: upcoming,
+      instruction: `Your next workflow step "${upcoming.description}" is coming up (Workflow: "${upcoming.workflow_name}"). Prepare for it: read relevant files, understand the dependencies, plan your approach.`
+    };
+  }
+
+  // 9. Truly idle — try role rebalancing before returning
+  rebalanceRoles(); // Item 5: check if workload requires role changes
+  touchActivity();
+  const idleResult = {
+    type: 'idle',
+    instruction: 'No work available right now. Call get_work() again in 30 seconds. Do NOT call listen_group() — use get_work() to stay in the proactive loop.'
+  };
+  // Item 4: warn demoted agents
+  const agentRep = getReputation();
+  if (agentRep[registeredName] && agentRep[registeredName].demoted) {
+    idleResult.agent_warning = `You have ${agentRep[registeredName].consecutive_rejections} consecutive rejections. Focus on smaller, well-tested changes. Your next approval will reset this.`;
+  }
+  if (refresh) idleResult.context_refresh = refresh;
+  if (backpressure) idleResult.backpressure = backpressure;
+  return idleResult;
+}
+
+async function toolVerifyAndAdvance(params) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const { workflow_id, summary, verification, files_changed, confidence, learnings } = params;
+
+  if (!workflow_id) return { error: 'workflow_id is required' };
+  if (!summary) return { error: 'summary is required' };
+  if (!verification) return { error: 'verification is required' };
+  if (typeof confidence !== 'number' || confidence < 0 || confidence > 100) return { error: 'confidence must be 0-100' };
+
+  const workflows = getWorkflows();
+  const wf = workflows.find(w => w.id === workflow_id);
+  if (!wf) return { error: `Workflow not found: ${workflow_id}` };
+  if (wf.status !== 'active') return { error: 'Workflow is not active' };
+
+  const currentStep = wf.steps.find(s => s.assignee === registeredName && s.status === 'in_progress');
+  if (!currentStep) return { error: 'No active step assigned to you in this workflow.' };
+
+  // Record verification on the step
+  currentStep.verification = {
+    summary, verification, files_changed: files_changed || [],
+    confidence, learnings: learnings || null,
+    verified_at: new Date().toISOString(), verified_by: registeredName,
+  };
+
+  // Save learnings to KB
+  if (learnings) {
+    const kb = getKB();
+    const key = `skill_${registeredName}_${Date.now().toString(36)}`;
+    kb[key] = { content: learnings, updated_by: registeredName, updated_at: new Date().toISOString() };
+    if (Object.keys(kb).length <= 100) writeJsonFile(KB_FILE, kb);
+  }
+
+  // Helper: advance to next steps and send handoffs
+  function advanceToNextSteps(flagged) {
+    const nextSteps = findReadySteps(wf);
+    if (nextSteps.length === 0 && wf.steps.every(s => s.status === 'done')) {
+      wf.status = 'completed';
+      wf.completed_at = new Date().toISOString();
+      wf.updated_at = new Date().toISOString();
+      saveWorkflows(workflows);
+      broadcastSystemMessage(`[WORKFLOW COMPLETE] "${wf.name}" finished${flagged ? ' (with flagged steps)' : ''}! All ${wf.steps.length} steps done.`);
+      const report = generateCompletionReport(wf);
+      const retrospective = logRetrospective(wf.id); // Item 9: analyze retry patterns
+      touchActivity();
+      return { status: flagged ? 'workflow_complete_flagged' : 'workflow_complete', workflow_id: wf.id, report, retrospective, message: `Workflow "${wf.name}" finished! Call get_work() for your next assignment.` };
+    }
+
+    const agents = getAgents();
+    for (const step of nextSteps) {
+      step.status = 'in_progress';
+      step.started_at = new Date().toISOString();
+      if (step.assignee && agents[step.assignee] && step.assignee !== registeredName) {
+        const handoffContent = `[Workflow "${wf.name}"] Your turn — Step ${step.id}: ${step.description}. Previous step completed by ${registeredName}${flagged ? ` (flagged: ${confidence}% confidence)` : ''}: ${summary}`;
+        messageSeq++;
+        const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: step.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
+        fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+        fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+      }
+    }
+    wf.updated_at = new Date().toISOString();
+    saveWorkflows(workflows);
+    touchActivity();
+    return {
+      status: flagged ? 'advanced_with_flag' : 'advanced', workflow_id: wf.id,
+      completed_step: currentStep.id,
+      next_steps: nextSteps.map(s => ({ id: s.id, description: s.description, assignee: s.assignee })),
+      message: flagged ? 'Advanced but flagged for later review. Call get_work().' : 'Step complete. Next step(s) kicked off. Call get_work() for your next assignment.'
+    };
+  }
+
+  if (confidence >= 70) {
+    // AUTO-ADVANCE
+    currentStep.status = 'done';
+    currentStep.completed_at = new Date().toISOString();
+    clearCheckpoint(registeredName, workflow_id, currentStep.id); // Item 8: clear checkpoint on completion
+    return advanceToNextSteps(false);
+  }
+
+  if (confidence >= 40) {
+    // ADVANCE BUT FLAG
+    currentStep.status = 'done';
+    currentStep.completed_at = new Date().toISOString();
+    currentStep.flagged = true;
+    currentStep.flag_reason = `Low confidence (${confidence}%). May need review later.`;
+    clearCheckpoint(registeredName, workflow_id, currentStep.id); // Item 8: clear checkpoint
+    return advanceToNextSteps(true);
+  }
+
+  // LOW CONFIDENCE — ask for help
+  wf.updated_at = new Date().toISOString();
+  saveWorkflows(workflows);
+  broadcastSystemMessage(`[HELP NEEDED] ${registeredName} completed step "${currentStep.description}" but has low confidence (${confidence}%). Team: can someone review?`);
+  touchActivity();
+  return {
+    status: 'needs_help', workflow_id: wf.id,
+    message: 'Low confidence. Help request broadcast to team. Call get_work() — you may get a review assignment or other work while waiting.'
+  };
+}
+
+function toolRetryWithImprovement(params) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const { task_or_step, what_failed, why_it_failed, new_approach } = params;
+  if (!task_or_step) return { error: 'task_or_step is required' };
+  if (!what_failed) return { error: 'what_failed is required' };
+  if (!why_it_failed) return { error: 'why_it_failed is required' };
+  if (!new_approach) return { error: 'new_approach is required' };
+
+  const attempt = params.attempt_number || 1;
+
+  const learning = {
+    task: task_or_step, failure: what_failed,
+    root_cause: why_it_failed, new_approach,
+    attempt, agent: registeredName,
+    timestamp: new Date().toISOString(),
+  };
+
+  // Store in agent's workspace for future reference
+  const ws = getWorkspace(registeredName);
+  if (!ws.retry_history) ws.retry_history = [];
+  ws.retry_history.push(learning);
+  if (ws.retry_history.length > 50) ws.retry_history = ws.retry_history.slice(-50);
+  saveWorkspace(registeredName, ws);
+
+  // Store as KB skill for all agents to learn from
+  const kb = getKB();
+  const key = `lesson_${registeredName}_${Date.now().toString(36)}`;
+  const lessonContent = JSON.stringify({
+    context: task_or_step,
+    lesson: `Approach "${what_failed}" failed because: ${why_it_failed}. Better approach: ${new_approach}`,
+    learned_by: registeredName,
+  });
+  kb[key] = { content: lessonContent, updated_by: registeredName, updated_at: new Date().toISOString() };
+  if (Object.keys(kb).length <= 100) writeJsonFile(KB_FILE, kb);
+
+  trackReputation(registeredName, 'retry');
+  touchActivity();
+
+  if (attempt >= 3) {
+    // Max retries — escalate with FULL context so next agent doesn't start blind
+    const allAttempts = ws.retry_history.filter(r => r.task === task_or_step);
+    const attemptSummary = allAttempts.map((a, i) =>
+      `  Attempt ${a.attempt || i + 1} (${a.agent}): Tried "${a.new_approach || 'initial'}" → Failed: ${a.failure}. Root cause: ${a.root_cause}`
+    ).join('\n');
+
+    broadcastSystemMessage(
+      `[ESCALATION] ${registeredName} has tried "${task_or_step}" ${attempt} times and is still stuck.\n\n` +
+      `FULL FAILURE CONTEXT (read this before attempting):\n${attemptSummary}\n\n` +
+      `Last failure: ${what_failed}\n` +
+      `Root cause: ${why_it_failed}\n\n` +
+      `Team: someone with DIFFERENT expertise should take over. DO NOT repeat the same approaches. Use suggest_task() or claim the task.`
+    );
+
+    // Store full context in KB so get_work can attach it
+    const kb2 = getKB();
+    const escKey = `escalation_${Date.now().toString(36)}`;
+    kb2[escKey] = {
+      content: JSON.stringify({ task: task_or_step, attempts: allAttempts, escalated_by: registeredName }),
+      updated_by: registeredName, updated_at: new Date().toISOString(),
+    };
+    if (Object.keys(kb2).length <= 100) writeJsonFile(KB_FILE, kb2);
+
+    return {
+      status: 'escalated', attempt_number: attempt,
+      message: 'Escalated to team with full failure context. Call get_work() to pick up other work while someone else handles this.',
+      attempts: allAttempts,
+      failure_context: attemptSummary,
+    };
+  }
+
+  // Check if any other agent has solved a similar problem before
+  const keywords = task_or_step.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+  const allKB = getKB();
+  const relatedLessons = [];
+  for (const [k, v] of Object.entries(allKB)) {
+    if (!k.startsWith('lesson_') && !k.startsWith('skill_')) continue;
+    const content = (v.content || '').toLowerCase();
+    const matchCount = keywords.filter(kw => content.includes(kw)).length;
+    if (matchCount >= 2) relatedLessons.push(v.content);
+  }
+
+  return {
+    status: 'retry_approved', attempt_number: attempt,
+    message: `Retry ${attempt}/3 recorded. Proceed with your new approach: "${new_approach}". If this fails too, call retry_with_improvement() again.`,
+    related_lessons: relatedLessons.length > 0 ? relatedLessons.slice(0, 3) : null,
+  };
+}
+
+// --- Watchdog Engine (autonomous mode only) ---
+
+function amIWatchdog() {
+  if (!registeredName) return false;
+  const agents = getAgents();
+  const aliveNames = Object.entries(agents)
+    .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name)
+    .sort();
+  // Manager gets priority, otherwise alphabetically first alive agent
+  const config = getConfig();
+  if (config.manager && aliveNames.includes(config.manager)) {
+    return registeredName === config.manager;
+  }
+  return aliveNames.length > 0 && aliveNames[0] === registeredName;
+}
+
+function reassignWorkFrom(deadAgentName) {
+  const workflows = getWorkflows();
+  let reassignCount = 0;
+  const agents = getAgents();
+  const aliveNames = Object.entries(agents)
+    .filter(([name, a]) => name !== deadAgentName && isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name);
+
+  for (const wf of workflows) {
+    if (wf.status !== 'active') continue;
+    for (const step of wf.steps) {
+      if (step.assignee !== deadAgentName || step.status !== 'in_progress') continue;
+      // Find replacement — round-robin through alive agents
+      if (aliveNames.length > 0) {
+        const replacement = aliveNames[reassignCount % aliveNames.length];
+        step.assignee = replacement;
+        reassignCount++;
+        // Send handoff to replacement
+        const handoffContent = `[AUTO-REASSIGN] ${deadAgentName} went offline. Their step "${step.description}" has been reassigned to you.`;
+        messageSeq++;
+        const msg = { id: generateId(), seq: messageSeq, from: '__system__', to: replacement, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff', system: true };
+        fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
+        fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+      }
+    }
+  }
+
+  // Also reassign tasks
+  const tasks = getTasks();
+  for (const task of tasks) {
+    if (task.assignee !== deadAgentName || task.status !== 'in_progress') continue;
+    task.assignee = null; // Unassign so get_work can claim it
+    task.status = 'pending';
+    task.updated_at = new Date().toISOString();
+    reassignCount++;
+  }
+  if (reassignCount > 0) {
+    saveWorkflows(workflows);
+    saveTasks(tasks);
+  }
+  return reassignCount;
+}
+
+function watchdogCheck() {
+  // Run in autonomous mode always, AND in group mode when agents are idle 5+ min
+  if (!isAutonomousMode() && !isGroupMode()) return;
+  if (!amIWatchdog()) return;
+
+  const agents = getAgents();
+  const now = Date.now();
+  let agentsChanged = false;
+
+  for (const [name, agent] of Object.entries(agents)) {
+    if (name === registeredName) continue;
+    if (!isPidAlive(agent.pid, agent.last_activity)) continue;
+
+    const idleTime = now - new Date(agent.last_activity).getTime();
+
+    // IDLE > 2 minutes: nudge
+    if (idleTime > 120000 && !agent.watchdog_nudged) {
+      sendSystemMessage(name,
+        `[WATCHDOG] You've been idle for ${Math.round(idleTime / 60000)} minutes. Call get_work() to find your next task. Never be idle.`
+      );
+      trackReputation(name, 'watchdog_nudge');
+      agent.watchdog_nudged = now;
+      agentsChanged = true;
+    }
+
+    // IDLE > 5 minutes: stronger nudge
+    if (idleTime > 300000 && !agent.watchdog_hard_nudged) {
+      sendSystemMessage(name,
+        `[WATCHDOG] You've been idle for ${Math.round(idleTime / 60000)} minutes. Call get_work() NOW or your work will be reassigned.`
+      );
+      agent.watchdog_hard_nudged = now;
+      agentsChanged = true;
+    }
+
+    // IDLE > 10 minutes: reassign their work
+    if (idleTime > 600000 && !agent.watchdog_reassigned) {
+      const count = reassignWorkFrom(name);
+      broadcastSystemMessage(`[WATCHDOG] ${name} has been unresponsive for 10+ minutes. ${count} task(s) reassigned.`);
+      agent.watchdog_reassigned = now;
+      agentsChanged = true;
+    }
+  }
+
+  // Check for stuck workflow steps
+  const workflows = getWorkflows();
+  let workflowsChanged = false;
+  for (const wf of workflows) {
+    if (wf.status !== 'active') continue;
+    for (const step of wf.steps) {
+      if (step.status !== 'in_progress' || !step.started_at) continue;
+      const stepAge = now - new Date(step.started_at).getTime();
+
+      // Step > 15 minutes: ping assignee
+      if (stepAge > 900000 && !step.watchdog_pinged) {
+        if (step.assignee) {
+          sendSystemMessage(step.assignee,
+            `[WATCHDOG] Step "${step.description}" has been in progress for ${Math.round(stepAge / 60000)} minutes. Report status: are you stuck? Do you need help?`
+          );
+        }
+        step.watchdog_pinged = true;
+        workflowsChanged = true;
+      }
+
+      // Step > 30 minutes: escalate
+      if (stepAge > 1800000 && !step.watchdog_escalated) {
+        broadcastSystemMessage(
+          `[WATCHDOG ESCALATION] Step "${step.description}" (${step.assignee}) has been running for ${Math.round(stepAge / 60000)} minutes. ` +
+          `Team: someone check if ${step.assignee} needs help or if the step should be reassigned.`
+        );
+        step.watchdog_escalated = true;
+        workflowsChanged = true;
+      }
+    }
+  }
+
+  // Dynamic team rebalancing: move idle workers from quiet teams to busy teams
+  try {
+    const channels = getChannelsData();
+    const teamChannels = Object.entries(channels).filter(([, c]) => c.auto_team);
+    if (teamChannels.length >= 2) {
+      const tasks = getTasks();
+      const teamLoad = teamChannels.map(([name, ch]) => {
+        const memberTasks = tasks.filter(t => t.status === 'pending' && ch.members && ch.members.includes(t.assignee));
+        const idleMembers = (ch.members || []).filter(m => {
+          const a = agents[m];
+          if (!a || !isPidAlive(a.pid, a.last_activity)) return false;
+          return (now - new Date(a.last_activity).getTime()) > 120000; // idle 2+ min
+        });
+        return { name, members: ch.members || [], pendingTasks: memberTasks.length, idleMembers };
+      });
+      const busyTeam = teamLoad.find(t => t.pendingTasks >= 5);
+      const quietTeam = teamLoad.find(t => t.pendingTasks === 0 && t.idleMembers.length > 0);
+      if (busyTeam && quietTeam && quietTeam.idleMembers.length > 0) {
+        const worker = quietTeam.idleMembers[0];
+        // Move worker to busy team
+        const quietCh = channels[quietTeam.name];
+        const busyCh = channels[busyTeam.name];
+        if (quietCh.members) quietCh.members = quietCh.members.filter(m => m !== worker);
+        if (busyCh.members && !busyCh.members.includes(worker)) busyCh.members.push(worker);
+        saveChannelsData(channels);
+        sendSystemMessage(worker, `[REBALANCE] You've been moved from ${quietTeam.name} to ${busyTeam.name} — they have ${busyTeam.pendingTasks} pending tasks and need help.`);
+      }
+    }
+  } catch {}
+
+  // UE5 safety: detect stale UE5 locks (ue5-editor, ue5-compile)
+  try {
+    const locks = getLocks();
+    let locksChanged = false;
+    for (const [lockPath, lock] of Object.entries(locks)) {
+      if (!lockPath.startsWith('ue5-')) continue;
+      const lockAge = now - new Date(lock.since).getTime();
+      // >5 minutes: nudge the holder
+      if (lockAge > 300000 && !lock.watchdog_nudged) {
+        sendSystemMessage(lock.agent,
+          `[WATCHDOG] You've held the ${lockPath} lock for ${Math.round(lockAge / 60000)} minutes. Unlock it immediately if you're done. UE5 locks block other agents.`
+        );
+        lock.watchdog_nudged = true;
+        locksChanged = true;
+      }
+      // >15 minutes: force-release + notify team
+      if (lockAge > 900000 && !lock.watchdog_released) {
+        delete locks[lockPath];
+        broadcastSystemMessage(`[WATCHDOG] Force-released stale ${lockPath} lock held by ${lock.agent} for ${Math.round(lockAge / 60000)} minutes. Lock is now available.`);
+        locksChanged = true;
+      }
+    }
+    if (locksChanged) writeJsonFile(LOCKS_FILE, locks);
+  } catch {}
+
+  if (agentsChanged) saveAgents(agents);
+  if (workflowsChanged) saveWorkflows(workflows);
+}
+
+// --- Monitor Agent: system health check ---
+
+function monitorHealthCheck() {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const agents = getAgents();
+  const now = Date.now();
+  const aliveNames = Object.entries(agents)
+    .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name);
+
+  const health = {
+    timestamp: new Date().toISOString(),
+    agents_total: aliveNames.length,
+    agents_idle: [],
+    agents_stuck: [],
+    circular_escalations: [],
+    queue_pressure: 0,
+    workflows_active: 0,
+    workflows_stuck: [],
+    interventions: [],
+  };
+
+  // 1. Detect idle agents (>2min no activity)
+  for (const [name, agent] of Object.entries(agents)) {
+    if (!isPidAlive(agent.pid, agent.last_activity)) continue;
+    const idleTime = now - new Date(agent.last_activity).getTime();
+    if (idleTime > 120000) {
+      health.agents_idle.push({ name, idle_minutes: Math.round(idleTime / 60000) });
+    }
+  }
+
+  // 2. Detect circular escalations (same task attempted by 2+ agents)
+  const tasks = getTasks();
+  for (const task of tasks) {
+    if (task.attempt_agents && task.attempt_agents.length >= 2 && task.status !== 'done' && task.status !== 'blocked_permanent') {
+      health.circular_escalations.push({
+        task_id: task.id, title: task.title,
+        agents_tried: task.attempt_agents, attempts: task.attempt_agents.length,
+      });
+    }
+  }
+
+  // 3. Queue pressure (pending tasks per alive agent)
+  const pendingTasks = tasks.filter(t => t.status === 'pending');
+  health.queue_pressure = aliveNames.length > 0 ? Math.round((pendingTasks.length / aliveNames.length) * 10) / 10 : 0;
+
+  // 4. Stuck workflows (in_progress steps >15min)
+  const workflows = getWorkflows();
+  for (const wf of workflows) {
+    if (wf.status !== 'active') continue;
+    health.workflows_active++;
+    for (const step of wf.steps) {
+      if (step.status !== 'in_progress' || !step.started_at) continue;
+      const stepAge = now - new Date(step.started_at).getTime();
+      if (stepAge > 900000) {
+        health.workflows_stuck.push({
+          workflow: wf.name, step_id: step.id,
+          description: step.description, assignee: step.assignee,
+          stuck_minutes: Math.round(stepAge / 60000),
+        });
+      }
+    }
+  }
+
+  // 5. Auto-interventions
+  // Reassign circular escalations to fresh agents
+  for (const circ of health.circular_escalations) {
+    const freshAgents = aliveNames.filter(n => !circ.agents_tried.includes(n));
+    if (freshAgents.length > 0) {
+      const task = tasks.find(t => t.id === circ.task_id);
+      if (task && task.status === 'pending') {
+        task.assignee = freshAgents[0];
+        task.status = 'in_progress';
+        task.updated_at = new Date().toISOString();
+        health.interventions.push({ type: 'reassign_circular', task: circ.title, to: freshAgents[0] });
+      }
+    }
+  }
+
+  // Nudge idle agents
+  for (const idle of health.agents_idle) {
+    if (idle.idle_minutes >= 5) {
+      sendSystemMessage(idle.name, `[MONITOR] You've been idle for ${idle.idle_minutes} minutes. Call get_work() immediately.`);
+      health.interventions.push({ type: 'nudge_idle', agent: idle.name, idle_minutes: idle.idle_minutes });
+    }
+  }
+
+  if (health.interventions.length > 0) saveTasks(tasks);
+
+  // Store health log in workspace
+  const ws = getWorkspace(registeredName);
+  if (!ws._monitor_log) ws._monitor_log = [];
+  ws._monitor_log.push(health);
+  if (ws._monitor_log.length > 100) ws._monitor_log = ws._monitor_log.slice(-100);
+  saveWorkspace(registeredName, ws);
+
+  touchActivity();
+
+  return {
+    type: 'health_report', priority: 'monitor',
+    health,
+    instruction: health.interventions.length > 0
+      ? `Performed ${health.interventions.length} intervention(s). Call monitorHealthCheck() again in 30 seconds.`
+      : `System healthy. ${health.agents_total} agents, ${health.workflows_active} active workflows. Call monitorHealthCheck() again in 30 seconds.`,
+  };
+}
+
+// --- Advisor Agent: strategic analysis ---
+
+function advisorAnalysis() {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  // Gather context for the advisor to analyze
+  // Scale fix: tail-read only last 50 lines instead of entire history file
+  const history = tailReadJsonl(getHistoryFile(currentBranch), 50);
+  const recentMessages = history.slice(-30).map(m => ({
+    from: m.from, to: m.to,
+    content: m.content.substring(0, 300),
+    timestamp: m.timestamp,
+  }));
+
+  // Completed work summaries
+  const tasks = getTasks();
+  const completedTasks = tasks.filter(t => t.status === 'done').slice(-10).map(t => ({
+    title: t.title, assignee: t.assignee,
+    description: (t.description || '').substring(0, 200),
+  }));
+
+  // Active workflows
+  const workflows = getWorkflows();
+  const activeWorkflows = workflows.filter(w => w.status === 'active').map(w => ({
+    name: w.name,
+    progress: `${w.steps.filter(s => s.status === 'done').length}/${w.steps.length}`,
+    current_steps: w.steps.filter(s => s.status === 'in_progress').map(s => s.description),
+  }));
+
+  // KB skills and lessons
+  const kb = getKB();
+  const lessons = Object.entries(kb)
+    .filter(([k]) => k.startsWith('lesson_') || k.startsWith('skill_'))
+    .slice(-10)
+    .map(([k, v]) => ({ key: k, content: v.content.substring(0, 200) }));
+
+  // Decisions made
+  const decisions = (readJsonFile(DECISIONS_FILE) || []).slice(-5);
+
+  touchActivity();
+
+  return {
+    type: 'advisor_context', priority: 'advisor',
+    recent_messages: recentMessages,
+    completed_work: completedTasks,
+    active_workflows: activeWorkflows,
+    team_lessons: lessons,
+    recent_decisions: decisions,
+    instruction: 'Review this context. Spot patterns, suggest improvements, challenge assumptions, propose next steps. Share your insights with the team via send_message. Then call get_work() again in 30 seconds.',
+  };
+}
+
+// --- Auto-generated completion report ---
+
+function generateCompletionReport(workflow) {
+  const steps = workflow.steps || [];
+  const createdAt = new Date(workflow.created_at);
+  const completedAt = workflow.completed_at ? new Date(workflow.completed_at) : new Date();
+  const durationMs = completedAt - createdAt;
+  const durationMin = Math.round(durationMs / 60000);
+
+  // Step results
+  const stepResults = steps.map(s => {
+    const startedAt = s.started_at ? new Date(s.started_at) : null;
+    const completedStepAt = s.completed_at ? new Date(s.completed_at) : null;
+    const stepDurationMin = (startedAt && completedStepAt) ? Math.round((completedStepAt - startedAt) / 60000) : null;
+    const confidence = s.verification ? s.verification.confidence : null;
+    return {
+      id: s.id, description: s.description, assignee: s.assignee,
+      status: s.status, duration_min: stepDurationMin,
+      confidence, flagged: s.flagged || false,
+      flag_reason: s.flag_reason || null,
+      verification_summary: s.verification ? s.verification.summary : null,
+    };
+  });
+
+  // Confidence stats
+  const confidences = stepResults.filter(s => s.confidence !== null).map(s => s.confidence);
+  const avgConfidence = confidences.length > 0 ? Math.round(confidences.reduce((a, b) => a + b, 0) / confidences.length) : null;
+
+  // Flagged steps
+  const flaggedSteps = stepResults.filter(s => s.flagged);
+
+  // Skills learned during this workflow (KB entries created after workflow started)
+  const kb = getKB();
+  const skillsLearned = [];
+  for (const [key, val] of Object.entries(kb)) {
+    if ((!key.startsWith('skill_') && !key.startsWith('lesson_')) || !val.updated_at) continue;
+    if (new Date(val.updated_at) >= createdAt) {
+      skillsLearned.push({ key, content: val.content, by: val.updated_by });
+    }
+  }
+
+  // Retry history from workspaces
+  const agents = getAgents();
+  let totalRetries = 0;
+  const retryDetails = [];
+  for (const name of Object.keys(agents)) {
+    try {
+      const ws = getWorkspace(name);
+      if (ws.retry_history) {
+        const relevant = ws.retry_history.filter(r => new Date(r.timestamp) >= createdAt);
+        totalRetries += relevant.length;
+        for (const r of relevant) retryDetails.push({ agent: name, task: r.task, attempt: r.attempt });
+      }
+    } catch {}
+  }
+
+  const report = {
+    plan_name: workflow.name,
+    workflow_id: workflow.id,
+    status: workflow.status,
+    duration_minutes: durationMin,
+    steps_total: steps.length,
+    steps_done: steps.filter(s => s.status === 'done').length,
+    step_results: stepResults,
+    avg_confidence: avgConfidence,
+    flagged_count: flaggedSteps.length,
+    flagged_steps: flaggedSteps,
+    retries: totalRetries,
+    retry_details: retryDetails.slice(0, 10),
+    skills_learned: skillsLearned.length,
+    skill_entries: skillsLearned.slice(0, 20),
+    created_at: workflow.created_at,
+    completed_at: workflow.completed_at,
+  };
+
+  // Store report in KB for dashboard retrieval
+  const reportKey = `report_${workflow.id}`;
+  const kb2 = getKB();
+  kb2[reportKey] = { content: JSON.stringify(report), updated_by: '__system__', updated_at: new Date().toISOString() };
+  if (Object.keys(kb2).length <= 100) writeJsonFile(KB_FILE, kb2);
+
+  return report;
+}
+
+// --- Team Intelligence Layer: auto-role assignment + prompt distribution ---
+
+const ROLE_CONFIGS = {
+  1: [{ role: 'lead', description: 'You handle everything: planning, implementation, testing, and quality.' }],
+  2: [
+    { role: 'lead', description: 'You plan, implement, and coordinate. Report work to Quality Lead for review.' },
+    { role: 'quality', description: 'You review ALL work, find bugs, suggest improvements, and keep the team iterating. Never approve without checking. You are the last gate before anything is done.' },
+  ],
+  3: [
+    { role: 'lead', description: 'You plan the approach and coordinate the team. Break work into tasks and assign them.' },
+    { role: 'implementer', description: 'You write code and implement features. Report completed work to Quality Lead.' },
+    { role: 'quality', description: 'You review ALL work, find bugs, suggest improvements, and keep the team iterating. Never approve without checking.' },
+  ],
+  4: [
+    { role: 'lead', description: 'You plan the approach, design architecture, and coordinate the team.' },
+    { role: 'backend', description: 'You implement backend logic, APIs, and server-side code.' },
+    { role: 'frontend', description: 'You implement UI, frontend code, and user-facing features.' },
+    { role: 'quality', description: 'You review ALL work, find bugs, run tests, suggest improvements. Never approve without checking.' },
+  ],
+};
+
+function autoAssignRoles() {
+  const agents = getAgents();
+  const aliveNames = Object.entries(agents)
+    .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name)
+    .sort();
+
+  if (aliveNames.length < 2) return null;
+
+  // Sticky roles: if critical roles (lead, quality, monitor, advisor) are held by alive agents, skip reassignment
+  const currentProfiles = getProfiles();
+  const criticalRoles = ['lead', 'quality', 'monitor', 'advisor'];
+  const existingCritical = {};
+  for (const name of aliveNames) {
+    if (currentProfiles[name] && criticalRoles.includes(currentProfiles[name].role)) {
+      existingCritical[currentProfiles[name].role] = name;
+    }
+  }
+  // If lead AND quality are both alive and assigned, skip full reassignment
+  if (existingCritical.lead && existingCritical.quality) {
+    const assignments = {};
+    for (const name of aliveNames) {
+      if (currentProfiles[name] && currentProfiles[name].role) {
+        assignments[name] = { role: currentProfiles[name].role, description: currentProfiles[name].role_description || '' };
+      }
+    }
+    // Only assign roles to agents that don't have one yet
+    const unassigned = aliveNames.filter(n => !currentProfiles[n] || !currentProfiles[n].role);
+    for (const name of unassigned) {
+      if (!currentProfiles[name]) currentProfiles[name] = { display_name: name, avatar: getDefaultAvatar(name), bio: '', role: '', created_at: new Date().toISOString() };
+      currentProfiles[name].role = 'implementer';
+      currentProfiles[name].role_description = 'You implement features and tasks assigned by the Lead. Report completed work to Quality Lead.';
+      assignments[name] = { role: 'implementer', description: currentProfiles[name].role_description };
+      saveProfiles(currentProfiles);
+      sendSystemMessage(name, `[ROLE ASSIGNED] You are the **implementer**. ${currentProfiles[name].role_description}`);
+    }
+    if (unassigned.length > 0) return assignments;
+    return null; // No changes needed
+  }
+
+  // Pick role config — use exact match or largest available
+  const teamSize = aliveNames.length;
+  const configSize = Math.min(teamSize, Math.max(...Object.keys(ROLE_CONFIGS).map(Number)));
+  const roles = ROLE_CONFIGS[configSize] || ROLE_CONFIGS[4];
+
+  // Assign roles round-robin: first agent = Lead, last agent = Quality (always)
+  const profiles = getProfiles();
+  const assignments = {};
+
+  for (let i = 0; i < aliveNames.length; i++) {
+    const agentName = aliveNames[i];
+    let roleConfig;
+
+    if (i === aliveNames.length - 1) {
+      // Last agent is always Quality Lead
+      roleConfig = roles.find(r => r.role === 'quality') || roles[roles.length - 1];
+    } else if (i === 0) {
+      // First agent is always Lead
+      roleConfig = roles.find(r => r.role === 'lead') || roles[0];
+    } else if (i === 1 && teamSize >= 10) {
+      // Second agent becomes Monitor at 10+ agents — the system's brain
+      roleConfig = { role: 'monitor', description: 'You are the MONITOR AGENT — the system\'s brain. You do NOT do regular work. Your job: watch all agents continuously, detect stuck/idle/failing agents, detect circular escalations and queue buildup, intervene by reassigning work and rebalancing roles, report system health metrics. Run monitorHealthCheck() instead of get_work().' };
+    } else if (i === 1 && teamSize >= 5) {
+      // Second agent becomes Advisor at 5-9 agents — strategic thinker
+      roleConfig = { role: 'advisor', description: 'You are the ADVISOR. You do NOT write code. You read all messages and completed work, spot patterns, suggest better approaches, challenge assumptions, and connect dots across the team. Your ideas go to the team as suggestions. Think deeply before speaking.' };
+    } else if (i === 2 && teamSize >= 10) {
+      // Third agent becomes Advisor at 10+ agents (Monitor is at position 1)
+      roleConfig = { role: 'advisor', description: 'You are the ADVISOR. You do NOT write code. You read all messages and completed work, spot patterns, suggest better approaches, challenge assumptions, and connect dots across the team. Your ideas go to the team as suggestions. Think deeply before speaking.' };
+    } else if (teamSize > 4) {
+      // Extra agents beyond 4 — assign as Implementer with index
+      roleConfig = { role: `implementer-${i}`, description: 'You implement features and tasks assigned by the Lead. Report completed work to Quality Lead.' };
+    } else {
+      // Middle agents get middle roles
+      const middleRoles = roles.filter(r => r.role !== 'lead' && r.role !== 'quality');
+      roleConfig = middleRoles[(i - 1) % middleRoles.length] || { role: 'Implementer', description: 'Implement assigned tasks.' };
+    }
+
+    // Update profile with role
+    if (!profiles[agentName]) {
+      profiles[agentName] = { display_name: agentName, avatar: getDefaultAvatar(agentName), bio: '', role: '', created_at: new Date().toISOString() };
+    }
+    profiles[agentName].role = roleConfig.role;
+    profiles[agentName].role_description = roleConfig.description;
+    assignments[agentName] = roleConfig;
+  }
+
+  saveProfiles(profiles);
+
+  // Notify all agents of their roles
+  for (const [agentName, roleConfig] of Object.entries(assignments)) {
+    sendSystemMessage(agentName,
+      `[ROLE ASSIGNED] You are the **${roleConfig.role}**. ${roleConfig.description}`
+    );
+  }
+
+  // Auto-team channels at 10+ agents: create #team-1, #team-2 etc. with 5-8 agents each
+  if (teamSize >= 10) {
+    try {
+      const channels = getChannelsData();
+      const workers = aliveNames.filter(n => {
+        const role = profiles[n] && profiles[n].role;
+        return role !== 'lead' && role !== 'quality' && role !== 'monitor' && role !== 'advisor';
+      });
+      const teamSize2 = Math.min(8, Math.max(5, Math.ceil(workers.length / Math.ceil(workers.length / 6))));
+      const teamCount = Math.ceil(workers.length / teamSize2);
+
+      for (let t = 0; t < teamCount; t++) {
+        const teamName = `team-${t + 1}`;
+        const teamMembers = workers.slice(t * teamSize2, (t + 1) * teamSize2);
+        // Add team lead (first member) and find/assign team quality (last member)
+        if (!channels[teamName]) {
+          channels[teamName] = {
+            description: `Team ${t + 1} (${teamMembers.length} members)`,
+            members: teamMembers,
+            created_by: '__system__',
+            created_at: new Date().toISOString(),
+            auto_team: true,
+          };
+          // Also add the global lead to all team channels for cross-team coordination
+          const globalLead = aliveNames.find(n => profiles[n] && profiles[n].role === 'lead');
+          if (globalLead && !teamMembers.includes(globalLead)) {
+            channels[teamName].members.push(globalLead);
+          }
+        }
+      }
+      saveChannelsData(channels);
+    } catch {}
+  }
+
+  return assignments;
+}
+
+// Item 5: Dynamic role fluidity — rebalance roles based on workload
+function rebalanceRoles() {
+  const profiles = getProfiles();
+  const agents = getAgents();
+  const aliveNames = Object.entries(agents)
+    .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name);
+
+  if (aliveNames.length < 3) return null; // Need 3+ agents for rebalancing
+
+  // Count pending work by type
+  const reviews = readJsonFile(REVIEWS_FILE) || [];
+  const pendingReviews = reviews.filter(r => r.status === 'pending').length;
+  const tasks = getTasks();
+  const pendingTasks = tasks.filter(t => t.status === 'pending' && !t.assignee).length;
+
+  // Count agents by role
+  const qualityAgents = aliveNames.filter(n => profiles[n] && profiles[n].role === 'quality');
+  const implementerAgents = aliveNames.filter(n => profiles[n] && (profiles[n].role === 'implementer' || (profiles[n].role || '').startsWith('implementer')));
+
+  let rebalanced = false;
+
+  // If review queue is deep (3+ pending) and we have idle implementers, promote one to quality
+  if (pendingReviews >= 3 && qualityAgents.length < 2 && implementerAgents.length >= 2) {
+    // Find the implementer with highest review reputation
+    const rep = getReputation();
+    const bestReviewer = implementerAgents
+      .sort((a, b) => ((rep[b] || {}).reviews_done || 0) - ((rep[a] || {}).reviews_done || 0))[0];
+    if (bestReviewer && profiles[bestReviewer]) {
+      profiles[bestReviewer].role = 'quality';
+      profiles[bestReviewer].role_description = 'Promoted to second Quality Lead due to review backlog. Review pending work.';
+      sendSystemMessage(bestReviewer, `[ROLE CHANGE] You have been promoted to second Quality Lead. There are ${pendingReviews} pending reviews. Start reviewing now.`);
+      rebalanced = true;
+    }
+  }
+
+  // If task queue is deep (5+ pending) and we have multiple quality agents, demote one back
+  if (pendingTasks >= 5 && qualityAgents.length >= 2 && implementerAgents.length < 2) {
+    const demoteAgent = qualityAgents[qualityAgents.length - 1]; // demote the most recently promoted
+    if (demoteAgent && profiles[demoteAgent]) {
+      profiles[demoteAgent].role = 'implementer';
+      profiles[demoteAgent].role_description = 'Returned to implementer role due to task backlog. Implement pending tasks.';
+      sendSystemMessage(demoteAgent, `[ROLE CHANGE] You have been returned to implementer role. There are ${pendingTasks} pending tasks. Start implementing.`);
+      rebalanced = true;
+    }
+  }
+
+  if (rebalanced) saveProfiles(profiles);
+  return rebalanced;
+}
+
+// Item 9: Retrospective learning — analyze retry patterns and log aggregate insights
+function logRetrospective(workflowId) {
+  const kb = getKB();
+  // Gather all lesson_* entries created during this workflow
+  const lessons = [];
+  for (const [key, entry] of Object.entries(kb)) {
+    if (!key.startsWith('lesson_')) continue;
+    try {
+      const content = typeof entry === 'string' ? entry : entry.content || '';
+      const parsed = JSON.parse(content);
+      if (parsed && parsed.lesson) lessons.push(parsed);
+    } catch {
+      if (typeof entry === 'string' || (entry && entry.content)) lessons.push({ lesson: typeof entry === 'string' ? entry : entry.content });
+    }
+  }
+
+  if (lessons.length < 2) return null; // not enough data for patterns
+
+  // Group by failure keywords to find recurring patterns
+  const patterns = {};
+  for (const lesson of lessons) {
+    const text = (lesson.lesson || '').toLowerCase();
+    // Extract failure type keywords
+    const keywords = text.match(/\b(timeout|crash|null|undefined|syntax|import|permission|race|deadlock|overflow|memory|validation)\b/g);
+    if (keywords) {
+      for (const kw of keywords) {
+        if (!patterns[kw]) patterns[kw] = { count: 0, examples: [] };
+        patterns[kw].count++;
+        if (patterns[kw].examples.length < 3) patterns[kw].examples.push(lesson.lesson.substring(0, 100));
+      }
+    }
+  }
+
+  // Log patterns that appear 2+ times
+  const insights = Object.entries(patterns)
+    .filter(([, p]) => p.count >= 2)
+    .map(([keyword, p]) => `"${keyword}" errors appeared ${p.count} times. Examples: ${p.examples.join('; ')}`);
+
+  if (insights.length > 0) {
+    const retroKey = `retrospective_${workflowId || Date.now().toString(36)}`;
+    kb[retroKey] = {
+      content: `RETROSPECTIVE INSIGHTS: ${insights.join(' | ')}`,
+      updated_by: 'system',
+      updated_at: new Date().toISOString(),
+    };
+    if (Object.keys(kb).length <= 200) writeJsonFile(KB_FILE, kb);
+  }
+
+  return insights.length > 0 ? insights : null;
+}
+
+// Item 8: Checkpointing — periodic progress snapshots for resumable work
+function saveCheckpoint(agentName, workflowId, stepId, progress) {
+  const ws = getWorkspace(agentName);
+  if (!ws._checkpoints) ws._checkpoints = {};
+  ws._checkpoints[`${workflowId}_${stepId}`] = {
+    progress,
+    saved_at: new Date().toISOString(),
+    workflow_id: workflowId,
+    step_id: stepId,
+  };
+  saveWorkspace(agentName, ws);
+}
+
+function getCheckpoint(agentName, workflowId, stepId) {
+  const ws = getWorkspace(agentName);
+  if (!ws._checkpoints) return null;
+  return ws._checkpoints[`${workflowId}_${stepId}`] || null;
+}
+
+function clearCheckpoint(agentName, workflowId, stepId) {
+  const ws = getWorkspace(agentName);
+  if (ws._checkpoints) {
+    delete ws._checkpoints[`${workflowId}_${stepId}`];
+    saveWorkspace(agentName, ws);
+  }
+}
+
+// Workflow pattern templates for common request types
+const WORKFLOW_PATTERNS = {
+  feature: {
+    match: /build|create|add|implement|make|develop|design/i,
+    steps: (prompt, workers, quality) => {
+      const steps = [
+        { description: `Design architecture and plan approach for: ${prompt.substring(0, 150)}`, assignee: null },
+      ];
+      if (workers.length >= 2) {
+        steps.push({ description: `Implement backend/core logic for: ${prompt.substring(0, 100)}`, assignee: workers[0], depends_on: [1] });
+        steps.push({ description: `Implement frontend/UI for: ${prompt.substring(0, 100)}`, assignee: workers[1], depends_on: [1] });
+        steps.push({ description: `Integration testing and verification`, assignee: quality, depends_on: [2, 3] });
+      } else if (workers.length === 1) {
+        steps.push({ description: `Implement: ${prompt.substring(0, 150)}`, assignee: workers[0], depends_on: [1] });
+        steps.push({ description: `Test and verify implementation`, assignee: quality, depends_on: [2] });
+      } else {
+        steps.push({ description: `Implement: ${prompt.substring(0, 150)}`, depends_on: [1] });
+        steps.push({ description: `Review and verify`, assignee: quality, depends_on: [2] });
+      }
+      return steps;
+    },
+  },
+  fix: {
+    match: /fix|bug|debug|repair|broken|error|crash|issue/i,
+    steps: (prompt, workers, quality) => [
+      { description: `Reproduce and diagnose: ${prompt.substring(0, 150)}` },
+      { description: `Implement fix`, assignee: workers[0] || null, depends_on: [1] },
+      { description: `Write regression test`, assignee: workers[1] || quality, depends_on: [2] },
+      { description: `Verify fix and test pass`, assignee: quality, depends_on: [2, 3] },
+    ],
+  },
+  refactor: {
+    match: /refactor|clean|reorganize|restructure|improve|optimize/i,
+    steps: (prompt, workers, quality) => [
+      { description: `Analyze current code and plan refactor: ${prompt.substring(0, 150)}` },
+      { description: `Execute refactor`, assignee: workers[0] || null, depends_on: [1] },
+      { description: `Verify no regressions — run all tests`, assignee: quality, depends_on: [2] },
+    ],
+  },
+};
+
+function distributePrompt(content, fromAgent) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const agents = getAgents();
+  const aliveNames = Object.entries(agents)
+    .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
+    .map(([name]) => name);
+
+  if (aliveNames.length < 2) return { error: 'Need 2+ agents for prompt distribution' };
+
+  // Find lead and quality agents
+  const profiles = getProfiles();
+  const lead = aliveNames.find(n => profiles[n] && profiles[n].role === 'lead') || aliveNames[0];
+  const quality = aliveNames.find(n => profiles[n] && profiles[n].role === 'quality') || aliveNames[aliveNames.length - 1];
+  const workers = aliveNames.filter(n => n !== lead && n !== quality);
+
+  // Match prompt to a workflow pattern
+  let pattern = null;
+  for (const [, p] of Object.entries(WORKFLOW_PATTERNS)) {
+    if (p.match.test(content)) { pattern = p; break; }
+  }
+
+  // Auto-generate workflow if pattern matches
+  if (pattern) {
+    const steps = pattern.steps(content, workers, quality);
+    // Assign lead to step 1 if no assignee set
+    if (!steps[0].assignee) steps[0].assignee = lead;
+
+    // Smart plan generation: enrich step descriptions with KB skills/lessons
+    const kb = getKB();
+    const kbEntries = Object.entries(kb).filter(([k]) => k.startsWith('skill_') || k.startsWith('lesson_'));
+    if (kbEntries.length > 0) {
+      for (const step of steps) {
+        const stepWords = (step.description || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        const relevant = kbEntries.filter(([, v]) => {
+          const c = (typeof v === 'string' ? v : v.content || '').toLowerCase();
+          return stepWords.some(w => c.includes(w));
+        }).slice(0, 2);
+        if (relevant.length > 0) {
+          step.description += ' [Team learned: ' + relevant.map(([, v]) => (typeof v === 'string' ? v : v.content || '').substring(0, 80)).join('; ') + ']';
+        }
+      }
+    }
+
+    const wfResult = toolCreateWorkflow(`Auto: ${content.substring(0, 40)}`, steps, true, true);
+    if (wfResult.error) return wfResult;
+
+    // Broadcast plan launch
+    broadcastSystemMessage(
+      `[AUTO-PLAN] "${content.substring(0, 100)}" → ${steps.length}-step autonomous workflow created.\n` +
+      `Lead: ${lead} | Quality: ${quality} | Workers: ${workers.join(', ') || 'none'}\n` +
+      `All agents: call get_work() to enter the autonomous work loop.`
+    );
+    touchActivity();
+
+    return {
+      success: true, auto_plan: true,
+      workflow_id: wfResult.workflow_id,
+      steps: steps.length,
+      lead, quality, workers,
+      message: `Auto-generated ${steps.length}-step workflow from prompt. All agents should call get_work().`,
+    };
+  }
+
+  // Fallback: create planning task for lead (generic/unrecognized prompts)
+  const tasks = getTasks();
+  const planTask = {
+    id: 'task_' + generateId(),
+    title: `Plan and distribute: ${content.substring(0, 100)}`,
+    description: `Break this request into subtasks and assign to team members (${workers.join(', ')}). Then create a workflow with start_plan().\n\nOriginal request: ${content.substring(0, 2000)}`,
+    status: 'pending',
+    assignee: lead,
+    created_by: fromAgent || '__system__',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    notes: [],
+  };
+  tasks.push(planTask);
+  saveTasks(tasks);
+
+  sendSystemMessage(lead,
+    `[PROMPT DISTRIBUTED] New work request: "${content.substring(0, 200)}"\n\n` +
+    `You are the Lead. Break this into tasks, create a workflow with start_plan(), and assign steps to: ${workers.concat([quality]).join(', ')}.\n` +
+    `The Quality Lead (${quality}) will review all work. Do NOT ask the user — plan and execute autonomously.`
+  );
+  sendSystemMessage(quality,
+    `[PROMPT DISTRIBUTED] New work incoming: "${content.substring(0, 200)}"\n\n` +
+    `${lead} is planning the approach. Your job: review ALL completed work, find bugs, suggest improvements.`
+  );
+  touchActivity();
+
+  return {
+    success: true, auto_plan: false,
+    task_id: planTask.id,
+    lead, quality, workers,
+    message: `Prompt distributed to ${lead} for planning. ${quality} is quality gate, ${workers.length} worker(s) ready.`,
+  };
+}
+
+// --- start_plan: one-click autonomous plan launch ---
+
+function toolStartPlan(params) {
+  if (!registeredName) return { error: 'You must call register() first' };
+
+  const { name, steps, parallel } = params;
+  if (!name || typeof name !== 'string' || name.length > 50) return { error: 'name must be 1-50 chars' };
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 30) return { error: 'steps must be array of 2-30 items' };
+
+  // Delegate to create_workflow with autonomous=true
+  const useParallel = parallel !== false; // default true
+  const result = toolCreateWorkflow(name, steps, true, useParallel);
+  if (result.error) return result;
+
+  // Broadcast plan launch
+  const startedSteps = result.started_steps || [];
+  const assignees = startedSteps.map(s => s.assignee).filter(Boolean);
+  broadcastSystemMessage(
+    `[PLAN LAUNCHED] "${name}" — ${steps.length} steps, autonomous mode, ${useParallel ? 'parallel' : 'sequential'}. ` +
+    `${startedSteps.length} step(s) started. ` +
+    `All agents: call get_work() to enter the autonomous work loop. Do NOT call listen_group().`
+  );
+
+  touchActivity();
+
+  return {
+    success: true,
+    workflow_id: result.workflow_id,
+    name, step_count: steps.length,
+    autonomous: true, parallel: useParallel,
+    started_steps: startedSteps,
+    message: 'Plan launched. All agents should call get_work() to enter the autonomous work loop.',
   };
 }
 
@@ -2793,12 +4796,17 @@ function toolForkConversation(fromMessageId, branchName) {
   // Switch this agent to the new branch
   currentBranch = branchName;
   lastReadOffset = 0;
-  const agents = getAgents();
-  if (agents[registeredName]) {
-    agents[registeredName].branch = branchName;
-    saveAgents(agents);
-  }
-  touchActivity();
+  try {
+    lockAgentsFile();
+    try {
+      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
+      if (agents[registeredName]) {
+        agents[registeredName].branch = branchName;
+        agents[registeredName].last_activity = new Date().toISOString();
+        saveAgents(agents);
+      }
+    } finally { unlockAgentsFile(); }
+  } catch {}
 
   return { success: true, branch: branchName, forked_from: branches[branchName].forked_from, messages_copied: forkedHistory.length };
 }
@@ -2811,12 +4819,17 @@ function toolSwitchBranch(branchName) {
 
   currentBranch = branchName;
   lastReadOffset = 0;
-  const agents = getAgents();
-  if (agents[registeredName]) {
-    agents[registeredName].branch = branchName;
-    saveAgents(agents);
-  }
-  touchActivity();
+  try {
+    lockAgentsFile();
+    try {
+      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
+      if (agents[registeredName]) {
+        agents[registeredName].branch = branchName;
+        agents[registeredName].last_activity = new Date().toISOString();
+        saveAgents(agents);
+      }
+    } finally { unlockAgentsFile(); }
+  } catch {}
 
   return { success: true, branch: branchName, message: `Switched to branch "${branchName}". Read offset reset.` };
 }
@@ -2840,15 +4853,37 @@ function toolListBranches() {
 
 // Helpers for new data files
 function readJsonFile(file) { if (!fs.existsSync(file)) return null; try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
-function writeJsonFile(file, data) { ensureDataDir(); fs.writeFileSync(file, JSON.stringify(data)); }
+// File-to-cache-key map: writeJsonFile auto-invalidates the right cache entry
+const _fileCacheKeys = {};
+_fileCacheKeys[DECISIONS_FILE] = 'decisions';
+_fileCacheKeys[KB_FILE] = 'kb';
+_fileCacheKeys[LOCKS_FILE] = 'locks';
+_fileCacheKeys[PROGRESS_FILE] = 'progress';
+_fileCacheKeys[VOTES_FILE] = 'votes';
+_fileCacheKeys[REVIEWS_FILE] = 'reviews';
+_fileCacheKeys[DEPS_FILE] = 'deps';
+_fileCacheKeys[REPUTATION_FILE] = 'reputation';
+_fileCacheKeys[RULES_FILE] = 'rules';
 
-function getDecisions() { return readJsonFile(DECISIONS_FILE) || []; }
-function getKB() { return readJsonFile(KB_FILE) || {}; }
-function getLocks() { return readJsonFile(LOCKS_FILE) || {}; }
-function getProgressData() { return readJsonFile(PROGRESS_FILE) || {}; }
-function getVotes() { return readJsonFile(VOTES_FILE) || []; }
-function getReviews() { return readJsonFile(REVIEWS_FILE) || []; }
-function getDeps() { return readJsonFile(DEPS_FILE) || []; }
+function writeJsonFile(file, data) {
+  ensureDataDir();
+  const str = JSON.stringify(data);
+  if (str && str.length > 0) {
+    fs.writeFileSync(file, str);
+    // Auto-invalidate cache for this file
+    const cacheKey = _fileCacheKeys[file];
+    if (cacheKey) invalidateCache(cacheKey);
+  }
+}
+
+function getDecisions() { return cachedRead('decisions', () => readJsonFile(DECISIONS_FILE) || [], 2000); }
+function getKB() { return cachedRead('kb', () => readJsonFile(KB_FILE) || {}, 2000); }
+function getLocks() { return cachedRead('locks', () => readJsonFile(LOCKS_FILE) || {}, 2000); }
+function getProgressData() { return cachedRead('progress', () => readJsonFile(PROGRESS_FILE) || {}, 2000); }
+function getVotes() { return cachedRead('votes', () => readJsonFile(VOTES_FILE) || [], 2000); }
+function getReviews() { return cachedRead('reviews', () => readJsonFile(REVIEWS_FILE) || [], 2000); }
+function getDeps() { return cachedRead('deps', () => readJsonFile(DEPS_FILE) || [], 2000); }
+function getRules() { return cachedRead('rules', () => readJsonFile(RULES_FILE) || [], 2000); }
 
 // --- Channel helpers ---
 const CHANNELS_FILE_PATH = path.join(DATA_DIR, 'channels.json');
@@ -3046,7 +5081,8 @@ function snapshotDeadAgents(agents) {
       const lockedFiles = Object.entries(locks).filter(([, l]) => l.agent === name).map(([f]) => f);
       const channels = getAgentChannels(name);
       const workspace = getWorkspace(name);
-      const history = readJsonl(getHistoryFile(currentBranch));
+      // Scale fix: tail-read last 50 messages instead of entire history
+      const history = tailReadJsonl(getHistoryFile(currentBranch), 50);
       const lastSent = history.filter(m => m.from === name).slice(-5).map(m => ({ to: m.to, content: m.content.substring(0, 200), timestamp: m.timestamp }));
       // Agent memory: decisions made, tasks completed, KB keys written
       const decisions = readJsonFile(DECISIONS_FILE) || [];
@@ -3068,6 +5104,58 @@ function snapshotDeadAgents(agents) {
           tasks_completed: completedTasks,
           kb_entries_written: kbKeysWritten,
         });
+      }
+    } catch {}
+
+    // Quality Lead instant failover: if dead agent was Quality Lead, promote replacement immediately
+    try {
+      const profiles = getProfiles();
+      if (profiles[name] && profiles[name].role === 'quality') {
+        // Find best replacement: highest reputation score among alive agents
+        const rep = readJsonFile(REPUTATION_FILE) || {};
+        const aliveNames = Object.entries(agents)
+          .filter(([n, a]) => n !== name && isPidAlive(a.pid, a.last_activity))
+          .map(([n]) => n);
+
+        if (aliveNames.length > 0) {
+          // Sort by reputation (tasks completed), pick best
+          const scored = aliveNames.map(n => ({
+            name: n,
+            score: rep[n] ? (rep[n].tasks_completed || 0) + (rep[n].reviews_submitted || 0) : 0,
+          })).sort((a, b) => b.score - a.score);
+          const newQuality = scored[0].name;
+
+          profiles[newQuality].role = 'quality';
+          profiles[newQuality].role_description = 'You review ALL work, find bugs, suggest improvements, and keep the team iterating. Never approve without checking. (Auto-promoted after previous Quality Lead disconnected.)';
+          profiles[name].role = ''; // Clear dead agent's role
+          saveProfiles(profiles);
+
+          sendSystemMessage(newQuality,
+            `[QUALITY LEAD FAILOVER] ${name} went offline. You have been auto-promoted to Quality Lead. Review ALL work, find bugs, suggest improvements. You are now the approval gate.`
+          );
+          broadcastSystemMessage(`[QUALITY LEAD FAILOVER] ${name} (Quality Lead) went offline. ${newQuality} has been auto-promoted to Quality Lead.`, newQuality);
+        }
+      }
+
+      // Monitor Agent failover: if dead agent was Monitor, promote replacement
+      if (profiles[name] && profiles[name].role === 'monitor') {
+        const aliveNames2 = Object.entries(agents)
+          .filter(([n, a]) => n !== name && isPidAlive(a.pid, a.last_activity))
+          .map(([n]) => n);
+        if (aliveNames2.length > 0) {
+          const rep2 = readJsonFile(REPUTATION_FILE) || {};
+          const scored2 = aliveNames2.map(n => ({
+            name: n,
+            score: rep2[n] ? (rep2[n].tasks_completed || 0) : 0,
+          })).sort((a, b) => b.score - a.score);
+          const newMonitor = scored2[0].name;
+          profiles[newMonitor].role = 'monitor';
+          profiles[newMonitor].role_description = 'You are the MONITOR AGENT (auto-promoted after previous Monitor disconnected). Watch all agents, detect problems, intervene.';
+          profiles[name].role = '';
+          saveProfiles(profiles);
+          sendSystemMessage(newMonitor, `[MONITOR FAILOVER] ${name} went offline. You are now the Monitor Agent. Run health checks continuously.`);
+          broadcastSystemMessage(`[MONITOR FAILOVER] ${name} (Monitor) went offline. ${newMonitor} has been auto-promoted.`, newMonitor);
+        }
       }
     } catch {}
   }
@@ -3143,7 +5231,8 @@ function toolGetBriefing() {
   const decisions = getDecisions();
   const kb = getKB();
   const progress = getProgressData();
-  const history = readJsonl(getHistoryFile(currentBranch));
+  // Scale fix: tail-read only last 30 messages instead of entire history file
+  const history = tailReadJsonl(getHistoryFile(currentBranch), 30);
   const locks = getLocks();
   const config = getConfig();
 
@@ -3178,37 +5267,26 @@ function toolGetBriefing() {
     lockedFiles[fp] = { locked_by: lock.agent, since: lock.since };
   }
 
-  // Project files summary (scan cwd for key files)
-  const projectFiles = [];
-  try {
-    const cwd = process.cwd();
-    const scan = function(dir, depth) {
-      if (depth > 2) return;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const e of entries) {
-        if (e.name.startsWith('.') || e.name === 'node_modules') continue;
-        const rel = path.relative(cwd, path.join(dir, e.name));
-        if (e.isDirectory()) { projectFiles.push(rel + '/'); scan(path.join(dir, e.name), depth + 1); }
-        else if (e.isFile()) projectFiles.push(rel);
-      }
-    };
-    scan(cwd, 0);
-  } catch {}
+  // Session memory: lightweight — only task counts from task system, no history scan
+  const myActiveTasks = tasks.filter(t => t.status !== 'done' && t.assignee === registeredName);
+  const myCompletedCount = tasks.filter(t => t.status === 'done' && t.assignee === registeredName).length;
 
   return {
     briefing: true,
     conversation_mode: config.conversation_mode || 'direct',
     agents: roster,
     your_name: registeredName,
-    total_messages: history.length,
     recent_messages: recentMsgs,
     tasks: { active: activeTasks, completed_count: doneTasks, total: tasks.length },
-    decisions: decisions.slice(-10),
+    decisions: decisions.slice(-5).map(d => ({ decision: d.decision, topic: d.topic })),
     knowledge_base_keys: Object.keys(kb),
     locked_files: lockedFiles,
     progress,
-    project_files: projectFiles.slice(0, 80),
-    hint: 'You are now fully briefed. Check active tasks, read recent messages for context, and start contributing.',
+    your_tasks: myActiveTasks.map(t => ({ id: t.id, title: t.title, status: t.status })),
+    your_completed: myCompletedCount,
+    hint: myActiveTasks.length > 0
+      ? `You have ${myActiveTasks.length} active task(s). Continue working.`
+      : 'You are now briefed. Check active tasks and start contributing.',
   };
 }
 
@@ -3459,15 +5537,70 @@ function toolSubmitReview(reviewId, status, feedback) {
   review.reviewer = registeredName;
   review.feedback = (feedback || '').substring(0, 2000);
   review.reviewed_at = new Date().toISOString();
-  writeJsonFile(REVIEWS_FILE, reviews);
 
-  // Notify requester
-  const agents = getAgents();
-  if (agents[review.requested_by]) {
-    sendSystemMessage(review.requested_by, `[REVIEW] ${registeredName} ${status === 'approved' ? 'approved' : 'requested changes on'} "${review.file}": ${review.feedback || 'No feedback'}`);
+  // Review → retry loop: track review rounds, auto-route feedback, auto-approve after 2 rounds
+  if (status === 'changes_requested') {
+    review.review_round = (review.review_round || 0) + 1;
+
+    // Item 4: Agent circuit breaker — track consecutive rejections in reputation
+    const rep = getReputation();
+    if (!rep[review.requested_by]) rep[review.requested_by] = { tasks_completed: 0, reviews_done: 0, messages_sent: 0, consecutive_rejections: 0, first_seen: new Date().toISOString(), last_active: new Date().toISOString(), strengths: [], task_times: [], response_times: [] };
+    rep[review.requested_by].consecutive_rejections = (rep[review.requested_by].consecutive_rejections || 0) + 1;
+    if (rep[review.requested_by].consecutive_rejections >= 3) {
+      rep[review.requested_by].demoted = true;
+      rep[review.requested_by].demoted_at = new Date().toISOString();
+      sendSystemMessage(review.requested_by, `[CIRCUIT BREAKER] You have ${rep[review.requested_by].consecutive_rejections} consecutive rejections. You are being assigned simpler tasks until your next approval. Focus on smaller, well-tested changes.`);
+    }
+    writeJsonFile(REPUTATION_FILE, rep);
+
+    // Find associated task (if any) and set retry_expected
+    const tasks = getTasks();
+    const relatedTask = tasks.find(t => t.title && review.file && t.title.includes(review.file)) ||
+                        tasks.find(t => t.assignee === review.requested_by && t.status === 'in_progress');
+    if (relatedTask) {
+      relatedTask.retry_expected = true;
+      relatedTask.review_feedback = review.feedback;
+      relatedTask.review_round = review.review_round;
+      if (review.review_round >= 2) {
+        relatedTask.auto_approve_next = true; // 3rd submission auto-approves
+      }
+      saveTasks(tasks);
+    }
+
+    // Auto-route feedback to author with round info
+    const roundMsg = `[REVIEW FEEDBACK] ${registeredName} requested changes on "${review.file}": ${review.feedback}. Fix and re-submit. This is review round ${review.review_round}/2.` +
+      (review.review_round >= 2 ? ' FINAL ROUND — next submission will be auto-approved.' : '');
+    sendSystemMessage(review.requested_by, roundMsg);
+  } else {
+    // Approved — reset consecutive rejections (Item 4: circuit breaker reset)
+    const rep = getReputation();
+    if (rep[review.requested_by]) {
+      rep[review.requested_by].consecutive_rejections = 0;
+      rep[review.requested_by].demoted = false;
+      writeJsonFile(REPUTATION_FILE, rep);
+    }
+    // Notify requester
+    const agents = getAgents();
+    if (agents[review.requested_by]) {
+      sendSystemMessage(review.requested_by, `[REVIEW] ${registeredName} approved "${review.file}": ${review.feedback || 'Looks good!'}`);
+    }
   }
+
+  // Auto-approve check: if this is a re-submission and auto_approve_next is set
+  if (status === 'changes_requested' && review.review_round > 2) {
+    review.status = 'approved';
+    review.auto_approved = true;
+    review.auto_approve_reason = `Auto-approved after ${review.review_round} review rounds (max 2 rounds exceeded).`;
+    sendSystemMessage(review.requested_by, `[REVIEW] "${review.file}" auto-approved after ${review.review_round} review rounds. Flagged for later human review.`);
+  }
+
+  writeJsonFile(REVIEWS_FILE, reviews);
   touchActivity();
-  return { success: true, review_id: reviewId, status, message: `Review submitted: ${status}` };
+
+  const result = { success: true, review_id: reviewId, status: review.status, message: `Review submitted: ${review.status}` };
+  if (review.review_round) result.review_round = review.review_round;
+  if (review.auto_approved) result.auto_approved = true;
+  return result;
 }
 
 function toolDeclareDependency(taskId, dependsOnTaskId) {
@@ -3592,7 +5725,7 @@ function toolGetCompressedHistory() {
 
 // --- Agent Reputation ---
 
-function getReputation() { return readJsonFile(REPUTATION_FILE) || {}; }
+function getReputation() { return cachedRead('reputation', () => readJsonFile(REPUTATION_FILE) || {}, 2000); }
 
 function trackReputation(agent, action) {
   const rep = getReputation();
@@ -3620,6 +5753,9 @@ function trackReputation(agent, action) {
     case 'kb_write': r.kb_contributions++; break;
     case 'file_share': r.files_shared++; break;
     case 'bug_found': r.bugs_found++; break;
+    case 'retry': r.retries = (r.retries || 0) + 1; break;
+    case 'watchdog_nudge': r.watchdog_nudges = (r.watchdog_nudges || 0) + 1; break;
+    case 'help_given': r.help_given = (r.help_given || 0) + 1; break;
   }
 
   // Track task completion time if metadata provided
@@ -3640,6 +5776,19 @@ function trackReputation(agent, action) {
   if (r.bugs_found >= 2) r.strengths.push('bug-hunter');
 
   writeJsonFile(REPUTATION_FILE, rep);
+}
+
+// Reputation score: higher = more trusted agent, used for task assignment priority
+function getReputationScore(agentName) {
+  const rep = getReputation();
+  const r = rep[agentName];
+  if (!r) return 0;
+  return (r.tasks_completed || 0) * 2
+    + (r.reviews_done || 0) * 1
+    + (r.help_given || 0) * 3
+    + (r.kb_contributions || 0) * 1
+    - (r.retries || 0) * 1
+    - (r.watchdog_nudges || 0) * 2;
 }
 
 function toolGetReputation(agent) {
@@ -3741,10 +5890,66 @@ function toolSuggestTask() {
   };
 }
 
+// --- Rules system: project-level rules visible in dashboard and injected into agent guides ---
+
+function toolAddRule(text, category = 'custom') {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!text || !text.trim()) return { error: 'Rule text cannot be empty' };
+  const validCategories = ['safety', 'workflow', 'code-style', 'communication', 'custom'];
+  if (!validCategories.includes(category)) return { error: `Category must be one of: ${validCategories.join(', ')}` };
+
+  const rules = getRules();
+  const rule = {
+    id: 'rule_' + generateId(),
+    text: text.trim(),
+    category,
+    created_by: registeredName,
+    created_at: new Date().toISOString(),
+    active: true,
+  };
+  rules.push(rule);
+  writeJsonFile(RULES_FILE, rules);
+  return { success: true, rule_id: rule.id, message: `Rule added: "${text.substring(0, 80)}". All agents will see this in their guide.` };
+}
+
+function toolListRules() {
+  const rules = getRules();
+  const active = rules.filter(r => r.active);
+  const inactive = rules.filter(r => !r.active);
+  return {
+    rules: active,
+    inactive_count: inactive.length,
+    total: rules.length,
+    categories: [...new Set(active.map(r => r.category))],
+  };
+}
+
+function toolRemoveRule(ruleId) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!ruleId) return { error: 'rule_id is required' };
+  const rules = getRules();
+  const idx = rules.findIndex(r => r.id === ruleId);
+  if (idx === -1) return { error: `Rule not found: ${ruleId}` };
+  const removed = rules.splice(idx, 1)[0];
+  writeJsonFile(RULES_FILE, rules);
+  return { success: true, removed: removed.text.substring(0, 80), message: 'Rule removed.' };
+}
+
+function toolToggleRule(ruleId) {
+  if (!registeredName) return { error: 'You must call register() first' };
+  if (!ruleId) return { error: 'rule_id is required' };
+  const rules = getRules();
+  const rule = rules.find(r => r.id === ruleId);
+  if (!rule) return { error: `Rule not found: ${ruleId}` };
+  rule.active = !rule.active;
+  writeJsonFile(RULES_FILE, rules);
+  return { success: true, rule_id: ruleId, active: rule.active, message: `Rule ${rule.active ? 'activated' : 'deactivated'}.` };
+}
+
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '4.2.0' },
+  { name: 'agent-bridge', version: '5.0.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -3959,7 +6164,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'update_task',
-        description: 'Update a task status. Statuses: pending, in_progress, done, blocked.',
+        description: 'Update a task status. Statuses: pending, in_progress, in_review, done, blocked.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -4086,21 +6291,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // --- Phase 3: Workflows ---
       {
         name: 'create_workflow',
-        description: 'Create a multi-step workflow pipeline. Each step can have a description and assignee. The first step auto-starts and the assignee receives a handoff message.',
+        description: 'Create a multi-step workflow pipeline. Each step can have a description, assignee, and depends_on (step IDs). Set autonomous=true for proactive work loop (agents auto-advance, no human gates). Set parallel=true to run independent steps simultaneously.',
         inputSchema: {
           type: 'object',
           properties: {
             name: { type: 'string', description: 'Workflow name (max 50 chars)' },
             steps: {
               type: 'array',
-              description: 'Array of steps. Each step is a string (description) or {description, assignee}.',
+              description: 'Array of steps. Each step is a string (description) or {description, assignee, depends_on: [stepIds]}.',
               items: {
                 oneOf: [
                   { type: 'string' },
-                  { type: 'object', properties: { description: { type: 'string' }, assignee: { type: 'string' } }, required: ['description'] },
+                  { type: 'object', properties: { description: { type: 'string' }, assignee: { type: 'string' }, depends_on: { type: 'array', items: { type: 'number' }, description: 'Step IDs this step depends on (must complete first)' } }, required: ['description'] },
                 ],
               },
             },
+            autonomous: { type: 'boolean', default: false, description: 'If true, agents auto-advance through steps without waiting for approval. Enables proactive work loop, relaxed send limits, fast cooldowns, and 30s listen cap.' },
+            parallel: { type: 'boolean', default: false, description: 'If true, steps with met dependencies run in parallel (multiple agents work simultaneously)' },
           },
           required: ['name', 'steps'],
         },
@@ -4309,6 +6516,122 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: 'Get a task suggestion based on your strengths, pending tasks, open reviews, and blocked dependencies. Helps you find the most useful thing to do next.',
         inputSchema: { type: 'object', properties: {} },
       },
+      // --- Rules tools ---
+      {
+        name: 'add_rule',
+        description: 'Add a project rule that all agents must follow. Rules appear in every agent\'s guide and briefing. Categories: safety, workflow, code-style, communication, custom.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'The rule text' },
+            category: { type: 'string', description: 'Rule category: safety, workflow, code-style, communication, custom' },
+          },
+          required: ['text'],
+        },
+      },
+      {
+        name: 'list_rules',
+        description: 'List all project rules (active and inactive count).',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'remove_rule',
+        description: 'Remove a project rule by ID.',
+        inputSchema: {
+          type: 'object',
+          properties: { rule_id: { type: 'string', description: 'The rule ID to remove' } },
+          required: ['rule_id'],
+        },
+      },
+      {
+        name: 'toggle_rule',
+        description: 'Toggle a rule active/inactive without deleting it.',
+        inputSchema: {
+          type: 'object',
+          properties: { rule_id: { type: 'string', description: 'The rule ID to toggle' } },
+          required: ['rule_id'],
+        },
+      },
+      // --- Autonomy Engine tools ---
+      {
+        name: 'get_work',
+        description: 'Get your next work assignment. Call this after completing any task. Returns your highest-priority work item — a workflow step, unassigned task, review request, or help request. If nothing is available, briefly listens for messages (30s max) then checks again. You should NEVER be idle.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            just_completed: { type: 'string', description: 'What you just finished (for context continuity)' },
+            available_skills: { type: 'array', items: { type: 'string' }, description: 'What you are good at (e.g., "backend", "testing", "frontend")' },
+          },
+        },
+      },
+      {
+        name: 'verify_and_advance',
+        description: 'Verify your completed work and advance to the next workflow step. You MUST call this when you finish a workflow step — do NOT wait for approval. Self-verify, then auto-advance. Confidence >= 70 auto-advances, 40-69 advances with flag, < 40 broadcasts help request.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflow_id: { type: 'string', description: 'Workflow ID' },
+            summary: { type: 'string', description: 'What you accomplished' },
+            verification: { type: 'string', description: 'How you verified it works (tests run, files checked, etc.)' },
+            files_changed: { type: 'array', items: { type: 'string' }, description: 'Files created or modified' },
+            confidence: { type: 'number', description: '0-100 confidence the work is correct' },
+            learnings: { type: 'string', description: 'What you learned that could help future work' },
+          },
+          required: ['workflow_id', 'summary', 'verification', 'confidence'],
+        },
+      },
+      {
+        name: 'retry_with_improvement',
+        description: 'When your work failed or was rejected, use this to retry with a different approach. The system tracks your attempts and helps you improve. After 3 failed retries, it auto-escalates to the team. Stores learnings in KB for all agents.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            task_or_step: { type: 'string', description: 'What you were working on' },
+            what_failed: { type: 'string', description: 'What went wrong' },
+            why_it_failed: { type: 'string', description: 'Your analysis of the root cause' },
+            new_approach: { type: 'string', description: 'How you will try differently this time' },
+            attempt_number: { type: 'number', description: 'Which retry this is (1, 2, or 3)' },
+          },
+          required: ['task_or_step', 'what_failed', 'why_it_failed', 'new_approach'],
+        },
+      },
+      {
+        name: 'start_plan',
+        description: 'Launch a full autonomous plan. Creates the workflow with autonomous mode, assigns agents, and kicks off the first step(s). After calling this, all agents should call get_work() to enter the work loop. This is the one-click way to start a fully autonomous multi-agent plan.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Plan name' },
+            steps: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  description: { type: 'string' },
+                  assignee: { type: 'string' },
+                  depends_on: { type: 'array', items: { type: 'number' } },
+                  timeout_minutes: { type: 'number' },
+                },
+                required: ['description'],
+              },
+              description: 'Plan steps (2-30 steps)',
+            },
+            parallel: { type: 'boolean', description: 'Allow parallel execution of independent steps (default: true)' },
+          },
+          required: ['name', 'steps'],
+        },
+      },
+      {
+        name: 'distribute_prompt',
+        description: 'Distribute a user request to the team. The Lead agent breaks it into tasks and creates a workflow. The Quality Lead reviews all work. Use this when a user/dashboard sends a complex request that should be handled by the full team.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            content: { type: 'string', description: 'The user request or prompt to distribute' },
+          },
+          required: ['content'],
+        },
+      },
       // --- Managed mode tools ---
       {
         name: 'claim_manager',
@@ -4419,7 +6742,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolWorkspaceList(args?.agent);
         break;
       case 'create_workflow':
-        result = toolCreateWorkflow(args.name, args.steps);
+        result = toolCreateWorkflow(args.name, args.steps, args?.autonomous, args?.parallel);
         break;
       case 'advance_workflow':
         result = toolAdvanceWorkflow(args.workflow_id, args?.notes);
@@ -4513,6 +6836,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'suggest_task':
         result = toolSuggestTask();
+        break;
+      case 'add_rule':
+        result = toolAddRule(args.text, args.category);
+        break;
+      case 'list_rules':
+        result = toolListRules();
+        break;
+      case 'remove_rule':
+        result = toolRemoveRule(args.rule_id);
+        break;
+      case 'toggle_rule':
+        result = toolToggleRule(args.rule_id);
+        break;
+      case 'get_work':
+        result = await toolGetWork(args || {});
+        break;
+      case 'verify_and_advance':
+        result = await toolVerifyAndAdvance(args);
+        break;
+      case 'retry_with_improvement':
+        result = toolRetryWithImprovement(args);
+        break;
+      case 'start_plan':
+        result = toolStartPlan(args);
+        break;
+      case 'distribute_prompt':
+        result = distributePrompt(args.content, registeredName);
         break;
       case 'claim_manager':
         result = toolClaimManager();
@@ -4676,10 +7026,26 @@ process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
 async function main() {
-  ensureDataDir();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('Agent Bridge MCP server v4.1.0 running (57 tools)');
+  try {
+    ensureDataDir();
+  } catch (e) {
+    console.error('ERROR: Cannot create .agent-bridge/ directory: ' + e.message);
+    console.error('Fix: Run "npx let-them-talk doctor" to diagnose the issue.');
+    process.exit(1);
+  }
+  try {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error('Agent Bridge MCP server v5.0.0 running (62 tools)');
+  } catch (e) {
+    console.error('ERROR: MCP server failed to start: ' + e.message);
+    console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
+    process.exit(1);
+  }
 }
 
-main().catch(console.error);
+main().catch((e) => {
+  console.error('FATAL: ' + e.message);
+  console.error('Run "npx let-them-talk doctor" for diagnostics.');
+  process.exit(1);
+});

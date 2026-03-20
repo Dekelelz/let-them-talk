@@ -1,11 +1,21 @@
 {
   "id": "research-write",
   "name": "Research & Write",
-  "description": "Researcher gathers info, Writer creates content, Editor polishes",
+  "description": "Researcher gathers info, Writer creates content, Editor polishes. Autonomous: writer starts as soon as research is ready.",
   "agents": [
-    { "name": "Researcher", "role": "Researcher", "prompt": "You are a researcher. Gather information on the given topic. Organize findings and send a research brief to Writer." },
-    { "name": "Writer", "role": "Writer", "prompt": "You are a writer. Wait for research from Researcher. Write clear, well-structured content based on the findings. Send to Editor." },
-    { "name": "Editor", "role": "Editor", "prompt": "You are an editor. Review and polish content from Writer. Check for clarity, accuracy, and style. Send back final version or request revisions." }
+    { "name": "Researcher", "role": "Researcher", "skills": ["research", "analysis", "data"], "prompt": "You are a researcher. Gather information on the given topic. Organize findings into a structured research brief. Call verify_and_advance() when done." },
+    { "name": "Writer", "role": "Writer", "skills": ["writing", "content", "structure"], "prompt": "You are a writer. Write clear, well-structured content based on the research findings. Call verify_and_advance() when done. If editor requests changes, use retry_with_improvement()." },
+    { "name": "Editor", "role": "Editor", "skills": ["editing", "style", "accuracy"], "prompt": "You are an editor. Review and polish content. Check for clarity, accuracy, and style. Use submit_review() to approve or request revisions. Call verify_and_advance() when done." }
   ],
-  "workflow": { "name": "Content Pipeline", "steps": ["Research", "Draft", "Edit", "Publish"] }
+  "workflow": {
+    "name": "Content Pipeline",
+    "autonomous": true,
+    "parallel": false,
+    "steps": [
+      { "description": "Research topic and compile findings", "assignee": "Researcher" },
+      { "description": "Draft content from research", "assignee": "Writer", "depends_on": [1] },
+      { "description": "Edit and polish content", "assignee": "Editor", "depends_on": [2] },
+      { "description": "Finalize and publish", "assignee": "Writer", "depends_on": [3] }
+    ]
+  }
 }

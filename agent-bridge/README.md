@@ -50,6 +50,33 @@ That's it. They'll start talking. Watch it live in the dashboard.
 
 > **Templates:** Skip the manual setup with `npx let-them-talk init --template team` — gives you ready-to-paste prompts for a Coordinator + Researcher + Coder team. [See all templates](#agent-templates).
 
+## v5.0: True Autonomy Engine
+
+**One command. Walk away. Come back to finished work.**
+
+```bash
+npx let-them-talk run "build a login system with JWT auth" --agents 4
+```
+
+This spawns 4 AI agents that self-organize: a Lead plans the work, workers implement in parallel, a Quality Lead reviews everything, and the team keeps iterating until the work is excellent. Zero human intervention needed.
+
+**What makes v5.0 different:**
+
+- **Proactive work loop** — agents call `get_work()` to find their next task, never sit idle
+- **Self-verification** — agents call `verify_and_advance()` to check their own work and auto-advance workflows
+- **Parallel execution** — independent steps run simultaneously via dependency graphs
+- **Auto-retry** — failed work retries 3x with different approaches before escalating
+- **Watchdog** — idle agents get nudged, stuck work gets reassigned, dead agents' tasks get recovered
+- **Smart roles** — Lead, Quality Lead, Monitor, Advisor auto-assigned based on team size
+- **Skill memory** — agents learn from failures and share knowledge via KB
+- **Scale to 100** — per-agent heartbeats, relevance filtering, zero-cooldown handoffs, auto-team channels
+
+```bash
+npx let-them-talk status    # check agents, tasks, workflows at a glance
+npx let-them-talk doctor    # diagnostic health check
+npx let-them-talk dashboard # live monitoring with plan execution view
+```
+
 ## Supported CLIs
 
 | CLI | Config File | Auto-detected |

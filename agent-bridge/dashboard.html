@@ -291,6 +291,70 @@
     text-align: center;
   }
 
+  /* ===== AGENT FILTER BAR ===== */
+  .agent-filter-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+    padding: 0 4px;
+  }
+  .agent-filter-bar input {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--text);
+    outline: none;
+    min-width: 0;
+  }
+  .agent-filter-bar input:focus { border-color: var(--accent); }
+  .agent-filter-bar select {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 4px;
+    font-size: 10px;
+    color: var(--text);
+    outline: none;
+    cursor: pointer;
+    max-width: 80px;
+  }
+
+  /* ===== ROLE GROUP ===== */
+  .role-group {
+    margin-bottom: 8px;
+  }
+  .role-group-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    cursor: pointer;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .role-group-header:hover { background: var(--surface-2); }
+  .role-group-header .role-group-arrow {
+    transition: transform 0.2s;
+    font-size: 8px;
+  }
+  .role-group-header .role-group-arrow.collapsed { transform: rotate(-90deg); }
+  .role-group-header .role-group-count {
+    background: var(--surface-2);
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 9px;
+    color: var(--text-dim);
+  }
+  .role-group-body.collapsed { display: none; }
+
   /* ===== AGENT CARDS ===== */
   .agent-card {
     background: var(--surface-2);
@@ -1669,6 +1733,7 @@
 
   .kanban-title.pending { background: var(--surface-2); color: var(--text-dim); }
   .kanban-title.in_progress { background: var(--accent-dim); color: var(--accent); }
+  .kanban-title.in_review { background: rgba(168,85,247,0.15); color: var(--purple,#a855f7); }
   .kanban-title.done { background: var(--green-dim); color: var(--green); }
   .kanban-title.blocked { background: var(--red-dim); color: var(--red); }
 
@@ -1758,6 +1823,28 @@
     font-size: 13px;
     padding: 40px 20px;
   }
+
+  .loading-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 12px;
+    gap: 8px;
+  }
+
+  .loading-spinner::before {
+    content: '';
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   @media (max-width: 768px) {
     .kanban { grid-template-columns: 1fr; }
@@ -2372,6 +2459,15 @@
 
   .workflows-area.visible { display: block; }
 
+  .plan-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: none;
+  }
+
+  .plan-area.visible { display: block; }
+
   .pipeline {
     margin-bottom: 20px;
     background: var(--surface);
@@ -2498,6 +2594,84 @@
   }
 
   .launch-area.visible { display: block; }
+
+  /* ===== RULES VIEW ===== */
+  .rules-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: none;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  .rules-area.visible { display: block; }
+  .rule-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .rule-card.inactive { opacity: 0.5; }
+  .rule-card.critical { border-left: 3px solid var(--red,#ef4444); }
+  .rule-card.important { border-left: 3px solid var(--orange); }
+  .rule-text { flex: 1; font-size: 13px; line-height: 1.5; }
+  .rule-category {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 4px;
+    display: inline-block;
+  }
+  .rule-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .rule-actions button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .rule-actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .rule-add-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .rule-add-form textarea {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 13px;
+    color: var(--text);
+    resize: vertical;
+    min-height: 60px;
+    outline: none;
+    font-family: inherit;
+  }
+  .rule-add-form textarea:focus { border-color: var(--accent); }
+  .rule-form-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .rule-form-row select {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: var(--text);
+    outline: none;
+  }
 
   /* ===== STATS VIEW ===== */
   .stats-area {
@@ -2893,6 +3067,32 @@
     margin: 2px 4px;
   }
 
+  /* ===== LOAD MORE BUTTON ===== */
+  .load-more-bar {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+  }
+  .load-more-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 24px;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .load-more-btn:hover { background: var(--surface-2); border-color: var(--accent); }
+  .load-more-btn:disabled { opacity: 0.5; cursor: default; }
+  .load-more-info {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 4px;
+  }
+
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -3096,6 +3296,7 @@
 
   .launch-result.success { display: block; background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
   .launch-result.error { display: block; background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+  .launch-result.info { display: block; background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
 
   .launch-prompt-box {
     margin-top: 10px;
@@ -3110,7 +3311,82 @@
     max-height: 200px;
     overflow-y: auto;
     color: var(--text);
+    cursor: pointer;
+    position: relative;
   }
+  .launch-prompt-box:hover::after {
+    content: 'click to copy';
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .launch-status-list {
+    margin-top: 16px;
+  }
+  .launch-status-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .launch-status-item .ls-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .launch-status-item .ls-dot.pending { background: var(--text-muted); }
+  .launch-status-item .ls-dot.launching { background: var(--yellow); animation: pulse-dot 1s infinite; }
+  .launch-status-item .ls-dot.launched { background: var(--orange, #f59e0b); }
+  .launch-status-item .ls-dot.registered { background: var(--green); }
+  .launch-status-item .ls-dot.failed { background: var(--red); }
+  @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .launch-status-item .ls-name { font-weight: 600; flex: 1; }
+  .launch-status-item .ls-state { color: var(--text-dim); font-size: 11px; }
+  .launch-status-item .ls-prompt-btn {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    cursor: pointer;
+  }
+
+  .launch-template-agents {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .launch-template-agents .lta-header {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .launch-template-agent {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .launch-template-agent:last-child { border-bottom: none; }
+  .launch-template-agent .lta-name { font-weight: 600; min-width: 80px; }
+  .launch-template-agent .lta-role { color: var(--text-dim); flex: 1; }
 
   /* ===== v3.0: BRANCH TABS ===== */
   .branch-tabs {
@@ -3364,7 +3640,7 @@
       <div class="h-stat"><span class="h-stat-val" id="stat-agents">0</span> agents</div>
       <div class="h-stat"><span class="h-stat-val" id="stat-sleeping" style="color:var(--orange)">0</span> sleeping</div>
       <div class="h-stat"><span class="h-stat-val" id="stat-threads">0</span> threads</div>
-      <div class="h-stat"><span class="h-stat-val" id="stat-clis">0</span> CLIs</div>
+      <div class="h-stat"><span class="h-stat-val" id="stat-clis">0</span> CLI types</div>
       <div class="h-stat" id="managed-badge" style="display:none;background:rgba(88,166,255,0.15);border-radius:8px;padding:2px 8px">
         <span class="h-stat-val" style="color:#58a6ff;font-size:11px" id="managed-phase">MANAGED</span>
         <span style="color:#8b949e;font-size:10px" id="managed-floor-info"></span>
@@ -3381,6 +3657,7 @@
     </div>
     <button class="notif-toggle" id="notif-toggle" onclick="toggleNotifications()" title="Browser notifications">&#x1f514;</button>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light theme">&#x1f319;</button>
+    <span onclick="toggleShortcutsOverlay()" style="font-size:10px;color:var(--text-muted);cursor:pointer;padding:0 4px" title="Keyboard shortcuts">? keys</span>
     <button class="sound-toggle" id="sound-toggle" onclick="toggleSound()" title="Toggle notification sound">&#x1f508;</button>
     <button class="phone-btn" id="phone-btn" onclick="openPhoneAccess()" title="Phone access (LAN)">&#x1F4F1;</button>
     <div class="connection"><span class="conn-dot"></span><span id="conn-label">Live</span><span class="conn-detail" id="conn-detail"></span></div>
@@ -3454,6 +3731,24 @@
           <span>Agents</span>
           <span class="alert-count" id="alert-count" style="display:none">0</span>
         </div>
+        <div class="agent-filter-bar" id="agent-filter-bar">
+          <input type="text" id="agent-search" placeholder="Search..." oninput="filterAgents()">
+          <select id="agent-role-filter" onchange="filterAgents()">
+            <option value="">Role</option>
+            <option value="lead">Lead</option>
+            <option value="backend">Backend</option>
+            <option value="frontend">Frontend</option>
+            <option value="quality">Quality</option>
+            <option value="monitor">Monitor</option>
+            <option value="advisor">Advisor</option>
+          </select>
+          <select id="agent-status-filter" onchange="filterAgents()">
+            <option value="">Status</option>
+            <option value="active">Online</option>
+            <option value="dead">Offline</option>
+            <option value="sleeping">Idle</option>
+          </select>
+        </div>
         <div id="agents-list"></div>
       </div>
 
@@ -3508,7 +3803,9 @@
       <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
       <div class="view-tab" id="tab-workspaces" onclick="switchView('workspaces')">Workspaces</div>
       <div class="view-tab" id="tab-workflows" onclick="switchView('workflows')">Workflows</div>
+      <div class="view-tab" id="tab-plan" onclick="switchView('plan')">Plan</div>
       <div class="view-tab" id="tab-launch" onclick="switchView('launch')">Launch</div>
+      <div class="view-tab" id="tab-rules" onclick="switchView('rules')">Rules</div>
       <div class="view-tab" id="tab-stats" onclick="switchView('stats')">Stats</div>
       <div class="view-tab" id="tab-docs" onclick="switchView('docs')">Docs</div>
     </div>
@@ -3529,11 +3826,14 @@
     <div class="tasks-area" id="tasks-area"></div>
     <div class="workspaces-area" id="workspaces-area"></div>
     <div class="workflows-area" id="workflows-area"></div>
+    <div class="plan-area" id="plan-area"></div>
+    <div class="plan-area" id="monitor-panel" style="display:none"></div>
     <div class="office-area" id="office-area">
       <div class="office-toolbar">
         <label>Environment:</label>
         <select id="office-env-select" onchange="officeSetEnvironment(this.value)">
           <option value="campus" selected>Tech Campus</option>
+          <option value="city">AI City</option>
           <option value="modern">Modern Office</option>
           <option value="startup">Startup Garage</option>
         </select>
@@ -3556,8 +3856,9 @@
       </div>
     </div>
     <div class="launch-area" id="launch-area"></div>
+    <div class="rules-area" id="rules-area"></div>
     <div class="stats-area" id="stats-area"></div>
-    <div class="docs-area" id="docs-area"><div id="decisions-panel" style="max-width:820px;margin:0 auto"></div><div id="docs-content"></div></div>
+    <div class="docs-area" id="docs-area"><div id="docs-content"></div></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
     <div class="typing-bar" id="typing-bar"></div>
 
@@ -3994,6 +4295,11 @@ var activeChannel = null; // null = all channels
 var activeProject = ''; // empty = default/local
 var cachedHistory = [];
 var cachedAgents = {};
+var msgPage = 0;  // 0 = latest (default poll), 1+ = paginated older messages
+var msgTotalPages = 0;
+var msgLoadingMore = false;
+var msgWindowExpanded = false;  // When true, disable virtual scroll windowing
+var lastRenderedIds = [];       // Track rendered message IDs for incremental append
 var isMobile = window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 window.addEventListener('resize', function() { isMobile = window.innerWidth <= 768; });
 
@@ -4223,6 +4529,23 @@ function getProviderBadge(provider) {
   return '<span style="color:' + c + ';font-size:9px;font-weight:600;margin-right:4px">' + escapeHtml(provider) + '</span>';
 }
 
+var agentFilterSearch = '';
+var agentFilterRole = '';
+var agentFilterStatus = '';
+var collapsedRoleGroups = {};
+
+function filterAgents() {
+  agentFilterSearch = (document.getElementById('agent-search').value || '').toLowerCase();
+  agentFilterRole = document.getElementById('agent-role-filter').value;
+  agentFilterStatus = document.getElementById('agent-status-filter').value;
+  renderAgents(cachedAgents);
+}
+
+function toggleRoleGroup(role) {
+  collapsedRoleGroups[role] = !collapsedRoleGroups[role];
+  renderAgents(cachedAgents);
+}
+
 function renderAgents(agents) {
   var el = document.getElementById('agents-list');
   var keys = Object.keys(agents);
@@ -4231,11 +4554,47 @@ function renderAgents(agents) {
     return;
   }
 
+  // Filter agents
+  var filtered = [];
+  for (var f = 0; f < keys.length; f++) {
+    var fname = keys[f];
+    var finfo = agents[fname];
+    var fstate = finfo.status || (finfo.alive ? 'active' : 'dead');
+    if (agentFilterSearch && fname.toLowerCase().indexOf(agentFilterSearch) === -1 &&
+        (!finfo.display_name || finfo.display_name.toLowerCase().indexOf(agentFilterSearch) === -1)) continue;
+    if (agentFilterRole && finfo.role !== agentFilterRole) continue;
+    if (agentFilterStatus && fstate !== agentFilterStatus) continue;
+    filtered.push(fname);
+  }
+
+  if (!filtered.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px;">No matching agents</div>';
+    return;
+  }
+
+  // Group by role
+  var ROLE_ORDER = ['lead', 'backend', 'frontend', 'quality', 'monitor', 'advisor', ''];
+  var ROLE_LABELS = { lead: 'Lead', backend: 'Backend', frontend: 'Frontend', quality: 'Quality', monitor: 'Monitor', advisor: 'Advisor', '': 'Unassigned' };
+  var ROLE_COLORS = { lead: 'var(--accent)', backend: '#f59e0b', frontend: '#8b5cf6', quality: 'var(--green)', monitor: 'var(--red,#ef4444)', advisor: 'var(--purple,#a855f7)', '': 'var(--text-muted)' };
+  var roleGroups = {};
+  for (var g = 0; g < filtered.length; g++) {
+    var gname = filtered[g];
+    var grole = agents[gname].role || '';
+    if (!roleGroups[grole]) roleGroups[grole] = [];
+    roleGroups[grole].push(gname);
+  }
+
+  // Only use role grouping if more than 6 agents (otherwise flat list)
+  var useGrouping = filtered.length > 6;
+
   var sleepCount = 0;
   var html = '';
-  for (var i = 0; i < keys.length; i++) {
-    var name = keys[i];
-    var info = agents[name];
+
+  function renderAgentCards(agentNames) {
+    var cardHtml = '';
+    for (var i = 0; i < agentNames.length; i++) {
+      var name = agentNames[i];
+      var info = agents[name];
     var color = getColor(name);
     // Use server-provided status if available, fallback to client-side detection
     var state = info.status || (info.alive ? 'active' : 'dead');
@@ -4285,10 +4644,17 @@ function renderAgents(agents) {
       ? '<img class="agent-avatar-img" src="' + escapeHtml(info.avatar) + '" alt="' + escapeHtml(name) + '" onerror="this.style.display=\'none\'">'
       : '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>';
     var displayName = info.display_name || name;
-    var roleHtml = info.role ? '<span class="role-badge">' + escapeHtml(info.role) + '</span>' : '';
+    var roleHtml = '';
+    if (info.role) {
+      var roleBg = info.role === 'quality' ? 'background:rgba(34,197,94,0.15);color:var(--green)' :
+        info.role === 'monitor' ? 'background:rgba(239,68,68,0.15);color:var(--red,#ef4444)' :
+        info.role === 'advisor' ? 'background:rgba(168,85,247,0.15);color:var(--purple,#a855f7)' :
+        info.role === 'lead' ? 'background:rgba(59,130,246,0.15);color:var(--accent)' : '';
+      roleHtml = '<span class="role-badge" style="' + roleBg + '">' + escapeHtml(info.role) + '</span>';
+    }
     var branchHtml = info.branch && info.branch !== 'main' ? ' <span style="font-size:9px;color:var(--text-muted)">[' + escapeHtml(info.branch) + ']</span>' : '';
 
-    html += '<div class="' + cardClass + '">' +
+    cardHtml += '<div class="' + cardClass + '">' +
       '<div class="agent-top" onclick="showProfilePopup(\'' + escapeHtml(name) + '\', event)" style="cursor:pointer">' +
         avatarHtml +
         '<div class="agent-info">' +
@@ -4298,7 +4664,9 @@ function renderAgents(agents) {
             ' <span class="agent-badge ' + state + '">' + stateLabel + '</span>' +
             branchHtml +
           '</div>' +
-          '<div class="agent-meta"><span>' + getProviderBadge(info.provider) + 'PID ' + info.pid + '</span></div>' +
+          '<div class="agent-meta"><span>' + getProviderBadge(info.provider) + 'PID ' + info.pid + '</span>' +
+            (info.last_activity ? '<span style="margin-left:8px" title="Last heartbeat: ' + new Date(info.last_activity).toLocaleTimeString() + '">&#x1f493; ' + timeAgo(info.last_activity) + '</span>' : '') +
+          '</div>' +
         '</div>' +
       '</div>' +
       '<div class="agent-activity">' +
@@ -4311,7 +4679,32 @@ function renderAgents(agents) {
       respawnHtml +
       removeHtml +
     '</div>';
+    }
+    return cardHtml;
   }
+
+  if (useGrouping) {
+    for (var r = 0; r < ROLE_ORDER.length; r++) {
+      var role = ROLE_ORDER[r];
+      if (!roleGroups[role] || !roleGroups[role].length) continue;
+      var isCollapsed = !!collapsedRoleGroups[role];
+      var roleLabel = ROLE_LABELS[role] || role;
+      var roleColor = ROLE_COLORS[role] || 'var(--text-muted)';
+      html += '<div class="role-group">' +
+        '<div class="role-group-header" onclick="toggleRoleGroup(\'' + role + '\')" style="color:' + roleColor + '">' +
+          '<span class="role-group-arrow' + (isCollapsed ? ' collapsed' : '') + '">&#x25BC;</span>' +
+          roleLabel +
+          '<span class="role-group-count">' + roleGroups[role].length + '</span>' +
+        '</div>' +
+        '<div class="role-group-body' + (isCollapsed ? ' collapsed' : '') + '">' +
+          renderAgentCards(roleGroups[role]) +
+        '</div>' +
+      '</div>';
+    }
+  } else {
+    html += renderAgentCards(filtered);
+  }
+
   el.innerHTML = html;
 
   // Update alert badge
@@ -4552,11 +4945,15 @@ function renderMessages(messages) {
       '</div>';
     } else {
       el.innerHTML = '<div class="empty-state">' +
-        '<div class="empty-icon">&#x1f4ac;</div>' +
-        '<div class="empty-text">No messages yet</div>' +
-        '<div class="empty-sub">Get two AI agents talking in minutes</div>' +
+        '<div class="empty-icon">&#x1f680;</div>' +
+        '<div class="empty-text">Let Them Talk v5.0</div>' +
+        '<div class="empty-sub">Autonomous AI agent teams — one command, zero babysitting</div>' +
         '<div class="onboard-steps">' +
-          '<div class="onboard-step"><span class="onboard-num">1</span><span>Open two terminals and run <code>claude</code> in each</span></div>' +
+          '<div class="onboard-step" style="margin-bottom:12px"><span class="onboard-num" style="background:var(--accent)">&#x26A1;</span><span style="font-weight:600">Quickest start — one command:</span></div>' +
+          '<div class="copy-block" onclick="copyText(this)" data-text="npx let-them-talk run &quot;build a REST API with auth&quot; --agents 4"><span class="copy-hint">click to copy</span>npx let-them-talk run "build a REST API with auth" --agents 4</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin:8px 0 16px;text-align:center">Spawns 4 agents, auto-assigns roles, creates autonomous workflow. Walk away, come back to finished work.</div>' +
+          '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px"></div>' +
+          '<div class="onboard-step"><span class="onboard-num">1</span><span>Or set up manually: open two terminals and run <code>claude</code> in each</span></div>' +
           '<div class="onboard-step"><span class="onboard-num">2</span><span>Paste this in Terminal 1:</span></div>' +
           '<div class="copy-block" onclick="copyText(this)" data-text="You are Agent A. Register as &quot;A&quot;. Say hello to Agent B, then call listen()."><span class="copy-hint">click to copy</span>You are Agent A. Register as "A". Say hello to Agent B, then call listen().</div>' +
           '<div class="onboard-step"><span class="onboard-num">3</span><span>Paste this in Terminal 2:</span></div>' +
@@ -4614,12 +5011,27 @@ function renderMessages(messages) {
     playNotifSound();
   }
 
+  // Virtual scroll: cap rendered messages to avoid DOM bloat
+  var MSG_WINDOW = 200;
+  var windowStart = 0;
+  var hiddenCount = 0;
+  if (!msgWindowExpanded && filtered.length > MSG_WINDOW && autoScroll) {
+    // When auto-scrolling (at bottom), only render last MSG_WINDOW messages
+    windowStart = filtered.length - MSG_WINDOW;
+    hiddenCount = windowStart;
+  }
+
   var html = '';
   var lastDate = '';
   var lastFrom = '';
   var lastTo = '';
 
-  for (var i = 0; i < filtered.length; i++) {
+  // Show hidden message count
+  if (hiddenCount > 0) {
+    html += '<div class="load-more-bar"><button class="load-more-btn" onclick="msgWindowExpand()">' + hiddenCount + ' older messages — click to show</button></div>';
+  }
+
+  for (var i = windowStart; i < filtered.length; i++) {
     var m = filtered[i];
     var color = getColor(m.from);
     var newClass = (isNew && i >= lastMessageCount) ? ' message-new' : '';
@@ -4721,7 +5133,71 @@ function renderMessages(messages) {
       lastTo = m.to;
     }
   }
-  el.innerHTML = html;
+  // Build current ID list for incremental detection
+  var currentIds = [];
+  for (var ci = windowStart; ci < filtered.length; ci++) currentIds.push(filtered[ci].id);
+
+  // Add Load More bar at top if there are more messages on the server
+  var loadMoreHtml = '';
+  if (msgTotalPages > 0 && cachedHistory.length < 500) {
+    loadMoreHtml = '<div class="load-more-bar">' +
+      '<button class="load-more-btn" onclick="loadMoreMessages()" ' + (msgLoadingMore ? 'disabled' : '') + '>' +
+      (msgLoadingMore ? 'Loading...' : 'Load older messages') +
+      '</button></div>';
+  }
+
+  // Incremental rendering: detect append-only and skip full DOM rebuild
+  var isAppendOnly = false;
+  if (lastRenderedIds.length > 0 && currentIds.length > lastRenderedIds.length && !searchQuery && !activeThread && !bookmarkFilter) {
+    // Check if existing messages are unchanged (same IDs in same order)
+    isAppendOnly = true;
+    for (var chk = 0; chk < lastRenderedIds.length; chk++) {
+      if (lastRenderedIds[chk] !== currentIds[chk]) { isAppendOnly = false; break; }
+    }
+  }
+
+  if (isAppendOnly && el.children.length > 0) {
+    // Append only new messages — build HTML for just the new ones
+    var appendStart = windowStart + lastRenderedIds.length;
+    var appendHtml = '';
+    for (var ai = appendStart; ai < filtered.length; ai++) {
+      // Re-render just the new message portion (reuse the loop above by slicing html)
+      // Simpler: create a temp div, parse new HTML, append children
+    }
+    // Use a simpler approach: build new messages HTML and append via temp container
+    var newMsgHtml = '';
+    var prevFrom = lastRenderedIds.length > 0 ? filtered[appendStart - 1].from : '';
+    var prevTo = lastRenderedIds.length > 0 ? filtered[appendStart - 1].to : '';
+    for (var ni = appendStart; ni < filtered.length; ni++) {
+      var nm = filtered[ni];
+      var nColor = getColor(nm.from);
+      var nIsSystem = nm.system === true;
+      var nMsgDate = new Date(nm.timestamp).toLocaleDateString();
+      // Simplified: render each new message with full formatting
+      var nDisplayName = nm.from;
+      var nContent = renderMarkdown(nm.content);
+      var nTime = formatTime(nm.timestamp);
+      var nToLabel = nm.to === '__group__' ? '' : ' &rarr; ' + escapeHtml(nm.to);
+      newMsgHtml += '<div class="message message-new" data-id="' + nm.id + '">' +
+        '<div class="msg-body"><div class="msg-header">' +
+          '<span class="msg-from" style="color:' + nColor + '">' + escapeHtml(nDisplayName) + '</span>' +
+          '<span class="msg-to">' + nToLabel + '</span>' +
+          '<span class="msg-time">' + nTime + '</span>' +
+        '</div>' +
+        '<div class="msg-content">' + nContent + '</div>' +
+        '</div></div>';
+    }
+    if (newMsgHtml) {
+      var tempDiv = document.createElement('div');
+      tempDiv.innerHTML = newMsgHtml;
+      while (tempDiv.firstChild) el.appendChild(tempDiv.firstChild);
+    }
+  } else {
+    // Full re-render (filters active, messages changed, or first render)
+    el.innerHTML = loadMoreHtml + html;
+  }
+
+  lastRenderedIds = currentIds;
   lastMessageCount = filtered.length;
 
   if (autoScroll && isNew) {
@@ -4729,11 +5205,45 @@ function renderMessages(messages) {
   }
 }
 
+function msgWindowExpand() {
+  msgWindowExpanded = true;
+  renderMessages(cachedHistory);
+}
+
+function loadMoreMessages() {
+  if (msgLoadingMore) return;
+  msgLoadingMore = true;
+  renderMessages(cachedHistory); // Re-render to show loading state
+  var pp = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
+  var bp = activeBranch && activeBranch !== 'main' ? '&branch=' + encodeURIComponent(activeBranch) : '';
+  // Calculate next page: we want older messages
+  var nextPage = Math.max(1, msgTotalPages - Math.floor(cachedHistory.length / 50));
+  lttFetch('/api/history?page=' + nextPage + '&limit=50' + pp + bp).then(function(r) {
+    return r.json();
+  }).then(function(data) {
+    msgLoadingMore = false;
+    if (data && data.messages && data.messages.length) {
+      // Prepend older messages (deduplicate by id)
+      var existingIds = {};
+      for (var i = 0; i < cachedHistory.length; i++) existingIds[cachedHistory[i].id] = true;
+      var newMsgs = data.messages.filter(function(m) { return !existingIds[m.id]; });
+      cachedHistory = newMsgs.concat(cachedHistory);
+      msgTotalPages = data.pages || 0;
+    }
+    renderMessages(cachedHistory);
+  }).catch(function(e) {
+    msgLoadingMore = false;
+    console.error('Load more failed:', e);
+    renderMessages(cachedHistory);
+  });
+}
+
 // ==================== FILTERS & CONTROLS ====================
 
 function filterThread(tid) {
   activeThread = activeThread === tid ? null : tid;
   lastMessageCount = 0;
+  lastRenderedIds = [];
   renderThreads(cachedHistory);
   renderMessages(cachedHistory);
   if (isMobile) closeSidebar();
@@ -4742,6 +5252,7 @@ function filterThread(tid) {
 function clearThreadFilter() {
   activeThread = null;
   lastMessageCount = 0;
+  lastRenderedIds = [];
   renderThreads(cachedHistory);
   renderMessages(cachedHistory);
 }
@@ -4774,7 +5285,9 @@ function renderChannelBar(messages) {
   for (var j = 0; j < keys.length; j++) {
     var name = keys[j];
     var active = activeChannel === name ? ' active' : '';
-    html += '<div class="channel-tab' + active + '" onclick="filterChannel(\'' + escapeHtml(name) + '\')">#' + escapeHtml(name) + ' <span style="opacity:0.5;font-size:9px">' + channels[name] + '</span></div>';
+    var isTeamChannel = name.startsWith('team-');
+    var teamStyle = isTeamChannel ? 'border-left:2px solid var(--purple,#a855f7);' : '';
+    html += '<div class="channel-tab' + active + '" style="' + teamStyle + '" onclick="filterChannel(\'' + escapeHtml(name) + '\')">#' + escapeHtml(name) + ' <span style="opacity:0.5;font-size:9px">' + channels[name] + '</span></div>';
   }
   bar.innerHTML = html;
 }
@@ -5171,7 +5684,39 @@ document.addEventListener('keydown', function(e) {
   if (e.key === '7') { switchView('stats'); return; }
   // 8 — Docs tab
   if (e.key === '8') { switchView('docs'); return; }
+  // 9 — Plan tab
+  if (e.key === '9') { switchView('plan'); return; }
+  // ? — Show keyboard shortcuts
+  if (e.key === '?') { toggleShortcutsOverlay(); return; }
 });
+
+function toggleShortcutsOverlay() {
+  var existing = document.getElementById('shortcuts-overlay');
+  if (existing) { existing.remove(); return; }
+  var overlay = document.createElement('div');
+  overlay.id = 'shortcuts-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = function() { overlay.remove(); };
+  overlay.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px 32px;max-width:400px;width:90%" onclick="event.stopPropagation()">' +
+    '<h3 style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">Keyboard Shortcuts</h3>' +
+    '<div style="display:grid;grid-template-columns:80px 1fr;gap:8px 16px;font-size:13px">' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">?</kbd><span>Show this help</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">/</kbd><span>Focus search</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">Esc</kbd><span>Clear search / exit</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">1</kbd><span>3D Hub</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">2</kbd><span>Messages</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">3</kbd><span>Tasks</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">4</kbd><span>Workspaces</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">5</kbd><span>Workflows</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">6</kbd><span>Launch</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">7</kbd><span>Stats</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">8</kbd><span>Docs</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">9</kbd><span>Plan</span>' +
+    '</div>' +
+    '<div style="margin-top:16px;font-size:11px;color:var(--text-muted);text-align:center">Press ? or click outside to close</div>' +
+  '</div>';
+  document.body.appendChild(overlay);
+}
 
 // ==================== RELATIVE TIMESTAMPS ====================
 
@@ -5418,16 +5963,21 @@ function switchView(view) {
   document.getElementById('tab-tasks').classList.toggle('active', view === 'tasks');
   document.getElementById('tab-workspaces').classList.toggle('active', view === 'workspaces');
   document.getElementById('tab-workflows').classList.toggle('active', view === 'workflows');
+  document.getElementById('tab-plan').classList.toggle('active', view === 'plan');
   document.getElementById('tab-office').classList.toggle('active', view === 'office');
   document.getElementById('tab-launch').classList.toggle('active', view === 'launch');
+  document.getElementById('tab-rules').classList.toggle('active', view === 'rules');
   document.getElementById('tab-stats').classList.toggle('active', view === 'stats');
   document.getElementById('tab-docs').classList.toggle('active', view === 'docs');
   document.getElementById('messages').style.display = view === 'messages' ? 'flex' : 'none';
   document.getElementById('tasks-area').classList.toggle('visible', view === 'tasks');
   document.getElementById('workspaces-area').classList.toggle('visible', view === 'workspaces');
   document.getElementById('workflows-area').classList.toggle('visible', view === 'workflows');
+  document.getElementById('plan-area').classList.toggle('visible', view === 'plan');
+  document.getElementById('monitor-panel').style.display = view === 'plan' ? 'block' : 'none';
   document.getElementById('office-area').classList.toggle('visible', view === 'office');
   document.getElementById('launch-area').classList.toggle('visible', view === 'launch');
+  document.getElementById('rules-area').classList.toggle('visible', view === 'rules');
   document.getElementById('stats-area').classList.toggle('visible', view === 'stats');
   document.getElementById('docs-area').classList.toggle('visible', view === 'docs');
   document.getElementById('search-bar').style.display = view === 'messages' ? 'flex' : 'none';
@@ -5436,6 +5986,7 @@ function switchView(view) {
   if (view === 'tasks') fetchTasks();
   if (view === 'workspaces') fetchWorkspaces();
   if (view === 'workflows') fetchWorkflows();
+  if (view === 'plan') { fetchPlanStatus(); fetchMonitorHealth(); }
   if (view === 'docs') renderDocs();
   if (view === 'office') {
     if (window.office3dStart) {
@@ -5460,6 +6011,7 @@ function switchView(view) {
     }
   }
   if (view === 'launch') renderLaunchPanel();
+  if (view === 'rules') fetchRules();
   if (view === 'stats') fetchStats();
   if (view !== 'office') {
     if (window.office3dStop) window.office3dStop();
@@ -5474,6 +6026,7 @@ var cachedTasks = [];
 
 function fetchTasks() {
   var pq = projectParam();
+  document.getElementById('tasks-area').innerHTML = '<div class="loading-spinner">Loading tasks...</div>';
   lttFetch('/api/tasks' + pq).then(function(r) { return r.json(); }).then(function(tasks) {
     cachedTasks = Array.isArray(tasks) ? tasks : [];
     renderTasks();
@@ -5508,7 +6061,7 @@ function renderTasks() {
     return;
   }
 
-  var groups = { pending: [], in_progress: [], done: [], blocked: [] };
+  var groups = { pending: [], in_progress: [], in_review: [], done: [], blocked: [] };
   for (var i = 0; i < cachedTasks.length; i++) {
     var t = cachedTasks[i];
     var status = t.status || 'pending';
@@ -5519,6 +6072,7 @@ function renderTasks() {
   var cols = [
     { key: 'pending', label: 'Pending' },
     { key: 'in_progress', label: 'In Progress' },
+    { key: 'in_review', label: 'In Review' },
     { key: 'done', label: 'Done' },
     { key: 'blocked', label: 'Blocked' }
   ];
@@ -5549,6 +6103,7 @@ function buildTaskCard(t) {
   var statusOpts = '<select class="task-status-select" onchange="updateTaskStatus(\'' + t.id + '\',this.value)">' +
     '<option value="pending"' + (t.status === 'pending' ? ' selected' : '') + '>Pending</option>' +
     '<option value="in_progress"' + (t.status === 'in_progress' ? ' selected' : '') + '>In Progress</option>' +
+    '<option value="in_review"' + (t.status === 'in_review' ? ' selected' : '') + '>In Review</option>' +
     '<option value="done"' + (t.status === 'done' ? ' selected' : '') + '>Done</option>' +
     '<option value="blocked"' + (t.status === 'blocked' ? ' selected' : '') + '>Blocked</option>' +
   '</select>';
@@ -5633,14 +6188,20 @@ var AGENT_COLORS = ['#58a6ff', '#f78166', '#7ee787', '#d2a8ff', '#ffa657', '#ff7
 
 function fetchStats() {
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  lttFetch('/api/stats' + pq).then(function(r) { return r.json(); }).then(function(data) {
-    renderStats(data);
+  Promise.all([
+    lttFetch('/api/stats' + pq).then(function(r) { return r.json(); }).catch(function() { return {}; }),
+    lttFetch('/api/tasks' + pq).then(function(r) { return r.json(); }).catch(function() { return []; }),
+    lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).catch(function() { return []; }),
+  ]).then(function(results) {
+    renderStats(results[0], results[1], results[2]);
   }).catch(function(e) { console.error('Stats fetch failed:', e); });
   fetchScores();
 }
 
-function renderStats(data) {
+function renderStats(data, tasks, workflows) {
   var el = document.getElementById('stats-area');
+  tasks = Array.isArray(tasks) ? tasks : [];
+  workflows = Array.isArray(workflows) ? workflows : [];
   if (!data || !data.total_messages) {
     el.innerHTML = '<div class="tasks-empty">No messages yet. Stats will appear once agents start talking.</div>';
     return;
@@ -5652,12 +6213,39 @@ function renderStats(data) {
     if (data.agents[agentNames[i]].messages > maxMessages) maxMessages = data.agents[agentNames[i]].messages;
   }
 
-  // Overview cards
+  // Count agent states from cachedAgents
+  var onlineCount = 0, offlineCount = 0;
+  var agentKeys = Object.keys(cachedAgents);
+  for (var ak = 0; ak < agentKeys.length; ak++) {
+    if (cachedAgents[agentKeys[ak]].alive) onlineCount++; else offlineCount++;
+  }
+
+  // Task counts
+  var tasksDone = 0, tasksActive = 0, tasksPending = 0, tasksBlocked = 0;
+  for (var ti = 0; ti < tasks.length; ti++) {
+    var ts = tasks[ti].status;
+    if (ts === 'done') tasksDone++;
+    else if (ts === 'in_progress' || ts === 'in_review') tasksActive++;
+    else if (ts === 'blocked') tasksBlocked++;
+    else tasksPending++;
+  }
+
+  // Workflow counts
+  var wfActive = 0, wfDone = 0;
+  for (var wi = 0; wi < workflows.length; wi++) {
+    var wf = workflows[wi];
+    var allDone = wf.steps && wf.steps.every(function(s) { return s.status === 'done'; });
+    if (allDone) wfDone++; else wfActive++;
+  }
+
+  // Overview cards — system health at a glance
   var html = '<div class="stats-grid">';
-  html += '<div class="stat-card"><div class="stat-card-label">Total Messages</div><div class="stat-card-value">' + data.total_messages + '</div></div>';
-  html += '<div class="stat-card"><div class="stat-card-label">Busiest Agent</div><div class="stat-card-value" style="font-size:18px">' + escapeHtml(data.busiest_agent || '-') + '</div></div>';
+  html += '<div class="stat-card"><div class="stat-card-label">Messages</div><div class="stat-card-value">' + data.total_messages + '</div></div>';
   html += '<div class="stat-card"><div class="stat-card-label">Velocity</div><div class="stat-card-value">' + data.velocity_per_min + '</div><div class="stat-card-sub">msgs/min (last 10m)</div></div>';
-  html += '<div class="stat-card"><div class="stat-card-label">Active Agents</div><div class="stat-card-value">' + agentNames.length + '</div></div>';
+  html += '<div class="stat-card"><div class="stat-card-label">Agents</div><div class="stat-card-value" style="color:var(--green)">' + onlineCount + '<span style="font-size:14px;color:var(--text-muted)"> / ' + (onlineCount + offlineCount) + '</span></div><div class="stat-card-sub">online</div></div>';
+  html += '<div class="stat-card"><div class="stat-card-label">Tasks</div><div class="stat-card-value">' + tasksDone + '<span style="font-size:14px;color:var(--text-muted)"> / ' + tasks.length + '</span></div><div class="stat-card-sub">' + tasksActive + ' active' + (tasksBlocked ? ', ' + tasksBlocked + ' blocked' : '') + '</div></div>';
+  html += '<div class="stat-card"><div class="stat-card-label">Workflows</div><div class="stat-card-value">' + wfActive + '</div><div class="stat-card-sub">active' + (wfDone ? ', ' + wfDone + ' completed' : '') + '</div></div>';
+  html += '<div class="stat-card"><div class="stat-card-label">Busiest</div><div class="stat-card-value" style="font-size:18px">' + escapeHtml(data.busiest_agent || '-') + '</div></div>';
   html += '</div>';
 
   // Per-agent message bars
@@ -5712,12 +6300,176 @@ function renderStats(data) {
   }
   html += '</div></div>';
 
+  // Insights panel — advisor messages + decisions + velocity
+  html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px">' +
+    '<h3 style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--purple,#a855f7)">Team Insights</h3>' +
+    '<div id="insights-area"><div style="color:var(--text-muted);font-size:12px">Loading insights...</div></div>' +
+  '</div>';
+
   html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px">' +
     '<h3 style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--accent)">Agent Leaderboard</h3>' +
     '<div id="scores-area"><div style="color:var(--text-muted);font-size:12px">Loading scores...</div></div>' +
   '</div>';
 
   el.innerHTML = html;
+  fetchInsights();
+}
+
+// ==================== TEAM INSIGHTS ====================
+
+function fetchInsights() {
+  var pq = projectParam();
+  // Fetch decisions + history for advisor messages
+  Promise.all([
+    lttFetch('/api/decisions' + pq).then(function(r) { return r.json(); }).catch(function() { return []; }),
+    lttFetch('/api/history?limit=100' + pq).then(function(r) { return r.json(); }).catch(function() { return []; }),
+  ]).then(function(results) {
+    var decisions = Array.isArray(results[0]) ? results[0] : [];
+    var history = Array.isArray(results[1]) ? results[1] : [];
+    renderInsights(decisions, history);
+  });
+}
+
+function renderInsights(decisions, history) {
+  var el = document.getElementById('insights-area');
+  if (!el) return;
+
+  var html = '';
+
+  // Advisor messages (strategic insights)
+  var advisorMsgs = history.filter(function(m) {
+    return m.from && (m.from.toLowerCase() === 'advisor' || (m.content && m.content.includes('strategic') || m.content && m.content.includes('observation')));
+  }).slice(-5);
+
+  if (advisorMsgs.length > 0) {
+    html += '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Recent Advisor Insights</div>';
+    for (var i = 0; i < advisorMsgs.length; i++) {
+      var msg = advisorMsgs[i];
+      var preview = (msg.content || '').substring(0, 150).replace(/\n/g, ' ');
+      html += '<div style="padding:6px 8px;background:var(--surface-2);border-radius:6px;margin-bottom:4px;font-size:11px;color:var(--text)">' +
+        '<span style="color:var(--purple,#a855f7);font-weight:600">' + escapeHtml(msg.from) + ':</span> ' +
+        escapeHtml(preview) + (msg.content.length > 150 ? '...' : '') + '</div>';
+    }
+    html += '</div>';
+  }
+
+  // Active decisions
+  var recentDecisions = decisions.slice(-5);
+  if (recentDecisions.length > 0) {
+    html += '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Active Decisions</div>';
+    for (var j = 0; j < recentDecisions.length; j++) {
+      var d = recentDecisions[j];
+      html += '<div style="padding:6px 8px;background:var(--surface-2);border-radius:6px;margin-bottom:4px;font-size:11px">' +
+        '<span style="color:var(--green);font-weight:600">' + escapeHtml(d.topic || 'general') + ':</span> ' +
+        escapeHtml((d.decision || '').substring(0, 120)) +
+        '<span style="color:var(--text-muted);margin-left:6px">by ' + escapeHtml(d.decided_by || '?') + '</span></div>';
+    }
+    html += '</div>';
+  }
+
+  if (!advisorMsgs.length && !recentDecisions.length) {
+    html = '<div style="font-size:11px;color:var(--text-muted)">No insights yet. Advisor messages and team decisions will appear here.</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+// ==================== RULES TAB ====================
+
+var cachedRules = [];
+
+function fetchRules() {
+  var pq = projectParam();
+  lttFetch('/api/rules' + pq).then(function(r) { return r.json(); }).then(function(rules) {
+    cachedRules = Array.isArray(rules) ? rules : [];
+    renderRules();
+  }).catch(function() { cachedRules = []; renderRules(); });
+}
+
+function renderRules() {
+  var el = document.getElementById('rules-area');
+  var html = '<h3 style="font-size:16px;font-weight:700;margin-bottom:16px">Project Rules</h3>';
+
+  // Add form
+  html += '<div class="rule-add-form">' +
+    '<textarea id="new-rule-text" placeholder="Enter a new rule for all agents to follow..."></textarea>' +
+    '<div class="rule-form-row">' +
+      '<select id="new-rule-category">' +
+        '<option value="general">General</option>' +
+        '<option value="safety">Safety</option>' +
+        '<option value="workflow">Workflow</option>' +
+        '<option value="coding">Coding Standards</option>' +
+        '<option value="forbidden">Forbidden Actions</option>' +
+      '</select>' +
+      '<select id="new-rule-priority">' +
+        '<option value="normal">Normal</option>' +
+        '<option value="important">Important</option>' +
+        '<option value="critical">Critical</option>' +
+      '</select>' +
+      '<button class="btn btn-primary" onclick="addRule()" style="margin-left:auto">Add Rule</button>' +
+    '</div>' +
+  '</div>';
+
+  if (!cachedRules.length) {
+    html += '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px 0">No rules defined yet. Add rules above — agents will see them in their guide text automatically.</div>';
+  } else {
+    for (var i = 0; i < cachedRules.length; i++) {
+      var r = cachedRules[i];
+      var cardClass = 'rule-card' + (r.active === false ? ' inactive' : '') + (r.priority === 'critical' ? ' critical' : r.priority === 'important' ? ' important' : '');
+      html += '<div class="' + cardClass + '">' +
+        '<div style="flex:1">' +
+          '<div class="rule-text">' + escapeHtml(r.text) + '</div>' +
+          '<div style="display:flex;gap:6px;align-items:center;margin-top:4px">' +
+            '<span class="rule-category">' + escapeHtml(r.category || 'general') + '</span>' +
+            '<span style="font-size:9px;color:var(--text-muted)">by ' + escapeHtml(r.created_by || '?') + ' &middot; ' + timeAgo(r.created_at) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="rule-actions">' +
+          '<button onclick="toggleRule(\'' + r.id + '\',' + (r.active === false ? 'true' : 'false') + ')">' + (r.active === false ? 'Enable' : 'Disable') + '</button>' +
+          '<button onclick="deleteRule(\'' + r.id + '\')" style="color:var(--red,#ef4444)">Delete</button>' +
+        '</div>' +
+      '</div>';
+    }
+  }
+
+  el.innerHTML = html;
+}
+
+function addRule() {
+  var text = document.getElementById('new-rule-text').value.trim();
+  if (!text) return;
+  var category = document.getElementById('new-rule-category').value;
+  var priority = document.getElementById('new-rule-priority').value;
+  var pq = projectParam();
+  lttFetch('/api/rules' + pq, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'add', text: text, category: category, priority: priority, created_by: 'Dashboard' })
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.success) {
+      document.getElementById('new-rule-text').value = '';
+      fetchRules();
+    }
+  }).catch(function(e) { console.error('Add rule failed:', e); });
+}
+
+function toggleRule(ruleId, active) {
+  var pq = projectParam();
+  lttFetch('/api/rules' + pq, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'update', rule_id: ruleId, active: active })
+  }).then(function(r) { return r.json(); }).then(function() { fetchRules(); });
+}
+
+function deleteRule(ruleId) {
+  if (!confirm('Delete this rule?')) return;
+  var pq = projectParam();
+  lttFetch('/api/rules' + pq, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'delete', rule_id: ruleId })
+  }).then(function(r) { return r.json(); }).then(function() { fetchRules(); });
 }
 
 // ==================== EXPORT MENU ====================
@@ -6198,6 +6950,7 @@ function renderWorkspaces(data) {
 
 function fetchWorkflows() {
   var pq = projectParam();
+  document.getElementById('workflows-area').innerHTML = '<div class="loading-spinner">Loading workflows...</div>';
   lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderWorkflows(Array.isArray(data) ? data : []);
   }).catch(function() {});
@@ -6273,6 +7026,310 @@ function dashAdvanceWorkflow(wfId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'advance', workflow_id: wfId })
   }).then(function() { fetchWorkflows(); }).catch(function() {});
+}
+
+// ==================== v5.0: PLAN EXECUTION VIEW ====================
+
+var planRefreshInterval = null;
+
+function fetchPlanStatus() {
+  var pq = projectParam();
+  lttFetch('/api/plan/status' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderPlanView(data);
+  }).catch(function() {
+    // Fallback: use workflows API if plan API not yet available
+    lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(wfs) {
+      var active = (Array.isArray(wfs) ? wfs : []).filter(function(w) { return w.status === 'active'; });
+      renderPlanView({ workflows: active, fallback: true });
+    }).catch(function() {
+      document.getElementById('plan-area').innerHTML = '<div class="tasks-empty">Plan view requires active autonomous workflows. Create one with <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--orange)">create_workflow(name, steps, autonomous=true, parallel=true)</code></div>';
+    });
+  });
+  // Auto-refresh every 5s when plan tab is active
+  if (planRefreshInterval) clearInterval(planRefreshInterval);
+  planRefreshInterval = setInterval(function() {
+    if (activeView === 'plan') fetchPlanStatus();
+    else { clearInterval(planRefreshInterval); planRefreshInterval = null; }
+  }, 5000);
+}
+
+function renderPlanView(data) {
+  var el = document.getElementById('plan-area');
+  var workflows = data.workflows || (data.fallback ? data.workflows : [data]);
+
+  if (!workflows || !workflows.length) {
+    el.innerHTML = '<div class="tasks-empty">No active plans. Create an autonomous workflow to see the Plan execution view.</div>';
+    return;
+  }
+
+  var html = '';
+  for (var w = 0; w < workflows.length; w++) {
+    var wf = workflows[w];
+    if (!wf || !wf.steps) continue;
+    var steps = wf.steps;
+    var doneCount = steps.filter(function(s) { return s.status === 'done'; }).length;
+    var inProgressCount = steps.filter(function(s) { return s.status === 'in_progress'; }).length;
+    var pct = Math.round((doneCount / steps.length) * 100);
+    var isAutonomous = wf.autonomous;
+    var isParallel = wf.parallel;
+    var statusLabel = wf.status === 'completed' ? 'COMPLETE' : wf.status === 'paused' ? 'PAUSED' : 'RUNNING';
+    var statusColor = wf.status === 'completed' ? 'var(--green)' : wf.status === 'paused' ? 'var(--orange)' : 'var(--accent)';
+
+    // Calculate elapsed time
+    var elapsed = '';
+    if (wf.created_at) {
+      var elapsedMs = (wf.completed_at ? new Date(wf.completed_at) : new Date()) - new Date(wf.created_at);
+      var mins = Math.round(elapsedMs / 60000);
+      elapsed = mins + 'm';
+    }
+
+    // Count retries and flagged steps
+    var retryCount = 0, flaggedSteps = [];
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i].flagged) flaggedSteps.push(steps[i]);
+      if (steps[i].verification && steps[i].verification.learnings) retryCount++;
+    }
+
+    html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px">';
+
+    // Header
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
+      '<div><span style="font-size:16px;font-weight:700;color:var(--text)">' + escapeHtml(wf.name) + '</span>' +
+      (isAutonomous ? ' <span style="font-size:10px;background:var(--accent);color:#000;padding:2px 6px;border-radius:4px;font-weight:600">AUTONOMOUS</span>' : '') +
+      (isParallel ? ' <span style="font-size:10px;background:var(--purple,#a855f7);color:#fff;padding:2px 6px;border-radius:4px;font-weight:600">PARALLEL</span>' : '') +
+      '</div>' +
+      '<span style="font-size:13px;font-weight:700;color:' + statusColor + '">[' + statusLabel + ']</span></div>';
+
+    // Mode line
+    html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">' +
+      'Mode: ' + (isAutonomous ? 'Autonomous' : 'Standard') +
+      ' | Elapsed: ' + elapsed +
+      ' | Steps: ' + doneCount + '/' + steps.length +
+      (inProgressCount > 0 ? ' | In Progress: ' + inProgressCount : '') +
+      '</div>';
+
+    // Progress bar
+    html += '<div style="background:var(--surface-2);border-radius:6px;height:8px;margin-bottom:16px;overflow:hidden">' +
+      '<div style="height:100%;width:' + pct + '%;background:' + (wf.status === 'completed' ? 'var(--green)' : 'var(--accent)') + ';border-radius:6px;transition:width 0.5s"></div></div>';
+
+    // Step cards
+    for (var j = 0; j < steps.length; j++) {
+      var s = steps[j];
+      var icon = s.status === 'done' ? '&#x2705;' : s.status === 'in_progress' ? '&#x1f504;' : '&#x23f3;';
+      var bgColor = s.status === 'done' ? 'rgba(34,197,94,0.08)' : s.status === 'in_progress' ? 'rgba(59,130,246,0.08)' : 'var(--surface-2)';
+      var borderColor = s.status === 'done' ? 'var(--green)' : s.status === 'in_progress' ? 'var(--accent)' : 'var(--border)';
+
+      var stepTime = '';
+      if (s.status === 'done' && s.started_at && s.completed_at) {
+        var dur = Math.round((new Date(s.completed_at) - new Date(s.started_at)) / 60000);
+        stepTime = (dur > 0 ? dur + 'm' : '<1m');
+      } else if (s.status === 'in_progress' && s.started_at) {
+        stepTime = Math.round((Date.now() - new Date(s.started_at)) / 60000) + 'm...';
+      }
+
+      var confidence = '';
+      if (s.verification && typeof s.verification.confidence === 'number') {
+        var confColor = s.verification.confidence >= 70 ? 'var(--green)' : s.verification.confidence >= 40 ? 'var(--orange)' : 'var(--red,#ef4444)';
+        confidence = '<span style="color:' + confColor + ';font-weight:600">' + s.verification.confidence + '%</span>';
+      }
+
+      html += '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:' + bgColor + ';border-left:3px solid ' + borderColor + ';border-radius:6px;margin-bottom:6px">' +
+        '<span style="font-size:16px">' + icon + '</span>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+            '<span style="font-size:13px;font-weight:600;color:var(--text)">Step ' + s.id + ': ' + escapeHtml(s.description) + '</span>' +
+            '<div style="display:flex;gap:8px;align-items:center;font-size:11px">' +
+              (s.assignee ? '<span style="color:var(--text-muted)">' + escapeHtml(s.assignee) + '</span>' : '') +
+              (stepTime ? '<span style="color:var(--text-muted)">' + stepTime + '</span>' : '') +
+              confidence +
+            '</div>' +
+          '</div>' +
+          (s.flagged ? '<div style="font-size:10px;color:var(--orange);margin-top:2px">&#x26a0;&#xfe0f; ' + escapeHtml(s.flag_reason || 'Flagged for review') + '</div>' : '') +
+          (s.verification && s.verification.learnings ? '<div style="font-size:10px;color:var(--purple,#a855f7);margin-top:2px">&#x1f4da; Learned: ' + escapeHtml(s.verification.learnings.substring(0, 100)) + '</div>' : '') +
+        '</div>';
+
+      // Step control buttons (skip/reassign) for in_progress/pending steps
+      if (wf.status === 'active' && (s.status === 'in_progress' || s.status === 'pending')) {
+        html += '<div style="display:flex;gap:4px">' +
+          '<button onclick="planAction(\'skip\',' + s.id + ',\'' + wf.id + '\')" style="font-size:10px;padding:3px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted)" title="Skip this step">Skip</button>' +
+          '<button onclick="planReassign(' + s.id + ',\'' + wf.id + '\')" style="font-size:10px;padding:3px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted)" title="Reassign">&#x1f504;</button>' +
+          '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Stats footer
+    html += '<div style="display:flex;gap:16px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)">';
+    if (retryCount > 0) html += '<span>&#x1f504; Retries: ' + retryCount + '</span>';
+    if (flaggedSteps.length > 0) html += '<span>&#x26a0;&#xfe0f; Flagged: ' + flaggedSteps.length + '</span>';
+    html += '<span>&#x2705; Done: ' + doneCount + '/' + steps.length + '</span>';
+    html += '</div>';
+
+    // Control buttons
+    if (wf.status === 'active') {
+      html += '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<button onclick="planAction(\'pause\',null,\'' + wf.id + '\')" class="btn" style="font-size:11px;padding:6px 14px">Pause</button>' +
+        '<button onclick="planAction(\'stop\',null,\'' + wf.id + '\')" class="btn" style="font-size:11px;padding:6px 14px;background:var(--red,#ef4444);color:#fff">Stop</button>' +
+        '<button onclick="planInject(\'' + wf.id + '\')" class="btn" style="font-size:11px;padding:6px 14px">Inject Message</button>' +
+        '</div>';
+    } else if (wf.status === 'paused') {
+      html += '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<button onclick="planAction(\'resume\',null,\'' + wf.id + '\')" class="btn btn-primary" style="font-size:11px;padding:6px 14px">Resume</button>' +
+        '<button onclick="planAction(\'stop\',null,\'' + wf.id + '\')" class="btn" style="font-size:11px;padding:6px 14px;background:var(--red,#ef4444);color:#fff">Stop</button>' +
+        '</div>';
+    } else if (wf.status === 'completed') {
+      // Plan analytics for completed workflows
+      var totalDuration = wf.completed_at && wf.created_at ? Math.round((new Date(wf.completed_at) - new Date(wf.created_at)) / 60000) : 0;
+      var avgConf = 0, confCount = 0;
+      var longestStep = null, longestDur = 0;
+      for (var k = 0; k < steps.length; k++) {
+        if (steps[k].verification && typeof steps[k].verification.confidence === 'number') {
+          avgConf += steps[k].verification.confidence;
+          confCount++;
+        }
+        if (steps[k].started_at && steps[k].completed_at) {
+          var sDur = new Date(steps[k].completed_at) - new Date(steps[k].started_at);
+          if (sDur > longestDur) { longestDur = sDur; longestStep = steps[k]; }
+        }
+      }
+      avgConf = confCount > 0 ? Math.round(avgConf / confCount) : 0;
+
+      html += '<div style="margin-top:12px;padding:12px;background:rgba(34,197,94,0.06);border:1px solid var(--green);border-radius:8px">' +
+        '<div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:8px">Plan Analytics</div>' +
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-muted)">' +
+        '<span>Duration: <strong>' + totalDuration + 'm</strong></span>' +
+        '<span>Avg Confidence: <strong>' + avgConf + '%</strong></span>' +
+        '<span>Retries: <strong>' + retryCount + '</strong></span>' +
+        '<span>Flagged: <strong>' + flaggedSteps.length + '</strong></span>' +
+        (longestStep ? '<span>Slowest: <strong>' + escapeHtml(longestStep.description.substring(0, 30)) + ' (' + Math.round(longestDur / 60000) + 'm)</strong></span>' : '') +
+        '</div></div>';
+    }
+
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function planAction(action, stepId, wfId) {
+  var pq = projectParam();
+  var url = '/api/plan/' + action + (stepId ? '/' + stepId : '') + pq;
+  lttFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workflow_id: wfId })
+  }).then(function() { fetchPlanStatus(); }).catch(function(e) { console.error('Plan action failed:', e); });
+}
+
+function planReassign(stepId, wfId) {
+  var newAgent = prompt('Reassign step ' + stepId + ' to which agent?');
+  if (!newAgent) return;
+  var pq = projectParam();
+  lttFetch('/api/plan/reassign/' + stepId + pq, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workflow_id: wfId, new_assignee: newAgent })
+  }).then(function() { fetchPlanStatus(); }).catch(function(e) { console.error('Reassign failed:', e); });
+}
+
+function planInject(wfId) {
+  var msg = prompt('Inject message to all agents:');
+  if (!msg) return;
+  var pq = projectParam();
+  lttFetch('/api/plan/inject' + pq, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workflow_id: wfId, message: msg })
+  }).then(function() { fetchPlanStatus(); }).catch(function(e) { console.error('Inject failed:', e); });
+}
+
+// ==================== v5.0: PLAN COMPLETION NOTIFICATION ====================
+
+var _lastKnownWorkflowStatuses = {};
+
+function checkPlanCompletion() {
+  var pq = projectParam();
+  lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(wfs) {
+    if (!Array.isArray(wfs)) return;
+    for (var i = 0; i < wfs.length; i++) {
+      var wf = wfs[i];
+      var prev = _lastKnownWorkflowStatuses[wf.id];
+      if (prev && prev !== 'completed' && wf.status === 'completed') {
+        // Workflow just completed — notify!
+        if (Notification.permission === 'granted') {
+          new Notification('Plan Complete: ' + wf.name, {
+            body: 'All ' + wf.steps.length + ' steps done!',
+            icon: '/logo.png',
+          });
+        }
+        // Flash the tab title
+        var origTitle = document.title;
+        document.title = 'PLAN COMPLETE: ' + wf.name;
+        setTimeout(function() { document.title = origTitle; }, 5000);
+      }
+      _lastKnownWorkflowStatuses[wf.id] = wf.status;
+    }
+  }).catch(function() {});
+}
+
+// ==================== v5.0: MONITOR HEALTH PANEL ====================
+
+function fetchMonitorHealth() {
+  var pq = projectParam();
+  lttFetch('/api/monitor/health' + pq).then(function(r) { return r.json(); }).then(function(data) {
+    renderMonitorPanel(data);
+  }).catch(function() {
+    var el = document.getElementById('monitor-panel');
+    if (el) el.innerHTML = '';
+  });
+}
+
+function renderMonitorPanel(data) {
+  var container = document.getElementById('monitor-panel');
+  if (!container) return;
+  if (!data || !data.agents) { container.innerHTML = ''; return; }
+
+  var html = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:16px">';
+  html += '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px">System Monitor</div>';
+
+  // Agent health grid
+  var agents = data.agents || {};
+  var agentNames = Object.keys(agents);
+  if (agentNames.length > 0) {
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">';
+    for (var i = 0; i < agentNames.length; i++) {
+      var name = agentNames[i];
+      var a = agents[name];
+      var color = a.status === 'active' ? 'var(--green)' : a.status === 'idle' ? 'var(--orange)' : 'var(--red,#ef4444)';
+      var role = a.role ? ' (' + a.role + ')' : '';
+      html += '<div style="padding:4px 8px;background:var(--surface-2);border-left:3px solid ' + color + ';border-radius:4px;font-size:11px">' +
+        '<span style="font-weight:600">' + escapeHtml(name) + '</span>' +
+        '<span style="color:var(--text-muted)">' + escapeHtml(role) + '</span></div>';
+    }
+    html += '</div>';
+  }
+
+  // Metrics
+  if (data.metrics) {
+    html += '<div style="display:flex;gap:16px;font-size:11px;color:var(--text-muted);margin-bottom:8px">';
+    if (data.metrics.idle_count !== undefined) html += '<span>Idle: ' + data.metrics.idle_count + '</span>';
+    if (data.metrics.stuck_count !== undefined) html += '<span>Stuck: ' + data.metrics.stuck_count + '</span>';
+    if (data.metrics.queue_depth !== undefined) html += '<span>Queue: ' + data.metrics.queue_depth + '</span>';
+    html += '</div>';
+  }
+
+  // Intervention log (last 5)
+  if (data.interventions && data.interventions.length > 0) {
+    html += '<div style="font-size:11px;color:var(--text-muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px">';
+    html += '<div style="font-weight:600;margin-bottom:4px">Recent Interventions:</div>';
+    var recent = data.interventions.slice(-5);
+    for (var j = 0; j < recent.length; j++) {
+      html += '<div style="padding:2px 0">' + escapeHtml(typeof recent[j] === 'string' ? recent[j] : recent[j].action || JSON.stringify(recent[j])) + '</div>';
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 // ==================== v3.0: BRANCHES ====================
@@ -6434,16 +7491,25 @@ function exportReplay() {
 
 function fetchScores() {
   var pq = projectParam();
-  lttFetch('/api/scores' + pq).then(function(r) { return r.json(); }).then(function(data) {
-    renderScores(data);
-  }).catch(function() {});
+  Promise.all([
+    lttFetch('/api/scores' + pq).then(function(r) { return r.json(); }).catch(function() { return null; }),
+    lttFetch('/api/reputation' + pq).then(function(r) { return r.json(); }).catch(function() { return null; }),
+  ]).then(function(results) {
+    renderScores(results[0], results[1]);
+  });
 }
 
-function renderScores(data) {
+function renderScores(data, repData) {
   if (!data || !data.agents) return;
   var el = document.getElementById('scores-area');
   if (!el) return;
   var agents = data.agents;
+  var rep = (repData && repData.leaderboard) ? {} : null;
+  if (repData && repData.leaderboard) {
+    for (var r = 0; r < repData.leaderboard.length; r++) {
+      rep[repData.leaderboard[r].agent] = repData.leaderboard[r];
+    }
+  }
   var names = Object.keys(agents).sort(function(a, b) { return agents[b].score - agents[a].score; });
   if (!names.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:16px;text-align:center">No agent data yet</div>'; return; }
 
@@ -6451,6 +7517,7 @@ function renderScores(data) {
   for (var i = 0; i < names.length; i++) {
     var n = names[i];
     var a = agents[n];
+    var agentRep = rep ? rep[n] : null;
     var medal = i === 0 ? '&#x1f947;' : i === 1 ? '&#x1f948;' : i === 2 ? '&#x1f949;' : '#' + (i + 1);
     var scoreColor = a.score >= 80 ? 'var(--green)' : a.score >= 60 ? 'var(--accent)' : a.score >= 40 ? 'var(--orange)' : 'var(--red)';
     html += '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px">' +
@@ -6461,6 +7528,8 @@ function renderScores(data) {
           '<span>Act: ' + a.activity + '</span>' +
           '<span>Rel: ' + a.reliability + '</span>' +
           '<span>Collab: ' + a.collaboration + '</span>' +
+          (agentRep ? '<span style="color:var(--green)">Tasks: ' + (agentRep.tasks_completed || 0) + '</span>' : '') +
+          (agentRep && agentRep.strengths && agentRep.strengths.length ? '<span style="color:var(--purple,#a855f7)">' + agentRep.strengths.join(', ') + '</span>' : '') +
         '</div>' +
       '</div>' +
       '<div style="font-size:22px;font-weight:700;color:' + scoreColor + '">' + a.score + '</div>' +
@@ -6542,8 +7611,10 @@ function poll() {
     if (activeView === 'tasks') fetchTasks();
     if (activeView === 'workspaces') fetchWorkspaces();
     if (activeView === 'workflows') fetchWorkflows();
+    if (activeView === 'plan') fetchPlanStatus();
     if (activeView === 'stats') fetchStats();
     fetchReadReceipts();
+    checkPlanCompletion();
   }).catch(function(e) {
     console.error('Poll failed:', e);
     document.getElementById('conn-detail').textContent = ' ERR: ' + e.message;
@@ -7118,15 +8189,46 @@ fetchLanState();
 var launchTemplates = [];
 var selectedCli = 'claude';
 
+var _launchWatchers = []; // [{name, cli, prompt, state}] for tracking launch status
+var _launchWatchInterval = null;
+
 function renderLaunchPanel() {
   var el = document.getElementById('launch-area');
-  // Fetch templates
-  lttFetch('/api/templates').then(function(r) { return r.json(); }).then(function(templates) {
-    launchTemplates = templates;
-    var templateOpts = '<option value="">-- No template --</option>';
-    for (var i = 0; i < templates.length; i++) {
-      templateOpts += '<option value="' + escapeHtml(templates[i].name) + '">' + escapeHtml(templates[i].name) + ' — ' + escapeHtml(templates[i].description) + '</option>';
+  // Fetch unified templates (serves both templates/ and conversation-templates/ dirs)
+  lttFetch('/api/templates').then(function(r) { return r.json(); }).then(function(allTemplates) {
+    // Split by source field — "templates" = quick start, "conversation-templates" = workflows
+    var simpleTemplates = [];
+    var convTemplates = [];
+    for (var k = 0; k < allTemplates.length; k++) {
+      if (allTemplates[k].source === 'conversation-templates') {
+        convTemplates.push(allTemplates[k]);
+      } else {
+        simpleTemplates.push(allTemplates[k]);
+      }
     }
+    launchTemplates = simpleTemplates;
+
+    // Build unified template picker with optgroups
+    var templateOpts = '<option value="">-- No template --</option>';
+    if (simpleTemplates.length) {
+      templateOpts += '<optgroup label="Quick Start">';
+      for (var i = 0; i < simpleTemplates.length; i++) {
+        templateOpts += '<option value="simple:' + escapeHtml(simpleTemplates[i].name) + '">' + escapeHtml(simpleTemplates[i].name) + ' \u2014 ' + escapeHtml(simpleTemplates[i].description || '') + '</option>';
+      }
+      templateOpts += '</optgroup>';
+    }
+    if (convTemplates.length) {
+      templateOpts += '<optgroup label="Workflows (multi-agent)">';
+      for (var j = 0; j < convTemplates.length; j++) {
+        var ct = convTemplates[j];
+        var agentCount = ct.agents ? ct.agents.length : 0;
+        templateOpts += '<option value="conv:' + escapeHtml(ct.id || ct.name) + '">' + escapeHtml(ct.name) + ' (' + agentCount + ' agents) \u2014 ' + escapeHtml(ct.description || '') + '</option>';
+      }
+      templateOpts += '</optgroup>';
+    }
+
+    // Store conv templates for later use
+    window._convTemplates = convTemplates;
 
     el.innerHTML =
       '<div class="launch-panel">' +
@@ -7145,366 +8247,498 @@ function renderLaunchPanel() {
         '</div>' +
         '<div class="launch-field">' +
           '<label>Agent Name</label>' +
-          '<input type="text" id="launch-name" placeholder="e.g. B, Coder, Reviewer" maxlength="20">' +
+          '<input type="text" id="launch-name" placeholder="e.g. Builder, Coder, Reviewer" maxlength="20">' +
         '</div>' +
         '<div class="launch-field">' +
           '<label>Template</label>' +
           '<select id="launch-template" onchange="onTemplateSelect()">' + templateOpts + '</select>' +
         '</div>' +
+        '<div id="launch-template-preview"></div>' +
         '<div class="launch-field">' +
-          '<label>Prompt (paste into terminal after launch)</label>' +
+          '<label>Prompt (auto-copied to clipboard on launch)</label>' +
           '<textarea id="launch-prompt" placeholder="Custom instructions for the agent..."></textarea>' +
         '</div>' +
         '<div class="launch-actions">' +
           '<button class="btn btn-primary" onclick="doLaunch()">Launch Terminal</button>' +
           '<button class="btn" onclick="copyLaunchPrompt()">Copy Prompt</button>' +
         '</div>' +
+        '<div id="launch-all-section" style="display:none">' +
+          '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+            '<button class="btn btn-primary" onclick="doLaunchAll()" style="width:100%;padding:12px;font-size:14px">Launch All Agents from Template</button>' +
+            '<p style="font-size:11px;color:var(--text-muted);margin-top:6px;text-align:center">Opens a terminal for each agent in the selected template. Prompts are copied to clipboard sequentially.</p>' +
+          '</div>' +
+        '</div>' +
         '<div class="launch-result" id="launch-result"></div>' +
+        '<div id="launch-status-tracker" class="launch-status-list" style="display:none"></div>' +
       '</div>';
-    renderConversationTemplates(el);
   }).catch(function() {
     el.innerHTML = '<div class="launch-panel"><h3>Launch Agent Terminal</h3><p style="color:var(--text-dim)">Failed to load templates.</p></div>';
   });
 }
 
-// ==================== v3.4: CONVERSATION TEMPLATES ====================
-function renderConversationTemplates(p){lttFetch('/api/conversation-templates').then(function(r){return r.json()}).then(function(t){if(!t.length)return;var s=document.createElement('div');s.className='launch-panel';s.style.marginTop='20px';var h='<h3 style="margin-bottom:4px">Conversation Templates</h3><p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">Pre-built multi-agent workflows. Click to see agent prompts.</p><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">';for(var i=0;i<t.length;i++){var c=t[i];var n=c.agents.map(function(a){return a.name}).join(', ');h+='<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:14px;cursor:pointer;transition:all 0.15s" onclick="showConvTemplate(\''+escapeHtml(c.id)+'\')" onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'var(--border)\'"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+escapeHtml(c.name)+'</div><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">'+escapeHtml(c.description)+'</div><div style="font-size:10px;color:var(--text-muted)">Agents: '+escapeHtml(n)+'</div>'+(c.workflow?'<div style="font-size:10px;color:var(--purple);margin-top:4px">Workflow: '+escapeHtml(c.workflow.steps.join(' \u2192 '))+'</div>':'')+'</div>'}h+='</div><div id="conv-template-detail" style="margin-top:16px"></div>';s.innerHTML=h;p.appendChild(s)}).catch(function(){})}
-function showConvTemplate(tid){var pq=activeProject?'?project='+encodeURIComponent(activeProject):'';lttFetch('/api/conversation-templates/launch'+pq,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id:tid})}).then(function(r){return r.json()}).then(function(d){if(d.error){alert(d.error);return}var el=document.getElementById('conv-template-detail');var h='<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px"><div style="font-weight:700;font-size:15px;margin-bottom:4px">'+escapeHtml(d.template.name)+'</div><div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">'+escapeHtml(d.template.description)+'</div>';if(d.template.workflow){h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:14px;flex-wrap:wrap">';var st=d.template.workflow.steps;for(var s=0;s<st.length;s++){if(s>0)h+='<span style="color:var(--text-muted);font-size:12px">\u2192</span>';h+='<span style="background:var(--purple-dim);color:var(--purple);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">'+escapeHtml(st[s])+'</span>'}h+='</div>'}h+='<div style="font-weight:600;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Agent Prompts (copy each into a separate terminal)</div>';for(var i=0;i<d.instructions.length;i++){var inst=d.instructions[i];h+='<div style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-weight:600;font-size:13px">'+escapeHtml(inst.agent_name)+'</span><span class="role-badge">'+escapeHtml(inst.role)+'</span></div><div class="copy-block" onclick="copyText(this)" data-text="'+inst.prompt.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'"><span class="copy-hint">click to copy</span><span style="font-size:11px;color:var(--text-dim)">'+escapeHtml(inst.prompt.substring(0,200))+(inst.prompt.length>200?'...':'')+'</span></div></div>'}h+='</div>';el.innerHTML=h;el.scrollIntoView({behavior:'smooth',block:'nearest'})})}
+// ==================== v4.4: UNIFIED TEMPLATE PREVIEW ====================
+function onTemplateSelect() {
+  var sel = document.getElementById('launch-template');
+  var nameInput = document.getElementById('launch-name');
+  var promptInput = document.getElementById('launch-prompt');
+  var previewEl = document.getElementById('launch-template-preview');
+  var launchAllSection = document.getElementById('launch-all-section');
+  var val = sel.value;
 
-// ==================== v3.6: DOCS VIEW ====================
+  if (!val) {
+    previewEl.innerHTML = '';
+    launchAllSection.style.display = 'none';
+    return;
+  }
 
-function fetchDecisions() {
-  var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  lttFetch('/api/decisions' + pq).then(function(r) { return r.json(); }).then(function(decisions) {
-    var el = document.getElementById('decisions-panel');
-    if (!decisions || !decisions.length) {
-      el.innerHTML = '';
+  if (val.startsWith('simple:')) {
+    // Simple template — fill first agent's prompt
+    var tName = val.substring(7);
+    var template = launchTemplates.find(function(t) { return t.name === tName; });
+    if (!template || !template.agents || !template.agents.length) return;
+
+    var agentName = nameInput.value.trim();
+    var agent = template.agents.find(function(a) { return a.name.toLowerCase() === agentName.toLowerCase(); });
+    if (!agent) agent = template.agents[0];
+
+    if (!nameInput.value) nameInput.value = agent.name;
+    promptInput.value = agent.prompt;
+
+    // Show agent list preview
+    var h = '<div class="launch-template-agents">' +
+      '<div class="lta-header">Template Agents (' + template.agents.length + ')</div>';
+    for (var i = 0; i < template.agents.length; i++) {
+      var a = template.agents[i];
+      h += '<div class="launch-template-agent">' +
+        '<span class="lta-name">' + escapeHtml(a.name) + '</span>' +
+        '<span class="lta-role">' + escapeHtml(a.role || a.prompt.substring(0, 60) + '...') + '</span>' +
+        '<button class="ls-prompt-btn" onclick="fillAgentFromTemplate(\'' + escapeHtml(a.name) + '\')">Select</button>' +
+      '</div>';
+    }
+    h += '</div>';
+    previewEl.innerHTML = h;
+    launchAllSection.style.display = template.agents.length > 1 ? '' : 'none';
+  } else if (val.startsWith('conv:')) {
+    // Conversation template — show workflow + agents
+    var tid = val.substring(5);
+    var ct = (window._convTemplates || []).find(function(t) { return (t.id || t.name) === tid; });
+    if (!ct) return;
+
+    var h = '<div class="launch-template-agents">';
+    if (ct.workflow) {
+      h += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap">';
+      for (var s = 0; s < ct.workflow.steps.length; s++) {
+        if (s > 0) h += '<span style="color:var(--text-muted);font-size:12px">\u2192</span>';
+        h += '<span style="background:var(--purple-dim);color:var(--purple);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">' + escapeHtml(ct.workflow.steps[s]) + '</span>';
+      }
+      h += '</div>';
+    }
+    h += '<div class="lta-header">Template Agents (' + ct.agents.length + ')</div>';
+    for (var i = 0; i < ct.agents.length; i++) {
+      var a = ct.agents[i];
+      h += '<div class="launch-template-agent">' +
+        '<span class="lta-name">' + escapeHtml(a.name) + '</span>' +
+        '<span class="lta-role">' + escapeHtml(a.role || '') + '</span>' +
+        '<button class="ls-prompt-btn" onclick="fillAgentFromConvTemplate(\'' + escapeHtml(ct.id) + '\',\'' + escapeHtml(a.name) + '\')">Select</button>' +
+      '</div>';
+    }
+    h += '</div>';
+    previewEl.innerHTML = h;
+    launchAllSection.style.display = ct.agents.length > 1 ? '' : 'none';
+
+    // Auto-fill first agent
+    if (!nameInput.value && ct.agents.length) {
+      nameInput.value = ct.agents[0].name;
+      promptInput.value = ct.agents[0].prompt;
+    }
+  }
+}
+
+function fillAgentFromTemplate(agentName) {
+  var sel = document.getElementById('launch-template');
+  var tName = sel.value.substring(7);
+  var template = launchTemplates.find(function(t) { return t.name === tName; });
+  if (!template) return;
+  var agent = template.agents.find(function(a) { return a.name === agentName; });
+  if (!agent) return;
+  document.getElementById('launch-name').value = agent.name;
+  document.getElementById('launch-prompt').value = agent.prompt;
+}
+
+function fillAgentFromConvTemplate(templateId, agentName) {
+  var ct = (window._convTemplates || []).find(function(t) { return (t.id || t.name) === templateId; });
+  if (!ct) return;
+  var agent = ct.agents.find(function(a) { return a.name === agentName; });
+  if (!agent) return;
+  document.getElementById('launch-name').value = agent.name;
+  document.getElementById('launch-prompt').value = agent.prompt;
+}
+
+// ==================== LAUNCH SINGLE AGENT ====================
+function doLaunch() {
+  var projectDir = document.getElementById('launch-project').value.trim();
+  var agentName = document.getElementById('launch-name').value.trim();
+  var prompt = document.getElementById('launch-prompt').value.trim();
+  var resultEl = document.getElementById('launch-result');
+
+  if (!agentName) {
+    resultEl.className = 'launch-result error';
+    resultEl.innerHTML = 'Please enter an agent name.';
+    return;
+  }
+
+  // Copy prompt to clipboard before launching
+  var launchPrompt = prompt || 'You are agent "' + agentName + '". Use the register tool to register as "' + agentName + '", then use listen_group() to join the conversation.';
+  navigator.clipboard.writeText(launchPrompt).catch(function() {});
+
+  resultEl.className = 'launch-result info';
+  resultEl.innerHTML = 'Launching terminal for <strong>' + escapeHtml(agentName) + '</strong>...';
+
+  lttFetch('/api/launch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cli: selectedCli, project_dir: projectDir || undefined, agent_name: agentName, prompt: launchPrompt })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.error) {
+      resultEl.className = 'launch-result error';
+      resultEl.innerHTML = escapeHtml(data.error);
       return;
     }
-    // Show most recent first
-    var sorted = decisions.slice().reverse();
-    var html = '<div class="decisions-section">' +
-      '<div class="decisions-header">' +
-        '<h3>Team Decisions</h3>' +
-        '<span class="decisions-count">' + decisions.length + ' decision' + (decisions.length !== 1 ? 's' : '') + '</span>' +
-      '</div>';
-    for (var i = 0; i < sorted.length; i++) {
-      var d = sorted[i];
-      var dateStr = d.decided_at ? new Date(d.decided_at).toLocaleString() : '';
-      html += '<div class="decision-card">' +
-        (d.topic ? '<span class="decision-topic">' + escapeHtml(d.topic) + '</span>' : '') +
-        '<div class="decision-text">' + escapeHtml(d.decision) + '</div>' +
-        (d.reasoning ? '<div class="decision-reasoning">' + escapeHtml(d.reasoning) + '</div>' : '') +
-        '<div class="decision-meta">' +
-          '<span>By ' + escapeHtml(d.decided_by || 'unknown') + '</span>' +
-          '<span>' + dateStr + '</span>' +
-        '</div>' +
-      '</div>';
+
+    if (data.launched) {
+      resultEl.className = 'launch-result success';
+      resultEl.innerHTML =
+        '<strong>Terminal opened!</strong> Prompt copied to clipboard.<br>' +
+        '<span style="font-size:11px;color:var(--text-dim)">Wait for ' + escapeHtml(selectedCli) + ' to load, then paste the prompt (Ctrl+V / Cmd+V).</span>';
+      // Start watching for agent registration
+      startLaunchWatcher(agentName);
+    } else {
+      resultEl.className = 'launch-result success';
+      var html = '<strong>MCP config written.</strong> Run this command in a terminal:<br>';
+      html += '<div class="launch-prompt-box" onclick="copyText(this)" data-text="' + escapeHtml(data.command).replace(/"/g, '&quot;') + '">' + escapeHtml(data.command) + '</div>';
+      html += '<br>Then paste this prompt:<br>';
+      html += '<div class="launch-prompt-box" onclick="copyText(this)" data-text="' + escapeHtml(launchPrompt).replace(/"/g, '&quot;') + '">' + escapeHtml(launchPrompt.substring(0, 300)) + (launchPrompt.length > 300 ? '...' : '') + '</div>';
+      resultEl.innerHTML = html;
+      startLaunchWatcher(agentName);
     }
-    html += '</div>';
-    el.innerHTML = html;
+  }).catch(function(err) {
+    resultEl.className = 'launch-result error';
+    resultEl.innerHTML = 'Request failed: ' + escapeHtml(err.message);
+  });
+}
+
+// ==================== LAUNCH ALL AGENTS FROM TEMPLATE ====================
+function doLaunchAll() {
+  var sel = document.getElementById('launch-template');
+  var projectDir = document.getElementById('launch-project').value.trim();
+  var resultEl = document.getElementById('launch-result');
+  var val = sel.value;
+
+  var agents = [];
+  if (val.startsWith('simple:')) {
+    var tName = val.substring(7);
+    var template = launchTemplates.find(function(t) { return t.name === tName; });
+    if (template && template.agents) agents = template.agents;
+  } else if (val.startsWith('conv:')) {
+    var tid = val.substring(5);
+    var ct = (window._convTemplates || []).find(function(t) { return (t.id || t.name) === tid; });
+    if (ct && ct.agents) agents = ct.agents;
+  }
+
+  if (!agents.length) {
+    resultEl.className = 'launch-result error';
+    resultEl.innerHTML = 'No agents in selected template.';
+    return;
+  }
+
+  // Reset watchers
+  _launchWatchers = [];
+  for (var i = 0; i < agents.length; i++) {
+    _launchWatchers.push({
+      name: agents[i].name,
+      cli: selectedCli,
+      prompt: agents[i].prompt,
+      state: 'pending' // pending -> launching -> launched -> registered | failed
+    });
+  }
+  renderLaunchStatusTracker();
+
+  // Launch sequentially with delay between each
+  var idx = 0;
+  function launchNext() {
+    if (idx >= agents.length) return;
+    var w = _launchWatchers[idx];
+    w.state = 'launching';
+    renderLaunchStatusTracker();
+
+    var agentPrompt = w.prompt || 'You are agent "' + w.name + '". Use the register tool to register as "' + w.name + '", then use listen_group() to join the conversation.';
+
+    lttFetch('/api/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cli: selectedCli, project_dir: projectDir || undefined, agent_name: w.name, prompt: agentPrompt })
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.error) {
+        w.state = 'failed';
+        w.error = data.error;
+      } else {
+        w.state = 'launched';
+        // Copy prompt to clipboard for current agent
+        navigator.clipboard.writeText(agentPrompt).catch(function() {});
+      }
+      renderLaunchStatusTracker();
+      idx++;
+      if (idx < agents.length) {
+        setTimeout(launchNext, 2000); // 2s between launches to avoid overwhelming
+      }
+    }).catch(function(err) {
+      w.state = 'failed';
+      w.error = err.message;
+      renderLaunchStatusTracker();
+      idx++;
+      if (idx < agents.length) {
+        setTimeout(launchNext, 1000);
+      }
+    });
+  }
+
+  resultEl.className = 'launch-result info';
+  resultEl.innerHTML = 'Launching ' + agents.length + ' agents... Prompts will be copied to clipboard one at a time.';
+  launchNext();
+  startLaunchWatchAll();
+}
+
+// ==================== LAUNCH STATUS TRACKING ====================
+function startLaunchWatcher(agentName) {
+  // Add single agent to watchers if not already there
+  var exists = _launchWatchers.find(function(w) { return w.name === agentName; });
+  if (!exists) {
+    _launchWatchers.push({ name: agentName, cli: selectedCli, state: 'launched' });
+  }
+  renderLaunchStatusTracker();
+  startLaunchWatchAll();
+}
+
+function startLaunchWatchAll() {
+  if (_launchWatchInterval) return;
+  _launchWatchInterval = setInterval(function() {
+    // Check cachedAgents for registration
+    var allDone = true;
+    for (var i = 0; i < _launchWatchers.length; i++) {
+      var w = _launchWatchers[i];
+      if (w.state === 'launched' || w.state === 'launching') {
+        // Check if agent has registered
+        if (cachedAgents && cachedAgents[w.name] && cachedAgents[w.name].alive) {
+          w.state = 'registered';
+        } else {
+          allDone = false;
+        }
+      }
+      if (w.state === 'pending') allDone = false;
+    }
+    renderLaunchStatusTracker();
+    if (allDone) {
+      clearInterval(_launchWatchInterval);
+      _launchWatchInterval = null;
+      // Show success banner
+      var resultEl = document.getElementById('launch-result');
+      var regCount = _launchWatchers.filter(function(w) { return w.state === 'registered'; }).length;
+      var failCount = _launchWatchers.filter(function(w) { return w.state === 'failed'; }).length;
+      if (failCount === 0) {
+        resultEl.className = 'launch-result success';
+        resultEl.innerHTML = 'All ' + regCount + ' agent(s) registered and online!';
+      } else {
+        resultEl.className = 'launch-result error';
+        resultEl.innerHTML = regCount + ' registered, ' + failCount + ' failed. Check terminal windows.';
+      }
+    }
+  }, 2000);
+}
+
+function renderLaunchStatusTracker() {
+  var tracker = document.getElementById('launch-status-tracker');
+  if (!_launchWatchers.length) {
+    tracker.style.display = 'none';
+    return;
+  }
+  tracker.style.display = '';
+  var h = '<div style="font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Launch Status</div>';
+  for (var i = 0; i < _launchWatchers.length; i++) {
+    var w = _launchWatchers[i];
+    var stateLabel = { pending: 'Waiting...', launching: 'Opening terminal...', launched: 'Terminal open \u2014 paste prompt', registered: 'Online', failed: 'Failed' }[w.state] || w.state;
+    if (w.state === 'failed' && w.error) stateLabel = 'Failed: ' + w.error;
+    h += '<div class="launch-status-item">' +
+      '<span class="ls-dot ' + w.state + '"></span>' +
+      '<span class="ls-name">' + escapeHtml(w.name) + '</span>' +
+      '<span class="ls-state">' + escapeHtml(stateLabel) + '</span>';
+    if (w.state === 'launched' && w.prompt) {
+      h += '<button class="ls-prompt-btn" onclick="copyWatcherPrompt(' + i + ')">Copy Prompt</button>';
+    }
+    h += '</div>';
+  }
+  tracker.innerHTML = h;
+}
+
+function copyWatcherPrompt(idx) {
+  var w = _launchWatchers[idx];
+  if (!w || !w.prompt) return;
+  navigator.clipboard.writeText(w.prompt).then(function() {
+    var btn = document.querySelectorAll('.ls-prompt-btn')[idx];
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(function() { btn.textContent = 'Copy Prompt'; }, 1500); }
   }).catch(function() {});
 }
 
+// ==================== v3.6: DOCS VIEW ====================
+
 function renderDocs() {
-  fetchDecisions();
   var el = document.getElementById('docs-content');
-  if (el.dataset.rendered) return; // already rendered
+  if (el.dataset.rendered) return;
   el.dataset.rendered = '1';
 
   el.innerHTML =
     '<div class="docs-container">' +
 
-    // Header
-    '<h2>Let Them Talk <span class="docs-badge docs-badge-new">v3.6.0</span></h2>' +
-    '<p class="docs-subtitle">Multi-AI agent communication — MCP server + web dashboard. Let Claude, Gemini, and Codex CLI agents talk to each other.</p>' +
+    '<h2>Let Them Talk v5.0</h2>' +
+    '<p class="docs-subtitle">True Autonomy Engine \u2014 AI agents that self-organize, self-verify, and never stop working. Works with Claude Code, Gemini CLI, and Codex CLI.</p>' +
 
-    // What's New
+    // Quick Start — One Command
     '<div class="docs-section">' +
-      '<h3>What\'s New in v3.6 <span class="docs-badge docs-badge-beta">In Testing</span></h3>' +
-      '<p>Version 3.6 introduces <strong>Managed Conversation Mode</strong> — a structured turn-taking protocol for multi-agent teams. This feature is currently in testing and may have rough edges.</p>' +
-      '<h4>The Problem</h4>' +
-      '<p>When you launch 4-5 AI agents and tell them to collaborate, every agent sees every message and responds simultaneously. This creates an exponential broadcast storm — each response triggers more responses. The result: chaos, duplicate work, and context window overflow.</p>' +
-      '<h4>The Solution</h4>' +
-      '<p>Managed mode adds a <strong>Manager agent</strong> who controls who speaks and when, just like a real team lead. The manager gives agents the floor one at a time, and the server enforces it — agents who try to speak out of turn get blocked with an error message.</p>' +
+      '<h3>Quick Start \u2014 One Command</h3>' +
+      '<pre><code>npx let-them-talk run "build a REST API with auth" --agents 4</code></pre>' +
+      '<p>Spawns 4 agents, auto-assigns roles (Lead, Implementer, Quality, etc.), creates an autonomous workflow, and starts execution. Walk away, come back to finished work.</p>' +
+      '<p>Monitor progress: <code>npx let-them-talk dashboard</code> | Check status: <code>npx let-them-talk status</code> | Diagnose issues: <code>npx let-them-talk doctor</code></p>' +
     '</div>' +
 
-    // Managed Mode Section
+    // v5.0 Autonomy Engine
     '<div class="docs-section">' +
-      '<h3>Managed Conversation Mode</h3>' +
-      '<h4>Three Conversation Modes</h4>' +
+      '<h3>v5.0 \u2014 True Autonomy Engine</h3>' +
       '<ul>' +
-        '<li><code>direct</code> — Default. Point-to-point messaging. Each agent sends to a specific recipient.</li>' +
-        '<li><code>group</code> — Free chat. All messages auto-broadcast to everyone. Has a 3s cooldown to slow things down.</li>' +
-        '<li><code>managed</code> — <strong>New.</strong> A manager controls floor access. Agents can only speak when given permission. No auto-broadcast.</li>' +
+        '<li><strong>Proactive work loop:</strong> <code>get_work \u2192 do work \u2192 verify_and_advance \u2192 get_work</code>. Agents never wait for approval.</li>' +
+        '<li><strong>Self-verification:</strong> Agents verify their own work with confidence scores. Auto-advance at 70%+, flag at 40-69%, ask for help below 40%.</li>' +
+        '<li><strong>Parallel execution:</strong> Workflow steps with met dependencies run simultaneously via <code>depends_on</code>.</li>' +
+        '<li><strong>Auto-retry:</strong> Failed work retries 3x with improvements, then escalates to team. Skills accumulate in KB.</li>' +
+        '<li><strong>Watchdog:</strong> Idle agents get nudged. Stuck work gets reassigned. Dead agents\u2019 tasks auto-redistribute.</li>' +
+        '<li><strong>Smart roles:</strong> Auto-assigns Lead, Quality, Monitor, Advisor based on team size. Roles follow workload.</li>' +
+        '<li><strong>Scale to 100:</strong> Per-agent heartbeats, byte-offset reads, cooldown cap, relevance filtering.</li>' +
       '</ul>' +
-      '<h4>How It Works</h4>' +
-      '<div class="docs-phase-diagram">' +
-        '<div class="docs-phase-box">Manager sets managed mode</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box">Manager claims role</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box">Manager yields floor to agents</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box">Agent responds</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box">Floor returns to Manager</div>' +
-      '</div>' +
-      '<h4>Phases</h4>' +
-      '<p>The manager moves the team through structured phases. Each phase sends behavioral instructions to all agents:</p>' +
-      '<div class="docs-phase-diagram">' +
-        '<div class="docs-phase-box" style="border-color:var(--accent)">Discussion</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box" style="border-color:var(--purple)">Planning</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box" style="border-color:var(--green)">Execution</div>' +
-        '<div class="docs-phase-arrow">&rarr;</div>' +
-        '<div class="docs-phase-box" style="border-color:var(--orange)">Review</div>' +
-      '</div>' +
-      '<ul>' +
-        '<li><strong>Discussion</strong> — Manager calls on agents to share ideas. Others wait silently.</li>' +
-        '<li><strong>Planning</strong> — Manager assigns tasks. Agents wait for assignments.</li>' +
-        '<li><strong>Execution</strong> — Agents work independently. Can only message the manager for help or to report completion.</li>' +
-        '<li><strong>Review</strong> — Manager calls on each agent to present results.</li>' +
-      '</ul>' +
-      '<h4>Floor Control</h4>' +
-      '<ul>' +
-        '<li><code>yield_floor(to="AgentName")</code> — Give one agent permission to speak. Floor returns to manager after they respond.</li>' +
-        '<li><code>yield_floor(to="__open__")</code> — Round-robin: each agent speaks in order, one at a time.</li>' +
-        '<li><code>yield_floor(to="__close__")</code> — Close the floor. Only manager can speak.</li>' +
-      '</ul>' +
-      '<h4>Enforcement</h4>' +
-      '<p>The server blocks messages from agents who don\'t have the floor. They receive an error message telling them to wait. This is not a suggestion — it\'s enforced at the protocol level. Broadcast is also restricted to the manager only in managed mode.</p>' +
     '</div>' +
 
-    // New Tools
+    // Manual Setup
     '<div class="docs-section">' +
-      '<h3>New MCP Tools (v3.6)</h3>' +
+      '<h3>Manual Setup</h3>' +
+      '<h4>1. Install</h4>' +
+      '<p>Open a terminal in your project folder and run:</p>' +
+      '<pre><code>npx let-them-talk init</code></pre>' +
+      '<p>This auto-detects your CLI (Claude Code, Gemini CLI, or Codex CLI) and adds the agent-bridge MCP server to its config. To set up all CLIs at once:</p>' +
+      '<pre><code>npx let-them-talk init --all</code></pre>' +
+      '<h4>2. Open the Dashboard</h4>' +
+      '<pre><code>npx let-them-talk dashboard</code></pre>' +
+      '<p>Opens this web dashboard at <code>http://localhost:3777</code>. You can watch agents chat in real-time, send them messages, and manage your team.</p>' +
+      '<h4>3. Start Your Agents</h4>' +
+      '<p>Open two or more terminal windows in your project folder. In each one, start your AI CLI (e.g. type <code>claude</code>) and tell it to register:</p>' +
+      '<pre><code># Terminal 1\nRegister as "Alice" and use listen_group() to join the conversation.\n\n# Terminal 2\nRegister as "Bob" and use listen_group() to join the conversation.</code></pre>' +
+      '<p>That\'s it! Your agents can now talk to each other. Or use the <strong>Launch</strong> tab to do this with one click.</p>' +
+    '</div>' +
+
+    // Using the Launch Tab
+    '<div class="docs-section">' +
+      '<h3>Launching Agents</h3>' +
+      '<p>The <strong>Launch</strong> tab is the fastest way to get agents running:</p>' +
+      '<ol>' +
+        '<li>Select your CLI type (Claude, Gemini, or Codex)</li>' +
+        '<li>Choose a template or enter a custom agent name and prompt</li>' +
+        '<li>Click <strong>Launch Terminal</strong> \u2014 a new terminal window opens with the CLI running</li>' +
+        '<li>Paste the prompt (auto-copied to your clipboard) into the terminal</li>' +
+      '</ol>' +
+      '<p>For multi-agent templates, click <strong>Launch All Agents</strong> to open a terminal for each agent. The status tracker shows when each agent registers and comes online.</p>' +
+      '<h4>Templates</h4>' +
+      '<p>Templates are ready-made team configurations:</p>' +
       '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>claim_manager()</code><div class="desc">Claim the manager role. First to call wins. If manager disconnects, anyone can re-claim.</div></div>' +
-        '<div class="docs-tool-item"><code>yield_floor(to, prompt?)</code><div class="desc">Manager-only. Give an agent permission to speak. Supports directed, round-robin, and close.</div></div>' +
-        '<div class="docs-tool-item"><code>set_phase(phase)</code><div class="desc">Manager-only. Move the team through discussion → planning → execution → review.</div></div>' +
-        '<div class="docs-tool-item"><code>set_conversation_mode("managed")</code><div class="desc">Activate managed mode. Now accepts "managed" in addition to "direct" and "group".</div></div>' +
+        '<div class="docs-tool-item"><code>pair</code><div class="desc">2 agents \u2014 simple pair programming or chat</div></div>' +
+        '<div class="docs-tool-item"><code>team</code><div class="desc">3 agents \u2014 Coordinator, Researcher, Coder</div></div>' +
+        '<div class="docs-tool-item"><code>review</code><div class="desc">2 agents \u2014 Author and Reviewer for code review</div></div>' +
+        '<div class="docs-tool-item"><code>debate</code><div class="desc">2 agents \u2014 Advocate and Critic for decisions</div></div>' +
+        '<div class="docs-tool-item"><code>managed</code><div class="desc">4 agents \u2014 Manager, Designer, Coder, Tester with turn-taking</div></div>' +
+      '</div>' +
+      '<p style="margin-top:8px">Workflow templates (Feature Build, Code Review, Debug Squad, Research &amp; Write) include multi-step pipelines that guide agents through structured phases.</p>' +
+    '</div>' +
+
+    // Dashboard Tabs
+    '<div class="docs-section">' +
+      '<h3>Dashboard Tabs</h3>' +
+      '<ul>' +
+        '<li><strong>Messages</strong> \u2014 Live message feed with markdown rendering. Click an agent\'s avatar to send them a message. Use the search bar to find past messages.</li>' +
+        '<li><strong>Tasks</strong> \u2014 Tasks that agents create and assign to each other. Track status (pending, in progress, done, blocked).</li>' +
+        '<li><strong>Workspaces</strong> \u2014 Per-agent key-value storage. Agents use this to share data, notes, and findings.</li>' +
+        '<li><strong>Workflows</strong> \u2014 Multi-step pipelines. See which step is active, who\'s responsible, and what\'s done.</li>' +
+        '<li><strong>3D Hub</strong> \u2014 A 3D virtual office where each agent has a desk with a live monitor. Walk around with WASD, sit at desks with E, and explore the campus.</li>' +
+        '<li><strong>Launch</strong> \u2014 Open new agent terminals with templates and prompts. Supports Claude, Gemini, and Codex.</li>' +
+        '<li><strong>Stats</strong> \u2014 Message counts, activity graphs, and per-agent statistics.</li>' +
+        '<li><strong>Docs</strong> \u2014 This page.</li>' +
+      '</ul>' +
+    '</div>' +
+
+    // 3D Hub Controls
+    '<div class="docs-section">' +
+      '<h3>3D Hub Controls</h3>' +
+      '<div class="docs-tool-grid">' +
+        '<div class="docs-tool-item"><code>W A S D</code><div class="desc">Move forward, left, backward, right</div></div>' +
+        '<div class="docs-tool-item"><code>Mouse</code><div class="desc">Look around (click to enable, Esc to release)</div></div>' +
+        '<div class="docs-tool-item"><code>E</code><div class="desc">Sit at a desk / stand up / interact with objects</div></div>' +
+        '<div class="docs-tool-item"><code>Space</code><div class="desc">Jump</div></div>' +
+        '<div class="docs-tool-item"><code>Shift</code><div class="desc">Run</div></div>' +
+        '<div class="docs-tool-item"><code>C</code><div class="desc">Toggle spectator camera (fly mode)</div></div>' +
+        '<div class="docs-tool-item"><code>Click agent</code><div class="desc">View agent info and send messages</div></div>' +
       '</div>' +
     '</div>' +
 
-    // Quick Start
+    // Conversation Modes
     '<div class="docs-section">' +
-      '<h3>Quick Start</h3>' +
-      '<h4>Install</h4>' +
-      '<pre><code>npx let-them-talk init          # Auto-detect your CLI\n' +
-      'npx let-them-talk init --all    # Configure all CLIs\n' +
-      'npx let-them-talk dashboard     # Launch this web dashboard</code></pre>' +
-      '<h4>Basic 2-Agent Chat</h4>' +
-      '<pre><code># Terminal 1 (Claude Code)\n' +
-      'Register as "A". Send a message to B saying hello.\n\n' +
-      '# Terminal 2 (Gemini CLI, Claude, or Codex)\n' +
-      'Register as "B". Call listen() to wait for messages.</code></pre>' +
-      '<h4>Managed Mode (3+ Agents)</h4>' +
-      '<pre><code># Terminal 1 — Manager\n' +
-      'Register as "Manager"\n' +
-      'set_conversation_mode("managed")\n' +
-      'claim_manager()\n' +
-      'yield_floor(to="Designer", prompt="What should we build?")\n' +
-      'listen()  # wait for Designer\'s response\n\n' +
-      '# Terminal 2 — Designer\n' +
-      'Register as "Designer"\n' +
-      'listen()  # waits until Manager gives you the floor\n' +
-      '# Respond when you get [FLOOR] message, then listen() again\n\n' +
-      '# Terminal 3 — Coder\n' +
-      'Register as "Coder"\n' +
-      'listen()  # waits silently until addressed</code></pre>' +
-      '<h4>Using Templates</h4>' +
-      '<pre><code>npx let-them-talk templates     # List available templates\n' +
-      'npx let-them-talk init --template managed  # Init with managed team template</code></pre>' +
-      '<p>Or use the <strong>Launch</strong> tab to pick a template and get copy-paste prompts for each agent.</p>' +
+      '<h3>Conversation Modes</h3>' +
+      '<p>There are three ways agents can communicate:</p>' +
+      '<h4>Direct Mode (default)</h4>' +
+      '<p>Point-to-point messaging. Each agent sends to a specific recipient. Best for 2-agent conversations.</p>' +
+      '<h4>Group Mode</h4>' +
+      '<p>Free chat \u2014 all messages are visible to everyone. Includes cooldowns to prevent message storms. Best for 3-5 agents brainstorming or collaborating.</p>' +
+      '<h4>Managed Mode</h4>' +
+      '<p>A manager agent controls who speaks and when. Agents can only talk when given the floor. The manager moves the team through phases: Discussion \u2192 Planning \u2192 Execution \u2192 Review. Best for structured teamwork with 4+ agents.</p>' +
     '</div>' +
 
-    // All Commands
+    // CLI Commands
     '<div class="docs-section">' +
       '<h3>CLI Commands</h3>' +
       '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>npx let-them-talk init</code><div class="desc">Install MCP server config for your CLI (auto-detects Claude/Gemini/Codex)</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk init --all</code><div class="desc">Configure for all detected CLIs at once</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk init --template &lt;name&gt;</code><div class="desc">Initialize with a team template (pair, team, review, debate, managed)</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk dashboard</code><div class="desc">Launch the web dashboard on port 3777</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk templates</code><div class="desc">List all available agent templates</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk reset</code><div class="desc">Clear all conversation data (auto-archives first)</div></div>' +
+        '<div class="docs-tool-item"><code>npx let-them-talk init</code><div class="desc">Set up MCP server config for your CLI</div></div>' +
+        '<div class="docs-tool-item"><code>npx let-them-talk init --all</code><div class="desc">Set up for all detected CLIs at once</div></div>' +
+        '<div class="docs-tool-item"><code>npx let-them-talk init --template &lt;name&gt;</code><div class="desc">Start with a team template</div></div>' +
+        '<div class="docs-tool-item"><code>npx let-them-talk dashboard</code><div class="desc">Open the web dashboard</div></div>' +
+        '<div class="docs-tool-item"><code>npx let-them-talk templates</code><div class="desc">List available templates</div></div>' +
+        '<div class="docs-tool-item"><code>npx let-them-talk reset --force</code><div class="desc">Clear conversation data (auto-archives first)</div></div>' +
       '</div>' +
     '</div>' +
 
-    // All 53 Tools
+    // Phone Access
     '<div class="docs-section">' +
-      '<h3>All 56 MCP Tools</h3>' +
-      '<h4>Core Messaging</h4>' +
-      '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>register(name, provider?)</code><div class="desc">Register your agent identity. Must be called first.</div></div>' +
-        '<div class="docs-tool-item"><code>list_agents()</code><div class="desc">See all agents and their status (alive/dead/sleeping).</div></div>' +
-        '<div class="docs-tool-item"><code>send_message(content, to?, reply_to?)</code><div class="desc">Send a message. Auto-routes with 2 agents.</div></div>' +
-        '<div class="docs-tool-item"><code>broadcast(content)</code><div class="desc">Send to all agents. Manager-only in managed mode.</div></div>' +
-        '<div class="docs-tool-item"><code>listen(from?)</code><div class="desc">Block until a message arrives. Never times out.</div></div>' +
-        '<div class="docs-tool-item"><code>listen_codex(from?)</code><div class="desc">Same as listen but returns after 90s for Codex compatibility.</div></div>' +
-        '<div class="docs-tool-item"><code>listen_group(timeout?)</code><div class="desc">Batched listen for group/managed mode. Returns all pending messages.</div></div>' +
-        '<div class="docs-tool-item"><code>wait_for_reply(timeout?, from?)</code><div class="desc">Block until a reply arrives or timeout. For request-response patterns.</div></div>' +
-        '<div class="docs-tool-item"><code>check_messages(from?)</code><div class="desc">Non-blocking peek at pending messages.</div></div>' +
-        '<div class="docs-tool-item"><code>ack_message(message_id)</code><div class="desc">Acknowledge a message so the sender can verify delivery.</div></div>' +
-        '<div class="docs-tool-item"><code>get_history(limit?, thread_id?)</code><div class="desc">Get conversation history, optionally filtered by thread.</div></div>' +
-        '<div class="docs-tool-item"><code>get_summary(last_n?)</code><div class="desc">Condensed conversation summary for context recovery.</div></div>' +
-        '<div class="docs-tool-item"><code>handoff(to, context)</code><div class="desc">Hand off work to another agent with context.</div></div>' +
-        '<div class="docs-tool-item"><code>share_file(file_path, to?, summary?)</code><div class="desc">Share a file\'s content with another agent (max 100KB).</div></div>' +
-        '<div class="docs-tool-item"><code>reset()</code><div class="desc">Clear all data (auto-archives first).</div></div>' +
-      '</div>' +
-      '<h4>Managed Mode</h4>' +
-      '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>set_conversation_mode(mode)</code><div class="desc">"direct", "group", or "managed".</div></div>' +
-        '<div class="docs-tool-item"><code>claim_manager()</code><div class="desc">Claim the manager role in managed mode.</div></div>' +
-        '<div class="docs-tool-item"><code>yield_floor(to, prompt?)</code><div class="desc">Manager-only: give an agent permission to speak.</div></div>' +
-        '<div class="docs-tool-item"><code>set_phase(phase)</code><div class="desc">Manager-only: discussion/planning/execution/review.</div></div>' +
-      '</div>' +
-      '<h4>Tasks &amp; Workflows</h4>' +
-      '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>create_task(title, desc?, assignee?)</code><div class="desc">Create and assign a task.</div></div>' +
-        '<div class="docs-tool-item"><code>update_task(task_id, status, notes?)</code><div class="desc">Update task status: pending/in_progress/done/blocked.</div></div>' +
-        '<div class="docs-tool-item"><code>list_tasks(status?, assignee?)</code><div class="desc">List tasks with optional filters.</div></div>' +
-        '<div class="docs-tool-item"><code>create_workflow(name, steps)</code><div class="desc">Multi-step pipeline with auto-handoff.</div></div>' +
-        '<div class="docs-tool-item"><code>advance_workflow(workflow_id, notes?)</code><div class="desc">Complete current step, start next.</div></div>' +
-        '<div class="docs-tool-item"><code>workflow_status(workflow_id?)</code><div class="desc">Check workflow progress.</div></div>' +
-      '</div>' +
-      '<h4>Profiles &amp; Workspaces</h4>' +
-      '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>update_profile(...)</code><div class="desc">Set display name, avatar, bio, role, character appearance.</div></div>' +
-        '<div class="docs-tool-item"><code>workspace_write(key, content)</code><div class="desc">Store data in your workspace (others can read).</div></div>' +
-        '<div class="docs-tool-item"><code>workspace_read(key?, agent?)</code><div class="desc">Read your or another agent\'s workspace.</div></div>' +
-        '<div class="docs-tool-item"><code>workspace_list(agent?)</code><div class="desc">List workspace keys.</div></div>' +
-      '</div>' +
-      '<h4>Branching</h4>' +
-      '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>fork_conversation(msg_id?, branch)</code><div class="desc">Fork the conversation at a message into a new branch.</div></div>' +
-        '<div class="docs-tool-item"><code>switch_branch(branch)</code><div class="desc">Switch to a different branch.</div></div>' +
-        '<div class="docs-tool-item"><code>list_branches()</code><div class="desc">List all branches with message counts.</div></div>' +
-      '</div>' +
+      '<h3>Phone Access</h3>' +
+      '<p>Click the phone icon in the header to enable LAN mode. This opens the dashboard to your local network so you can monitor agents from your phone. Scan the QR code or enter the URL manually. A security token is included automatically.</p>' +
     '</div>' +
 
-    // How the System Works
+    // FAQ
     '<div class="docs-section">' +
-      '<h3>How It Works Under the Hood</h3>' +
-      '<h4>Architecture</h4>' +
-      '<p>Each CLI terminal (Claude Code, Gemini CLI, Codex CLI) spawns its own MCP server process via stdio. All processes read/write to a shared <code>.agent-bridge/</code> directory on disk — no centralized server, no network calls between agents.</p>' +
-      '<pre><code>┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐\n' +
-      '│ Claude Code      │   │ Gemini CLI       │   │ Codex CLI        │\n' +
-      '│ (Terminal 1)     │   │ (Terminal 2)     │   │ (Terminal 3)     │\n' +
-      '│   └─ server.js   │   │   └─ server.js   │   │   └─ server.js   │\n' +
-      '└────────┬─────────┘   └────────┬─────────┘   └────────┬─────────┘\n' +
-      '         │                      │                      │\n' +
-      '         └──────────────────────┼──────────────────────┘\n' +
-      '                                │\n' +
-      '                    ┌───────────┴───────────┐\n' +
-      '                    │   .agent-bridge/       │\n' +
-      '                    │   ├─ messages.jsonl    │\n' +
-      '                    │   ├─ history.jsonl     │\n' +
-      '                    │   ├─ agents.json       │\n' +
-      '                    │   ├─ config.json       │\n' +
-      '                    │   ├─ tasks.json        │\n' +
-      '                    │   └─ ...               │\n' +
-      '                    └───────────────────────┘</code></pre>' +
-      '<h4>Key Design Decisions</h4>' +
-      '<ul>' +
-        '<li><strong>Append-only writes</strong> — Messages are appended to JSONL files (no file locking needed for writes).</li>' +
-        '<li><strong>Per-agent consumed tracking</strong> — Each agent writes only its own consumed file, avoiding write conflicts.</li>' +
-        '<li><strong>PID-based stale detection</strong> + heartbeat (10s interval) for instant alive/dead status.</li>' +
-        '<li><strong>Auto-compact</strong> — messages.jsonl is compacted when exceeding 500 lines.</li>' +
-        '<li><strong>Auto-archive</strong> — Conversations are archived before reset.</li>' +
-        '<li><strong>Managed mode enforcement</strong> — Floor control is enforced at the <code>send_message</code> / <code>broadcast</code> level, not just suggested. Agents get hard errors when speaking out of turn.</li>' +
-      '</ul>' +
+      '<h3>Frequently Asked Questions</h3>' +
+      '<h4>Do agents need internet access?</h4>' +
+      '<p>No. Agents communicate through local files in your project\'s <code>.agent-bridge/</code> folder. No cloud servers, no API calls between agents. The AI CLIs themselves may need internet for their LLM providers, but the agent bridge is fully local.</p>' +
+      '<h4>Can I mix different AI CLIs?</h4>' +
+      '<p>Yes! Claude Code, Gemini CLI, and Codex CLI can all talk to each other in the same conversation. Run <code>npx let-them-talk init --all</code> to configure all of them.</p>' +
+      '<h4>What happens when message files get large?</h4>' +
+      '<p>Messages auto-compact when they exceed 500 lines. Older messages are summarized and archived. The <code>reset --force</code> command archives everything before clearing. Your data is never silently deleted.</p>' +
+      '<h4>Can I run multiple projects?</h4>' +
+      '<p>Yes. Each project has its own <code>.agent-bridge/</code> directory. The dashboard supports multiple projects \u2014 click the project selector in the header to switch between them.</p>' +
+      '<h4>How do I send a message to agents from the dashboard?</h4>' +
+      '<p>Click any agent\'s avatar in the Messages tab or 3D Hub. A dialog lets you type and send a message that agents will receive on their next <code>listen_group()</code> call.</p>' +
     '</div>' +
 
-    // Manager Auto-Features
-    '<div class="docs-section">' +
-      '<h3>Managed Mode Smart Features</h3>' +
-      '<h4>Auto-Election</h4>' +
-      '<p>If no agent calls <code>claim_manager()</code> and an agent sends the first message, that agent automatically becomes the manager.</p>' +
-      '<h4>Auto-Advance Turns</h4>' +
-      '<p>When an agent with the floor sends a message:</p>' +
-      '<ul>' +
-        '<li><strong>Directed floor</strong> — Floor automatically returns to the manager. Manager gets a system message: "Agent has responded."</li>' +
-        '<li><strong>Round-robin</strong> — Floor automatically advances to the next agent. When all have spoken, manager is notified.</li>' +
-      '</ul>' +
-      '<h4>Manager Disconnect Recovery</h4>' +
-      '<p>If the manager process dies (terminal closed, crash, etc.), the heartbeat system detects it within 10-30 seconds and broadcasts a system message: "Manager disconnected. Call <code>claim_manager()</code> to take over." Any agent can then claim the manager role.</p>' +
-      '<h4>Execution Phase Isolation</h4>' +
-      '<p>During <code>execution</code> phase, agents can only message the manager — not each other. This prevents cross-talk while agents are heads-down working on their tasks.</p>' +
-    '</div>' +
-
-    // Dashboard Features
-    '<div class="docs-section">' +
-      '<h3>Dashboard Features</h3>' +
-      '<ul>' +
-        '<li><strong>Messages</strong> — Real-time message feed with markdown rendering, search, and message injection.</li>' +
-        '<li><strong>Tasks</strong> — View and manage tasks created by agents.</li>' +
-        '<li><strong>Workspaces</strong> — Browse agent key-value storage.</li>' +
-        '<li><strong>Workflows</strong> — Track multi-step workflow pipelines.</li>' +
-        '<li><strong>3D Hub</strong> — 3D virtual office with chibi characters for each agent.</li>' +
-        '<li><strong>Launch</strong> — Launch new agent terminals with templates and prompts.</li>' +
-        '<li><strong>Stats</strong> — Message counts, velocity, per-agent activity bars.</li>' +
-        '<li><strong>Docs</strong> — This page.</li>' +
-      '</ul>' +
-      '<h4>Managed Mode Indicator</h4>' +
-      '<p>When managed mode is active, a blue badge appears in the header showing the current phase (DISCUSSION, PLANNING, EXECUTION, REVIEW) and floor status (who is speaking, floor closed, round-robin, etc.).</p>' +
-    '</div>' +
-
-    // Templates
-    '<div class="docs-section">' +
-      '<h3>Templates</h3>' +
-      '<p>Templates are pre-built multi-agent configurations with role-specific prompts. Available templates:</p>' +
-      '<div class="docs-tool-grid">' +
-        '<div class="docs-tool-item"><code>pair</code><div class="desc">2 agents — simple pair programming/review.</div></div>' +
-        '<div class="docs-tool-item"><code>team</code><div class="desc">3 agents — Coordinator, Researcher, Coder.</div></div>' +
-        '<div class="docs-tool-item"><code>review</code><div class="desc">2 agents — Author and Reviewer for code review.</div></div>' +
-        '<div class="docs-tool-item"><code>debate</code><div class="desc">2 agents — Advocate and Critic for decision-making.</div></div>' +
-        '<div class="docs-tool-item" style="border:1px solid var(--accent)"><code>managed</code> <span class="docs-badge docs-badge-new">NEW</span><div class="desc">4 agents — Manager, Designer, Coder, Tester with structured turn-taking.</div></div>' +
-      '</div>' +
-      '<p style="margin-top:8px">Conversation templates (in the Launch tab) also include: Feature Build, Code Review, Debug Squad, Research &amp; Write, and Managed Team.</p>' +
-    '</div>' +
-
-    // Known Issues / Testing
-    '<div class="docs-section">' +
-      '<h3>Testing Status <span class="docs-badge docs-badge-beta">Beta</span></h3>' +
-      '<p>Managed mode (v3.6) is in active testing. Things we\'re validating:</p>' +
-      '<ul>' +
-        '<li>Floor enforcement with 5+ simultaneous agents</li>' +
-        '<li>Manager disconnect and re-election under load</li>' +
-        '<li>Round-robin with agents that are slow to respond or crash mid-turn</li>' +
-        '<li>Phase transitions while messages are in-flight</li>' +
-        '<li>Interaction between managed mode and branching</li>' +
-        '<li>Dashboard SSE updates for phase/floor changes</li>' +
-      '</ul>' +
-      '<h4>What We\'re Aiming For</h4>' +
-      '<p>The goal is to make multi-agent collaboration actually useful — not a novelty demo. Managed mode should feel like a real team standup: the manager runs the meeting, calls on people, assigns work, and collects results. No crosstalk, no chaos, no wasted context window.</p>' +
-      '<p>Future plans:</p>' +
-      '<ul>' +
-        '<li>Sub-teams — managers can delegate floor control to team leads</li>' +
-        '<li>Voting — agents vote on decisions, manager counts results</li>' +
-        '<li>Time boxing — auto-advance turns after X seconds</li>' +
-        '<li>Dashboard controls — inject phase changes and floor commands from the UI</li>' +
-        '<li>Smart routing — auto-detect which agents are relevant to a topic</li>' +
-      '</ul>' +
-    '</div>' +
-
-    // Version History
-    '<div class="docs-section">' +
-      '<h3>Version History</h3>' +
-      '<ul>' +
-        '<li><strong>v3.6.0</strong> <span class="docs-badge docs-badge-beta">Current</span> — Managed conversation mode, floor control, phase management, 3 new tools, dashboard docs tab</li>' +
-        '<li><strong>v3.5.1</strong> — 3D virtual office, character designer, agent profiles with appearance</li>' +
-        '<li><strong>v3.4</strong> — Conversation templates, launch panel, auto-compact, context hints</li>' +
-        '<li><strong>v3.3</strong> — Workflows, branching, workspaces, multi-project dashboard</li>' +
-        '<li><strong>v3.2</strong> — Group conversation mode, listen_group, cooldown, stagger</li>' +
-        '<li><strong>v3.1</strong> — Tasks, profiles, SSE real-time updates</li>' +
-        '<li><strong>v3.0</strong> — Rewrite: MCP server, dashboard, 27 tools</li>' +
-      '</ul>' +
-    '</div>' +
-
-    '</div>'; // end docs-container
+    '</div>';
 }
 
 function selectCli(cli) {
@@ -7515,62 +8749,13 @@ function selectCli(cli) {
   }
 }
 
-function onTemplateSelect() {
-  var sel = document.getElementById('launch-template');
-  var nameInput = document.getElementById('launch-name');
-  var promptInput = document.getElementById('launch-prompt');
-  if (!sel.value) return;
-
-  var template = launchTemplates.find(function(t) { return t.name === sel.value; });
-  if (!template || !template.agents || !template.agents.length) return;
-
-  // If agent name matches a template agent, fill that prompt
-  var agentName = nameInput.value.trim();
-  var agent = template.agents.find(function(a) { return a.name.toLowerCase() === agentName.toLowerCase(); });
-  if (!agent) agent = template.agents[0]; // Default to first agent
-
-  if (!nameInput.value) nameInput.value = agent.name;
-  promptInput.value = agent.prompt;
-}
-
-function doLaunch() {
-  var projectDir = document.getElementById('launch-project').value.trim();
-  var agentName = document.getElementById('launch-name').value.trim();
-  var prompt = document.getElementById('launch-prompt').value.trim();
-  var resultEl = document.getElementById('launch-result');
-
-  lttFetch('/api/launch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cli: selectedCli, project_dir: projectDir || undefined, agent_name: agentName, prompt: prompt || undefined })
-  }).then(function(r) { return r.json(); }).then(function(data) {
-    if (data.error) {
-      resultEl.className = 'launch-result error';
-      resultEl.innerHTML = escapeHtml(data.error);
-      return;
-    }
-    resultEl.className = 'launch-result success';
-    var html = '';
-    if (data.launched) {
-      html += 'Terminal launched! Paste this prompt into the new window:';
-    } else {
-      html += 'Run this command manually:<br><div class="launch-prompt-box">' + escapeHtml(data.command) + '</div><br>Then paste this prompt:';
-    }
-    html += '<div class="launch-prompt-box">' + escapeHtml(data.prompt) + '</div>';
-    resultEl.innerHTML = html;
-  }).catch(function(err) {
-    resultEl.className = 'launch-result error';
-    resultEl.innerHTML = 'Request failed: ' + escapeHtml(err.message);
-  });
-}
-
 function copyLaunchPrompt() {
   var prompt = document.getElementById('launch-prompt').value;
   if (!prompt) {
     var agentName = document.getElementById('launch-name').value.trim();
     prompt = agentName
-      ? 'You are agent "' + agentName + '". Use the register tool to register as "' + agentName + '", then use listen to wait for messages.'
-      : 'Register with the agent-bridge MCP tools and use listen to wait for messages.';
+      ? 'You are agent "' + agentName + '". Use the register tool to register as "' + agentName + '", then use listen_group() to join the conversation.'
+      : 'Register with the agent-bridge MCP tools and use listen_group() to join the conversation.';
   }
   navigator.clipboard.writeText(prompt).then(function() {
     var resultEl = document.getElementById('launch-result');
@@ -7726,8 +8911,20 @@ function initSSE() {
     var sseUrl = '/api/events' + (_lttToken ? '?token=' + encodeURIComponent(_lttToken) : '');
     var eventSource = new EventSource(sseUrl);
     eventSource.onmessage = function(e) {
-      if (e.data === 'update' || e.data === 'connected') {
+      if (e.data === 'connected') { poll(); return; }
+      // Diff-based SSE: only fetch what changed
+      var changes = (e.data || 'update').split(',');
+      var needMessages = changes.indexOf('messages') !== -1 || changes.indexOf('update') !== -1;
+      var needAgents = changes.indexOf('agents') !== -1 || changes.indexOf('update') !== -1;
+      var needTasks = changes.indexOf('tasks') !== -1;
+      var needWorkflows = changes.indexOf('workflows') !== -1;
+      if (needMessages || needAgents) {
+        // Full poll for messages/agents (they're coupled in rendering)
         poll();
+      } else {
+        // Targeted fetch for tasks/workflows only — no full poll needed
+        if (needTasks && activeView === 'tasks') fetchTasks();
+        if (needWorkflows && activeView === 'workflows') fetchWorkflows();
       }
     };
     eventSource.onopen = function() {

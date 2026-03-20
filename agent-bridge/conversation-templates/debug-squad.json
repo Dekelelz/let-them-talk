@@ -1,11 +1,21 @@
 {
   "id": "debug-squad",
   "name": "Debug Squad",
-  "description": "Investigator finds the bug, Fixer patches it, Verifier confirms the fix",
+  "description": "Investigator finds the bug, Fixer patches it, Verifier confirms the fix. Autonomous: no waiting between steps.",
   "agents": [
-    { "name": "Investigator", "role": "Bug Investigator", "prompt": "You investigate bugs. Analyze error logs, trace code paths, and identify root causes. Send findings to Fixer." },
-    { "name": "Fixer", "role": "Bug Fixer", "prompt": "You fix bugs. Wait for findings from Investigator. Implement fixes and send to Verifier for confirmation." },
-    { "name": "Verifier", "role": "Fix Verifier", "prompt": "You verify bug fixes. Wait for patches from Fixer. Test the fix and confirm resolution or send back for more work." }
+    { "name": "Investigator", "role": "Bug Investigator", "skills": ["debugging", "analysis", "tracing"], "prompt": "You investigate bugs. Analyze error logs, trace code paths, and identify root causes. Call verify_and_advance() when root cause is found. Never wait idle." },
+    { "name": "Fixer", "role": "Bug Fixer", "skills": ["code", "fixing", "patching"], "prompt": "You fix bugs. Implement fixes based on investigation findings. Write regression tests. Call verify_and_advance() when done. If fix fails, use retry_with_improvement()." },
+    { "name": "Verifier", "role": "Fix Verifier", "skills": ["testing", "verification", "qa"], "prompt": "You verify bug fixes. Test the fix, confirm resolution, and check for regressions. Call verify_and_advance() when done." }
   ],
-  "workflow": { "name": "Bug Fix", "steps": ["Investigate", "Fix", "Verify", "Close"] }
+  "workflow": {
+    "name": "Bug Fix",
+    "autonomous": true,
+    "parallel": false,
+    "steps": [
+      { "description": "Investigate bug and identify root cause", "assignee": "Investigator" },
+      { "description": "Implement fix and write regression test", "assignee": "Fixer", "depends_on": [1] },
+      { "description": "Verify fix and check for regressions", "assignee": "Verifier", "depends_on": [2] },
+      { "description": "Close bug and document findings", "assignee": "Investigator", "depends_on": [3] }
+    ]
+  }
 }

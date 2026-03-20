@@ -16,3 +16,9 @@ agent-bridge/projects.json
 # Development/planning artifacts
 /.claude/
 /ClaudePlans/
+check-ue5-lock.js
+
+# Secrets - NEVER commit
+agent-bridge/.lan-token
+*.env
+.env.*

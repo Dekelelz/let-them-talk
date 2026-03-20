@@ -138,15 +138,50 @@ function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
 
+// Economy helpers
+function getEconomyLedger(projectPath) {
+  const ledgerFile = filePath('economy.jsonl', projectPath);
+  if (!fs.existsSync(ledgerFile)) return [];
+  try {
+    return fs.readFileSync(ledgerFile, 'utf8').trim().split('\n')
+      .filter(l => l.trim()).map(l => JSON.parse(l));
+  } catch { return []; }
+}
+
+function getBalances(projectPath) {
+  const ledger = getEconomyLedger(projectPath);
+  const balances = {};
+  for (const entry of ledger) {
+    if (!balances[entry.agent]) balances[entry.agent] = 0;
+    balances[entry.agent] += entry.amount;
+  }
+  return balances;
+}
+
+function appendEconomyEntry(projectPath, entry) {
+  const ledgerFile = filePath('economy.jsonl', projectPath);
+  const line = JSON.stringify({ ...entry, timestamp: new Date().toISOString() }) + '\n';
+  fs.appendFileSync(ledgerFile, line);
+}
+
 function isPidAlive(pid, lastActivity) {
+  const STALE_THRESHOLD = 60000; // 60s — if heartbeat updated within this, agent is alive
+
+  // PRIORITY 1: Trust heartbeat freshness over PID status
+  // Heartbeats are written by the actual running process — if fresh, agent is alive
+  // regardless of whether process.kill can see the PID
+  if (lastActivity) {
+    const stale = Date.now() - new Date(lastActivity).getTime();
+    if (stale < STALE_THRESHOLD) return true;
+  }
+
+  // PRIORITY 2: If heartbeat is stale, check PID as fallback
   try {
     process.kill(pid, 0);
-    if (lastActivity) {
-      const stale = Date.now() - new Date(lastActivity).getTime();
-      if (stale > 30000) return false; // 30s = 3 missed heartbeats
-    }
-    return true;
-  } catch { return false; }
+    return true; // PID exists — alive even with stale heartbeat
+  } catch {
+    return false; // PID dead AND heartbeat stale — truly dead
+  }
 }
 
 // --- Default avatar helpers ---
@@ -203,15 +238,32 @@ function apiHistory(query) {
   history.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
   const acks = readJson(filePath('acks.json', projectPath));
-  const limit = parseInt(query.get('limit') || '500', 10);
+  const limit = Math.min(parseInt(query.get('limit') || '500', 10), 1000);
+  const page = parseInt(query.get('page') || '0', 10);
   const threadId = query.get('thread_id');
 
   let messages = history;
   if (threadId) {
     messages = messages.filter(m => m.thread_id === threadId || m.id === threadId);
   }
-  messages = messages.slice(-limit);
+
+  // Scale fix: pagination support for large histories
+  const total = messages.length;
+  if (page > 0) {
+    // Page-based: page 1 = most recent, page 2 = older, etc.
+    const start = Math.max(0, total - (page * limit));
+    const end = Math.max(0, total - ((page - 1) * limit));
+    messages = messages.slice(start, end);
+  } else {
+    // Default: last N messages (backward compatible)
+    messages = messages.slice(-limit);
+  }
+
   messages.forEach(m => { m.acked = !!acks[m.id]; });
+  // Include pagination metadata when page is requested
+  if (page > 0) {
+    return { messages, total, page, limit, pages: Math.ceil(total / limit) };
+  }
   return messages;
 }
 
@@ -243,6 +295,23 @@ function apiAgents(query) {
   const agents = readJson(filePath('agents.json', projectPath));
   const profiles = readJson(filePath('profiles.json', projectPath));
   const history = readJsonl(filePath('history.jsonl', projectPath));
+
+  // Merge per-agent heartbeat files — agents write these during listen loops
+  // Without this merge, agents show as dead because agents.json has stale last_activity
+  const dataDir = resolveDataDir(projectPath);
+  try {
+    const hbFiles = fs.readdirSync(dataDir).filter(f => f.startsWith('heartbeat-') && f.endsWith('.json'));
+    for (const f of hbFiles) {
+      const name = f.slice(10, -5); // 'heartbeat-Backend.json' → 'Backend'
+      if (agents[name]) {
+        try {
+          const hb = JSON.parse(fs.readFileSync(path.join(dataDir, f), 'utf8'));
+          if (hb.last_activity) agents[name].last_activity = hb.last_activity;
+          if (hb.pid) agents[name].pid = hb.pid;
+        } catch {}
+      }
+    }
+  } catch {}
   const result = {};
 
   // Build last message timestamp per agent from history
@@ -256,6 +325,7 @@ function apiAgents(query) {
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     const profile = profiles[name] || {};
+    const isLocal = (() => { try { process.kill(info.pid, 0); return true; } catch { return false; } })();
     result[name] = {
       pid: info.pid,
       alive,
@@ -273,6 +343,8 @@ function apiAgents(query) {
       role: profile.role || '',
       bio: profile.bio || '',
       appearance: profile.appearance || {},
+      hostname: info.hostname || null,
+      is_remote: !isLocal && alive,
     };
     // Include workspace status for agent intent board
     try {
@@ -943,6 +1015,80 @@ function apiUpdateTask(body, query) {
 
   fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
   return { success: true, task_id: task.id, status: task.status };
+}
+
+// Rules API
+function apiRules(query) {
+  const projectPath = query.get('project') || null;
+  const rulesFile = filePath('rules.json', projectPath);
+  if (!fs.existsSync(rulesFile)) return [];
+  try { return JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch { return []; }
+}
+
+function apiAddRule(body, query) {
+  const projectPath = query.get('project') || null;
+  const rulesFile = filePath('rules.json', projectPath);
+  if (!body.text || !body.text.trim()) return { error: 'Rule text is required' };
+
+  const crypto = require('crypto');
+  let rules = [];
+  if (fs.existsSync(rulesFile)) {
+    try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch {}
+  }
+
+  const rule = {
+    id: 'rule_' + crypto.randomBytes(6).toString('hex'),
+    text: body.text.trim(),
+    category: body.category || 'general',
+    priority: body.priority || 'normal',
+    created_by: body.created_by || 'Dashboard',
+    created_at: new Date().toISOString(),
+    active: true
+  };
+  rules.push(rule);
+  fs.writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
+  return { success: true, rule };
+}
+
+function apiUpdateRule(body, query) {
+  const projectPath = query.get('project') || null;
+  const rulesFile = filePath('rules.json', projectPath);
+  if (!body.rule_id) return { error: 'Missing rule_id' };
+
+  let rules = [];
+  if (fs.existsSync(rulesFile)) {
+    try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch {}
+  }
+
+  const rule = rules.find(r => r.id === body.rule_id);
+  if (!rule) return { error: 'Rule not found' };
+
+  if (body.text !== undefined) rule.text = body.text.trim();
+  if (body.category !== undefined) rule.category = body.category;
+  if (body.priority !== undefined) rule.priority = body.priority;
+  if (body.active !== undefined) rule.active = body.active;
+  rule.updated_at = new Date().toISOString();
+
+  fs.writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
+  return { success: true, rule };
+}
+
+function apiDeleteRule(body, query) {
+  const projectPath = query.get('project') || null;
+  const rulesFile = filePath('rules.json', projectPath);
+  if (!body.rule_id) return { error: 'Missing rule_id' };
+
+  let rules = [];
+  if (fs.existsSync(rulesFile)) {
+    try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch {}
+  }
+
+  const idx = rules.findIndex(r => r.id === body.rule_id);
+  if (idx === -1) return { error: 'Rule not found' };
+  rules.splice(idx, 1);
+
+  fs.writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
+  return { success: true };
 }
 
 // Auto-discover .agent-bridge directories nearby
@@ -1755,6 +1901,21 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
+    else if (url.pathname === '/api/rules' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiRules(url.searchParams)));
+    }
+    else if (url.pathname === '/api/rules' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const action = body.action || 'add';
+      let result;
+      if (action === 'add') result = apiAddRule(body, url.searchParams);
+      else if (action === 'update') result = apiUpdateRule(body, url.searchParams);
+      else if (action === 'delete') result = apiDeleteRule(body, url.searchParams);
+      else result = { error: 'Unknown action. Use: add, update, delete' };
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
     else if (url.pathname === '/api/search' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
       const query = (url.searchParams.get('q') || '').trim();
@@ -1798,7 +1959,8 @@ const server = http.createServer(async (req, res) => {
       const history = apiHistory(url.searchParams);
       const agents = apiAgents(url.searchParams);
       const decisions = readJson(filePath('decisions.json', projectPath)) || [];
-      const tasks = readJson(filePath('tasks.json', projectPath)) || [];
+      const tasksRaw = readJson(filePath('tasks.json', projectPath));
+      const tasks = Array.isArray(tasksRaw) ? tasksRaw : (tasksRaw && tasksRaw.tasks ? tasksRaw.tasks : []);
       const channels = apiChannels(url.searchParams);
       const pkg = readJson(path.join(__dirname, 'package.json')) || {};
       const result = {
@@ -1977,6 +2139,504 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
     }
+    // ========== Plan Control API (v5.0 Autonomy Engine) ==========
+
+    else if (url.pathname === '/api/plan/status' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      const agentsFile = filePath('agents.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const agents = fs.existsSync(agentsFile) ? readJson(agentsFile) : {};
+
+      // Find the active autonomous workflow (most recent)
+      const activeWf = workflows.filter(w => w.status === 'active' && w.autonomous).pop()
+                    || workflows.filter(w => w.status === 'active').pop();
+
+      if (!activeWf) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ active: false, message: 'No active plan' }));
+        return;
+      }
+
+      const doneSteps = activeWf.steps.filter(s => s.status === 'done').length;
+      const totalSteps = activeWf.steps.length;
+      const elapsed = Date.now() - new Date(activeWf.created_at).getTime();
+      const activeAgents = Object.entries(agents).filter(([, a]) => {
+        const idle = Date.now() - new Date(a.last_activity || 0).getTime();
+        return idle < 120000;
+      }).length;
+
+      const retryCount = activeWf.steps.filter(s => s.flagged).length;
+      const avgConfidence = activeWf.steps.filter(s => s.verification && s.verification.confidence)
+        .reduce((sum, s, _, arr) => sum + s.verification.confidence / arr.length, 0);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        active: true,
+        workflow_id: activeWf.id,
+        name: activeWf.name,
+        status: activeWf.status,
+        autonomous: !!activeWf.autonomous,
+        parallel: !!activeWf.parallel,
+        paused: !!activeWf.paused,
+        progress: { done: doneSteps, total: totalSteps, percent: Math.round((doneSteps / totalSteps) * 100) },
+        elapsed_ms: elapsed,
+        elapsed_human: Math.round(elapsed / 60000) + 'm',
+        agents_active: activeAgents,
+        steps: activeWf.steps.map(s => ({
+          id: s.id, description: s.description, assignee: s.assignee,
+          status: s.status, depends_on: s.depends_on || [],
+          started_at: s.started_at, completed_at: s.completed_at,
+          flagged: !!s.flagged, flag_reason: s.flag_reason || null,
+          confidence: s.verification ? s.verification.confidence : null,
+          verification: s.verification || null,
+        })),
+        retries: retryCount,
+        avg_confidence: Math.round(avgConfidence) || null,
+        created_at: activeWf.created_at,
+      }));
+    }
+
+    else if (url.pathname === '/api/plan/pause' && req.method === 'POST') {
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const activeWf = workflows.find(w => w.status === 'active' && w.autonomous);
+      if (!activeWf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No active autonomous plan' })); return; }
+      activeWf.paused = true;
+      activeWf.paused_at = new Date().toISOString();
+      activeWf.updated_at = new Date().toISOString();
+      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      // Notify agents
+      apiInjectMessage({ to: '__all__', content: `[PLAN PAUSED] "${activeWf.name}" has been paused by the dashboard. Finish your current step, then wait for resume.` }, url.searchParams);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Plan paused', workflow_id: activeWf.id }));
+    }
+
+    else if (url.pathname === '/api/plan/resume' && req.method === 'POST') {
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const pausedWf = workflows.find(w => w.status === 'active' && w.paused);
+      if (!pausedWf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No paused plan' })); return; }
+      pausedWf.paused = false;
+      delete pausedWf.paused_at;
+      pausedWf.updated_at = new Date().toISOString();
+      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      apiInjectMessage({ to: '__all__', content: `[PLAN RESUMED] "${pausedWf.name}" has been resumed. Call get_work() to continue.` }, url.searchParams);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Plan resumed', workflow_id: pausedWf.id }));
+    }
+
+    else if (url.pathname === '/api/plan/stop' && req.method === 'POST') {
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const activeWf = workflows.find(w => w.status === 'active');
+      if (!activeWf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No active plan' })); return; }
+      activeWf.status = 'stopped';
+      activeWf.stopped_at = new Date().toISOString();
+      activeWf.updated_at = new Date().toISOString();
+      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      apiInjectMessage({ to: '__all__', content: `[PLAN STOPPED] "${activeWf.name}" has been stopped by the dashboard. All work on this plan should cease.` }, url.searchParams);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Plan stopped', workflow_id: activeWf.id }));
+    }
+
+    else if (url.pathname.startsWith('/api/plan/skip/') && req.method === 'POST') {
+      const stepId = parseInt(url.pathname.split('/').pop(), 10);
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const wfId = body.workflow_id;
+      const wf = wfId ? workflows.find(w => w.id === wfId) : workflows.find(w => w.status === 'active');
+      if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
+      const step = wf.steps.find(s => s.id === stepId);
+      if (!step) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Step not found: ' + stepId })); return; }
+      step.status = 'done';
+      step.notes = (step.notes || '') + ' [Skipped from dashboard]';
+      step.completed_at = new Date().toISOString();
+      step.skipped = true;
+      // Start any newly ready steps
+      const readySteps = wf.steps.filter(s => {
+        if (s.status !== 'pending') return false;
+        if (!s.depends_on || s.depends_on.length === 0) return true;
+        return s.depends_on.every(depId => { const d = wf.steps.find(x => x.id === depId); return d && d.status === 'done'; });
+      });
+      for (const rs of readySteps) { rs.status = 'in_progress'; rs.started_at = new Date().toISOString(); }
+      if (!wf.steps.find(s => s.status === 'pending' || s.status === 'in_progress')) wf.status = 'completed';
+      wf.updated_at = new Date().toISOString();
+      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, skipped_step: stepId, ready_steps: readySteps.map(s => s.id) }));
+    }
+
+    else if (url.pathname.startsWith('/api/plan/reassign/') && req.method === 'POST') {
+      const stepId = parseInt(url.pathname.split('/').pop(), 10);
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      if (!body.new_assignee) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'new_assignee required' })); return; }
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const wfId = body.workflow_id;
+      const wf = wfId ? workflows.find(w => w.id === wfId) : workflows.find(w => w.status === 'active');
+      if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
+      const step = wf.steps.find(s => s.id === stepId);
+      if (!step) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Step not found: ' + stepId })); return; }
+      const oldAssignee = step.assignee;
+      step.assignee = body.new_assignee;
+      wf.updated_at = new Date().toISOString();
+      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      apiInjectMessage({ to: body.new_assignee, content: `[REASSIGNED] Step ${stepId} "${step.description}" has been reassigned from ${oldAssignee || 'unassigned'} to you. ${step.status === 'in_progress' ? 'This step is IN PROGRESS — pick it up now.' : 'This step is ' + step.status + '.'}` }, url.searchParams);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, step_id: stepId, old_assignee: oldAssignee, new_assignee: body.new_assignee }));
+    }
+
+    else if (url.pathname === '/api/plan/inject' && req.method === 'POST') {
+      const body = await parseBody(req);
+      if (!body.content) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'content required' })); return; }
+      const result = apiInjectMessage({ to: body.to || '__all__', content: body.content }, url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+
+    else if (url.pathname === '/api/plan/report' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const wfFile = filePath('workflows.json', projectPath);
+      const kbFile = filePath('kb.json', projectPath);
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      // Get most recent completed or active workflow
+      const wf = workflows.filter(w => w.status === 'completed').pop() || workflows.filter(w => w.status === 'active').pop();
+      if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No plan found' })); return; }
+
+      const doneSteps = wf.steps.filter(s => s.status === 'done');
+      const flaggedSteps = wf.steps.filter(s => s.flagged);
+      const duration = wf.completed_at ? new Date(wf.completed_at) - new Date(wf.created_at) : Date.now() - new Date(wf.created_at).getTime();
+      const avgConf = doneSteps.filter(s => s.verification && s.verification.confidence)
+        .reduce((sum, s, _, arr) => sum + s.verification.confidence / arr.length, 0);
+
+      // Count skills learned during this plan
+      let skillCount = 0;
+      if (fs.existsSync(kbFile)) {
+        try {
+          const kb = JSON.parse(fs.readFileSync(kbFile, 'utf8'));
+          skillCount = Object.keys(kb).filter(k => k.startsWith('skill_') || k.startsWith('lesson_')).length;
+        } catch {}
+      }
+
+      // Agent-level performance analytics
+      const agentStats = {};
+      for (const s of wf.steps) {
+        if (!s.assignee) continue;
+        if (!agentStats[s.assignee]) agentStats[s.assignee] = { steps: 0, completed: 0, flagged: 0, total_ms: 0, confidences: [] };
+        agentStats[s.assignee].steps++;
+        if (s.status === 'done') {
+          agentStats[s.assignee].completed++;
+          if (s.completed_at && s.started_at) agentStats[s.assignee].total_ms += new Date(s.completed_at) - new Date(s.started_at);
+          if (s.verification && s.verification.confidence) agentStats[s.assignee].confidences.push(s.verification.confidence);
+        }
+        if (s.flagged) agentStats[s.assignee].flagged++;
+      }
+      const agentPerformance = Object.entries(agentStats).map(([name, stats]) => ({
+        agent: name, steps_assigned: stats.steps, steps_completed: stats.completed, steps_flagged: stats.flagged,
+        avg_duration_ms: stats.completed > 0 ? Math.round(stats.total_ms / stats.completed) : null,
+        avg_confidence: stats.confidences.length > 0 ? Math.round(stats.confidences.reduce((a, b) => a + b, 0) / stats.confidences.length) : null,
+      }));
+
+      // Slowest/fastest steps
+      const stepsWithDuration = wf.steps.filter(s => s.completed_at && s.started_at)
+        .map(s => ({ id: s.id, description: s.description, assignee: s.assignee, duration_ms: new Date(s.completed_at) - new Date(s.started_at) }))
+        .sort((a, b) => b.duration_ms - a.duration_ms);
+
+      // Retry count from workspace data
+      let retryCount = 0;
+      const wsDir = path.join(resolveDataDir(projectPath), 'workspaces');
+      if (fs.existsSync(wsDir)) {
+        for (const file of fs.readdirSync(wsDir)) {
+          try {
+            const ws = JSON.parse(fs.readFileSync(path.join(wsDir, file), 'utf8'));
+            if (ws.retry_history) {
+              const history = typeof ws.retry_history === 'string' ? JSON.parse(ws.retry_history) : ws.retry_history;
+              if (Array.isArray(history)) retryCount += history.length;
+            }
+          } catch {}
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        name: wf.name,
+        status: wf.status,
+        steps_done: doneSteps.length,
+        steps_total: wf.steps.length,
+        duration_ms: duration,
+        duration_human: Math.round(duration / 60000) + 'm',
+        avg_confidence: Math.round(avgConf) || null,
+        flagged_steps: flaggedSteps.map(s => ({ id: s.id, description: s.description, reason: s.flag_reason })),
+        skills_learned: skillCount,
+        retries: retryCount,
+        agent_performance: agentPerformance,
+        slowest_step: stepsWithDuration[0] || null,
+        fastest_step: stepsWithDuration[stepsWithDuration.length - 1] || null,
+        steps: wf.steps.map(s => ({
+          id: s.id, description: s.description, assignee: s.assignee,
+          status: s.status, confidence: s.verification ? s.verification.confidence : null,
+          duration_ms: s.completed_at && s.started_at ? new Date(s.completed_at) - new Date(s.started_at) : null,
+          flagged: !!s.flagged, skipped: !!s.skipped,
+        })),
+        created_at: wf.created_at,
+        completed_at: wf.completed_at || null,
+      }));
+    }
+
+    else if (url.pathname === '/api/plan/skills' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const kbFile = filePath('kb.json', projectPath);
+      let skills = [];
+      if (fs.existsSync(kbFile)) {
+        try {
+          const kb = JSON.parse(fs.readFileSync(kbFile, 'utf8'));
+          for (const [key, val] of Object.entries(kb)) {
+            if (key.startsWith('skill_') || key.startsWith('lesson_')) {
+              skills.push({ key, content: val.content, learned_by: val.updated_by, learned_at: val.updated_at });
+            }
+          }
+        } catch {}
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ count: skills.length, skills }));
+    }
+
+    else if (url.pathname === '/api/plan/retries' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const dataDir = resolveDataDir(projectPath);
+      const wsDir = path.join(dataDir, 'workspaces');
+      let retries = [];
+      if (fs.existsSync(wsDir)) {
+        for (const file of fs.readdirSync(wsDir)) {
+          try {
+            const ws = JSON.parse(fs.readFileSync(path.join(wsDir, file), 'utf8'));
+            if (ws.retry_history) {
+              const agent = file.replace('.json', '');
+              const history = typeof ws.retry_history === 'string' ? JSON.parse(ws.retry_history) : ws.retry_history;
+              if (Array.isArray(history)) {
+                for (const entry of history) { retries.push({ agent, ...entry }); }
+              }
+            }
+          } catch {}
+        }
+      }
+      retries.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ count: retries.length, retries }));
+    }
+
+    // ========== Monitor Agent API ==========
+
+    else if (url.pathname === '/api/monitor/health' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const dataDir = resolveDataDir(projectPath);
+      const agentsFile = filePath('agents.json', projectPath);
+      const wfFile = filePath('workflows.json', projectPath);
+      const profilesFile = filePath('profiles.json', projectPath);
+      const tasksFile = filePath('tasks.json', projectPath);
+
+      const agents = fs.existsSync(agentsFile) ? readJson(agentsFile) : {};
+      const profiles = fs.existsSync(profilesFile) ? readJson(profilesFile) : {};
+      let workflows = [];
+      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      let tasks = [];
+      if (fs.existsSync(tasksFile)) try { tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch {}
+
+      // Find monitor agent
+      const monitorName = Object.entries(profiles).find(([, p]) => p.role === 'monitor');
+      const now = Date.now();
+
+      // Agent health summary
+      const agentHealth = Object.entries(agents).map(([name, a]) => {
+        const idle = now - new Date(a.last_activity || 0).getTime();
+        return { name, idle_ms: idle, idle_human: Math.round(idle / 1000) + 's', status: idle > 120000 ? 'idle' : idle > 600000 ? 'stuck' : 'active', role: profiles[name] ? profiles[name].role : null };
+      });
+
+      const idleAgents = agentHealth.filter(a => a.status === 'idle').length;
+      const stuckAgents = agentHealth.filter(a => a.status === 'stuck').length;
+      const activeWorkflows = workflows.filter(w => w.status === 'active').length;
+      const pendingTasks = tasks.filter(t => t.status === 'pending').length;
+      const blockedTasks = tasks.filter(t => t.status === 'blocked' || t.status === 'blocked_permanent').length;
+
+      // Monitor intervention log from workspace
+      let interventions = [];
+      const wsDir = path.join(dataDir, 'workspaces');
+      if (monitorName && fs.existsSync(wsDir)) {
+        const monFile = path.join(wsDir, monitorName[0] + '.json');
+        if (fs.existsSync(monFile)) {
+          try {
+            const ws = JSON.parse(fs.readFileSync(monFile, 'utf8'));
+            if (ws._monitor_log) interventions = typeof ws._monitor_log === 'string' ? JSON.parse(ws._monitor_log) : ws._monitor_log;
+          } catch {}
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        monitor: monitorName ? { name: monitorName[0], active: true } : { active: false },
+        health: {
+          total_agents: Object.keys(agents).length,
+          active: agentHealth.filter(a => a.status === 'active').length,
+          idle: idleAgents,
+          stuck: stuckAgents,
+          active_workflows: activeWorkflows,
+          pending_tasks: pendingTasks,
+          blocked_tasks: blockedTasks,
+        },
+        agents: agentHealth,
+        interventions: interventions.slice(-20),
+        timestamp: new Date().toISOString(),
+      }));
+    }
+
+    // ========== Reputation API ==========
+
+    else if (url.pathname === '/api/reputation' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const repFile = filePath('reputation.json', projectPath);
+      const rep = fs.existsSync(repFile) ? readJson(repFile) : {};
+
+      // Calculate scores and build leaderboard
+      const leaderboard = Object.entries(rep).map(([name, r]) => {
+        const score = (r.tasks_completed || 0) * 2
+          + (r.reviews_done || 0) * 1
+          + (r.help_given || 0) * 3
+          + (r.kb_contributions || 0) * 1
+          - (r.retries || 0) * 1
+          - (r.watchdog_nudges || 0) * 2;
+        return {
+          name, score,
+          tasks_completed: r.tasks_completed || 0,
+          reviews_done: r.reviews_done || 0,
+          retries: r.retries || 0,
+          watchdog_nudges: r.watchdog_nudges || 0,
+          help_given: r.help_given || 0,
+          strengths: r.strengths || [],
+        };
+      }).sort((a, b) => b.score - a.score);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ leaderboard, timestamp: new Date().toISOString() }));
+    }
+
+    // ========== System Stats API ==========
+
+    else if (url.pathname === '/api/stats' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const dataDir = resolveDataDir(projectPath);
+      const agentsFile = filePath('agents.json', projectPath);
+      const wfFile = filePath('workflows.json', projectPath);
+      const tasksFile = filePath('tasks.json', projectPath);
+      const histFile = path.join(dataDir, 'history.jsonl');
+      const kbFile = filePath('kb.json', projectPath);
+
+      const agents = fs.existsSync(agentsFile) ? readJson(agentsFile) : {};
+      let workflows = []; if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      let tasks = []; if (fs.existsSync(tasksFile)) try { tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch {}
+      let msgCount = 0; if (fs.existsSync(histFile)) { try { const c = fs.readFileSync(histFile, 'utf8').trim(); if (c) msgCount = c.split('\n').length; } catch {} }
+      let kbKeys = 0; if (fs.existsSync(kbFile)) try { kbKeys = Object.keys(JSON.parse(fs.readFileSync(kbFile, 'utf8'))).length; } catch {}
+
+      const aliveCount = Object.values(agents).filter(a => { const idle = Date.now() - new Date(a.last_activity || 0).getTime(); return idle < 120000; }).length;
+      const activeWf = workflows.filter(w => w.status === 'active');
+      const completedWf = workflows.filter(w => w.status === 'completed');
+      const tasksDone = tasks.filter(t => t.status === 'done').length;
+      const tasksActive = tasks.filter(t => t.status === 'in_progress').length;
+
+      // Heartbeat files count
+      let hbCount = 0;
+      try { hbCount = fs.readdirSync(dataDir).filter(f => f.startsWith('heartbeat-')).length; } catch {}
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        agents: { total: Math.max(Object.keys(agents).length, hbCount), alive: aliveCount },
+        messages: { total: msgCount },
+        tasks: { total: tasks.length, done: tasksDone, active: tasksActive, pending: tasks.length - tasksDone - tasksActive },
+        workflows: { total: workflows.length, active: activeWf.length, completed: completedWf.length },
+        active_plan: activeWf.length > 0 ? { name: activeWf[0].name, progress: activeWf[0].steps.filter(s => s.status === 'done').length + '/' + activeWf[0].steps.length } : null,
+        knowledge_base: { entries: kbKeys },
+        timestamp: new Date().toISOString(),
+      }));
+    }
+
+    // ========== Rules API ==========
+
+    else if (url.pathname === '/api/rules' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const rulesFile = filePath('rules.json', projectPath);
+      const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(Array.isArray(rules) ? rules : []));
+    }
+
+    else if (url.pathname === '/api/rules' && req.method === 'POST') {
+      const projectPath = url.searchParams.get('project') || null;
+      const rulesFile = filePath('rules.json', projectPath);
+      let body = '';
+      req.on('data', d => body += d);
+      req.on('end', () => {
+        try {
+          const { text, category } = JSON.parse(body);
+          if (!text || !text.trim()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Rule text required' })); return; }
+          const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
+          const rule = {
+            id: 'rule_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            text: text.trim(),
+            category: category || 'custom',
+            created_by: 'dashboard',
+            created_at: new Date().toISOString(),
+            active: true,
+          };
+          rules.push(rule);
+          fs.writeFileSync(rulesFile, JSON.stringify(rules));
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(rule));
+        } catch (e) { res.writeHead(400); res.end(JSON.stringify({ error: e.message })); }
+      });
+      return;
+    }
+
+    else if (url.pathname.startsWith('/api/rules/') && req.method === 'DELETE') {
+      const projectPath = url.searchParams.get('project') || null;
+      const rulesFile = filePath('rules.json', projectPath);
+      const ruleId = url.pathname.split('/api/rules/')[1];
+      const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
+      const idx = rules.findIndex(r => r.id === ruleId);
+      if (idx === -1) { res.writeHead(404); res.end(JSON.stringify({ error: 'Rule not found' })); return; }
+      rules.splice(idx, 1);
+      fs.writeFileSync(rulesFile, JSON.stringify(rules));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    }
+
+    else if (url.pathname.startsWith('/api/rules/') && url.pathname.endsWith('/toggle') && req.method === 'POST') {
+      const projectPath = url.searchParams.get('project') || null;
+      const rulesFile = filePath('rules.json', projectPath);
+      const ruleId = url.pathname.split('/api/rules/')[1].replace('/toggle', '');
+      const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
+      const rule = rules.find(r => r.id === ruleId);
+      if (!rule) { res.writeHead(404); res.end(JSON.stringify({ error: 'Rule not found' })); return; }
+      rule.active = !rule.active;
+      fs.writeFileSync(rulesFile, JSON.stringify(rules));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(rule));
+    }
+
+    // ========== End Rules API ==========
+
     else if (url.pathname === '/api/branches' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
       const branchesFile = filePath('branches.json', projectPath);
@@ -2267,6 +2927,134 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true }));
       });
     }
+    // --- City API endpoints (AI City Phase 1) ---
+    else if (url.pathname === '/api/city/layout' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const cityMapFile = filePath('city-map.json', projectPath);
+      if (fs.existsSync(cityMapFile)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(cityMapFile, 'utf8'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ districts: {}, buildings: {} }));
+        }
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ districts: {}, buildings: {} }));
+      }
+    }
+    else if (url.pathname === '/api/city/agents' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const agents = readJson(filePath('agents.json', projectPath));
+      const tasksRaw = readJson(filePath('tasks.json', projectPath));
+      const tasks = Array.isArray(tasksRaw) ? tasksRaw : (tasksRaw && tasksRaw.tasks ? tasksRaw.tasks : []);
+      const cityAgents = {};
+      for (const [name, info] of Object.entries(agents)) {
+        const alive = isPidAlive(info.pid, info.last_activity);
+        const lastActivity = info.last_activity || info.timestamp;
+        const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
+        const isListening = !!(info.listening_since && alive);
+        const activeTasks = tasks.filter(t => t.assignee === name && t.status !== 'done');
+        let behavior = 'dead';
+        let location = null;
+        if (alive) {
+          if (activeTasks.length > 0) { behavior = 'working'; location = 'office'; }
+          else if (isListening) { behavior = 'listening'; location = 'office'; }
+          else if (idleSeconds > 900) { behavior = 'off_duty'; location = 'residential'; }
+          else if (idleSeconds > 300) { behavior = 'off_duty'; location = 'cafe'; }
+          else { behavior = 'idle'; location = 'office'; }
+        }
+        cityAgents[name] = {
+          alive,
+          behavior,
+          location,
+          branch: info.branch || 'main',
+          idle_seconds: alive ? idleSeconds : null,
+          provider: info.provider || 'unknown',
+        };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(cityAgents));
+    }
+    // Phase 2: Agent activity radio feed for car HUD
+    else if (url.pathname === '/api/city/radio' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '10', 10) || 10, 50);
+      const history = readJsonl(filePath('history.jsonl', projectPath));
+      const agents = readJson(filePath('agents.json', projectPath));
+      const feed = [];
+      // Recent messages (skip system messages, truncate content)
+      const recentMsgs = history.slice(-limit * 2).filter(m => m.from !== '__system__');
+      for (const m of recentMsgs.slice(-limit)) {
+        feed.push({
+          type: 'message',
+          from: m.from,
+          to: m.to === '__group__' ? 'everyone' : m.to,
+          preview: (m.content || '').slice(0, 120),
+          timestamp: m.timestamp,
+        });
+      }
+      // Agent status updates (who's alive, who just joined/died)
+      const statuses = [];
+      for (const [name, info] of Object.entries(agents)) {
+        const alive = isPidAlive(info.pid, info.last_activity);
+        statuses.push({ name, alive, last_activity: info.last_activity });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ feed, agents_status: statuses, total_messages: history.length }));
+    }
+    // Phase 3: Economy system
+    else if (url.pathname === '/api/city/economy' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const balances = getBalances(projectPath);
+      const ledger = getEconomyLedger(projectPath);
+      const recent = ledger.slice(-20);
+      const totalCredits = Object.values(balances).reduce((s, v) => s + v, 0);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ balances, recent_transactions: recent, total_credits: totalCredits, ledger_entries: ledger.length }));
+    }
+    else if (url.pathname === '/api/city/economy' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const projectPath = url.searchParams.get('project') || null;
+      if (!body.agent || !body.amount || !body.reason) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing agent, amount, or reason' }));
+        return;
+      }
+      const amount = parseInt(body.amount, 10);
+      if (isNaN(amount)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid amount' }));
+        return;
+      }
+      // Prevent negative balances on spend
+      if (amount < 0) {
+        const balances = getBalances(projectPath);
+        const current = balances[body.agent] || 0;
+        if (current + amount < 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Insufficient credits', balance: current, requested: Math.abs(amount) }));
+          return;
+        }
+      }
+      appendEconomyEntry(projectPath, { agent: body.agent, amount, reason: body.reason, type: amount > 0 ? 'earn' : 'spend' });
+      const balances = getBalances(projectPath);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, balance: balances[body.agent] || 0 }));
+    }
+    // Phase 4: Game time endpoint
+    else if (url.pathname === '/api/city/time' && req.method === 'GET') {
+      const speed = parseInt(url.searchParams.get('speed') || '60', 10) || 60;
+      const now = Date.now();
+      const gameMinutes = Math.floor((now / 1000) * speed / 60) % 1440;
+      const hours = Math.floor(gameMinutes / 60);
+      const minutes = gameMinutes % 60;
+      const period = hours < 6 ? 'night' : hours < 8 ? 'dawn' : hours < 18 ? 'day' : hours < 20 ? 'dusk' : 'night';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ hours, minutes, period, game_minutes: gameMinutes, speed, formatted: `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}` }));
+    }
     else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -2282,17 +3070,19 @@ const server = http.createServer(async (req, res) => {
 // Watches data files and pushes updates to connected clients instantly
 const sseClients = new Set();
 
-function sseNotifyAll() {
+function sseNotifyAll(changeType) {
   // Generate notifications from agent state changes
   try {
     const agents = readJson(filePath('agents.json'));
     generateNotifications(agents);
   } catch {}
 
+  // Send typed change event so client can do targeted fetches
+  const eventData = changeType || 'update';
   const dead = [];
   for (const res of Array.from(sseClients)) {
     try {
-      res.write(`data: update\n\n`);
+      res.write(`data: ${eventData}\n\n`);
     } catch {
       dead.push(res);
     }
@@ -2312,13 +3102,38 @@ function startFileWatcher() {
   const dataDir = resolveDataDir();
   if (!fs.existsSync(dataDir)) return;
   try {
+    // Track pending change types for diff-based SSE
+    let pendingChangeTypes = new Set();
     fsWatcher = fs.watch(dataDir, { persistent: false }, (eventType, filename) => {
       // Filter: only react to data files, not temp/lock files
       if (filename && !filename.endsWith('.json') && !filename.endsWith('.jsonl')) return;
       if (filename && filename.endsWith('.lock')) return;
+      // Scale fix: skip heartbeat file changes — they fire 100x/10s at scale
+      // Dashboard already polls agents via /api/agents on its own interval
+      if (filename && filename.startsWith('heartbeat-')) return;
+
+      // Classify change type for targeted client fetches
+      if (filename === 'messages.jsonl' || filename === 'history.jsonl' || (filename && filename.includes('-messages.jsonl'))) {
+        pendingChangeTypes.add('messages');
+      } else if (filename === 'agents.json' || filename === 'profiles.json') {
+        pendingChangeTypes.add('agents');
+      } else if (filename === 'tasks.json') {
+        pendingChangeTypes.add('tasks');
+      } else if (filename === 'workflows.json') {
+        pendingChangeTypes.add('workflows');
+      } else {
+        pendingChangeTypes.add('update');
+      }
+
       // Debounce — multiple file changes may fire rapidly
+      // Increased from 200ms to 2000ms for 100-agent scale (prevents SSE flood)
       if (sseDebounceTimer) clearTimeout(sseDebounceTimer);
-      sseDebounceTimer = setTimeout(() => sseNotifyAll(), 200);
+      sseDebounceTimer = setTimeout(() => {
+        // Send combined change types: "messages,agents" or just "messages"
+        const changeType = Array.from(pendingChangeTypes).join(',');
+        pendingChangeTypes.clear();
+        sseNotifyAll(changeType);
+      }, 2000);
     });
     fsWatcher.on('error', () => {}); // ignore watch errors
   } catch {}

@@ -9,6 +9,25 @@ import { syncAgents, processMessages, walkTo, navigateTo, showBubble } from './a
 // Side-effect: registers window.officeGetAppearance
 import './appearance.js';
 import { spawnPlayer, despawnPlayer, isPlayerMode, updatePlayer, savePlayerAppearance, getPlayerAppearance, getPlayer, invalidateColliders } from './player.js';
+// City modules loaded on demand (not at startup — would kill campus FPS)
+var _cityMods = null;
+function getCityMods() {
+  if (_cityMods) return _cityMods;
+  _cityMods = { loaded: false };
+  Promise.all([
+    import('./vehicle.js'),
+    import('./economy-ui.js'),
+    import('./daynight.js'),
+  ]).then(function(mods) {
+    _cityMods.vehicle = mods[0];
+    _cityMods.economy = mods[1];
+    _cityMods.daynight = mods[2];
+    _cityMods.loaded = true;
+  }).catch(function(e) { console.warn('City modules failed:', e); });
+  return _cityMods;
+}
+function isDriving() { return _cityMods && _cityMods.vehicle && _cityMods.vehicle.isDriving(); }
+function isConnected() { return false; }
 
 // Expose createCharacter + resolveAppearance for the character designer (Phase 3)
 export { createCharacter } from './character.js';
@@ -382,9 +401,25 @@ function animate() {
     updateAgent(S.agents3d[name], dt, time);
   }
 
-  // Player avatar mode
-  if (isPlayerMode() && S.controls && S.controls.keys) {
+  // Player avatar mode — skip when driving (vehicle takes over)
+  if (isPlayerMode() && S.controls && S.controls.keys && !isDriving()) {
     updatePlayer(dt, time, S.controls.keys);
+  }
+
+  // Vehicle driving mode (city environment)
+  if (isDriving() && _cityMods && _cityMods.vehicle) {
+    _cityMods.vehicle.updateVehicle(dt);
+  }
+
+  // City environment updates (only if modules loaded)
+  if (S.currentEnv === 'city' && _cityMods && _cityMods.loaded) {
+    if (_cityMods.economy) _cityMods.economy.updateEconomyUI(dt);
+    if (_cityMods.daynight) _cityMods.daynight.updateDayNight(dt);
+  }
+
+  // City NPC animation (pedestrians, cars, traffic lights)
+  if (S.currentEnv === 'city' && S._updateCity) {
+    S._updateCity(dt);
   }
 
   // Hide roof when camera is above ceiling height
@@ -657,6 +692,18 @@ document.addEventListener('keydown', function(e) {
   if (e.code === 'KeyB' && S.running && !e.target.matches('input,textarea') && isPlayerMode() && window._builderModule) {
     window._builderModule.toggleBuilder();
   }
+  // Vehicle enter/exit (E key) — city environment only
+  if (e.code === 'KeyE' && S.running && !e.target.matches('input,textarea') && S.currentEnv === 'city' && _cityMods && _cityMods.vehicle) {
+    if (isDriving()) {
+      _cityMods.vehicle.exitVehicle();
+    } else if (isPlayerMode() && S._player) {
+      var playerPos = S._player.pos || S._player.position || { x: 0, z: 0 };
+      var nearest = _cityMods.vehicle.getNearestVehicle(playerPos);
+      if (nearest) {
+        _cityMods.vehicle.enterVehicle(nearest);
+      }
+    }
+  }
 });
 
 // ===================== PUBLIC API =====================
@@ -750,6 +797,8 @@ window.office3dStop = function() {
 window.office3dSetEnvironment = function(env) {
   if (env === S.currentEnv) return;
   S.currentEnv = env;
+  // Load city modules on demand
+  if (env === 'city') getCityMods();
   if (S.scene) {
     // Remove all existing agents so they get recreated with proper desk assignments
     for (var name in S.agents3d) {

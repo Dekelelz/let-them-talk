@@ -9,7 +9,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v4.3.0
+  Let Them Talk — Agent Bridge v5.0.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
@@ -26,8 +26,18 @@ function printUsage() {
     npx let-them-talk dashboard --lan   Launch dashboard accessible on LAN (phone/tablet)
     npx let-them-talk reset             Clear all conversation data
     npx let-them-talk msg <agent> <text> Send a message to an agent
+    npx let-them-talk run "prompt" [--agents N] [--timeout M]  Autonomous execution with N agents, auto-stop after M minutes
     npx let-them-talk status             Show active agents and message count
     npx let-them-talk help               Show this help message
+
+  v5.0 — True Autonomy Engine (61 tools):
+    New tools: get_work, verify_and_advance, start_plan, retry_with_improvement
+    Proactive work loop: get_work → do work → verify_and_advance → get_work
+    Parallel workflow steps with dependency graphs (depends_on)
+    Auto-retry with skill accumulation (3 attempts then team escalation)
+    Watchdog engine: idle nudge, stuck detection, auto-reassign
+    100ms handoff cooldowns in autonomous mode
+    Plan dashboard: live progress, pause/stop/skip/reassign controls
   `);
 }
 
@@ -379,24 +389,69 @@ function init() {
     console.log('  Open two terminals and start a conversation between agents.');
     console.log('  Tip: Use "npx let-them-talk init --template pair" for ready-made prompts.');
     console.log('');
-    console.log('  Optional: Run "npx let-them-talk dashboard" to monitor conversations.');
+    console.log('  \x1b[1m  Try autonomous mode:\x1b[0m');
+    console.log('    npx let-them-talk run "build a REST API" --agents 3');
+    console.log('');
+    console.log('  \x1b[1m  Monitor:\x1b[0m');
+    console.log('    npx let-them-talk dashboard');
+    console.log('    npx let-them-talk status');
+    console.log('    npx let-them-talk doctor');
     console.log('');
   }
 }
 
 function reset() {
-  const dataDir = process.env.AGENT_BRIDGE_DATA_DIR || path.join(process.cwd(), '.agent-bridge');
-  // Also check legacy data/ dir
-  const legacyDir = path.join(process.cwd(), 'data');
-  const targetDir = fs.existsSync(dataDir) ? dataDir : fs.existsSync(legacyDir) ? legacyDir : dataDir;
+  const targetDir = process.env.AGENT_BRIDGE_DATA_DIR || path.join(process.cwd(), '.agent-bridge');
 
   if (!fs.existsSync(targetDir)) {
-    console.log('  No data directory found. Nothing to reset.');
+    console.log('  No .agent-bridge/ directory found. Nothing to reset.');
     return;
   }
+
+  // Safety: count messages to show user what they're about to delete
+  const historyFile = path.join(targetDir, 'history.jsonl');
+  let msgCount = 0;
+  if (fs.existsSync(historyFile)) {
+    msgCount = fs.readFileSync(historyFile, 'utf8').split('\n').filter(l => l.trim()).length;
+  }
+
+  // Require --force flag, otherwise warn and exit
+  if (!process.argv.includes('--force')) {
+    console.log('');
+    console.log('  ⚠  This will permanently delete all conversation data in:');
+    console.log('     ' + targetDir);
+    if (msgCount > 0) console.log('     (' + msgCount + ' messages in history)');
+    console.log('');
+    console.log('  To confirm, run:  npx let-them-talk reset --force');
+    console.log('');
+    return;
+  }
+
+  // Auto-archive before deleting
+  const archiveDir = path.join(targetDir, '..', '.agent-bridge-archive');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const archivePath = path.join(archiveDir, timestamp);
+  try {
+    fs.mkdirSync(archivePath, { recursive: true });
+    const filesToArchive = ['history.jsonl', 'messages.jsonl', 'agents.json', 'decisions.json', 'tasks.json'];
+    let archived = 0;
+    for (const f of filesToArchive) {
+      const src = path.join(targetDir, f);
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, path.join(archivePath, f));
+        archived++;
+      }
+    }
+    if (archived > 0) {
+      console.log('  [ok] Archived ' + archived + ' files to .agent-bridge-archive/' + timestamp + '/');
+    }
+  } catch (e) {
+    console.log('  [warn] Could not archive: ' + e.message + ' — proceeding with reset anyway.');
+  }
+
   fs.rmSync(targetDir, { recursive: true, force: true });
   fs.mkdirSync(targetDir, { recursive: true });
-  console.log(`  Cleared all data from ${targetDir}`);
+  console.log('  Cleared all data from ' + targetDir);
 }
 
 function getTemplates() {
@@ -527,13 +582,34 @@ function cliStatus() {
 
   const agents = readJson(path.join(dir, 'agents.json'));
   const history = readJsonl(path.join(dir, 'history.jsonl'));
+  const profiles = readJson(path.join(dir, 'profiles.json'));
+  const workflows = readJson(path.join(dir, 'workflows.json'));
+  const tasks = readJson(path.join(dir, 'tasks.json'));
+
+  // Merge heartbeat files for live activity data
+  try {
+    const files = fs.readdirSync(dir).filter(f => f.startsWith('heartbeat-') && f.endsWith('.json'));
+    for (const f of files) {
+      const name = f.slice(10, -5);
+      if (agents[name]) {
+        try {
+          const hb = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+          if (hb.last_activity) agents[name].last_activity = hb.last_activity;
+          if (hb.pid) agents[name].pid = hb.pid;
+        } catch {}
+      }
+    }
+  } catch {}
+
+  const onlineCount = Object.values(agents).filter(a => isPidAlive(a.pid)).length;
 
   console.log('');
-  console.log('  Agent Bridge Status');
-  console.log('  ===================');
-  console.log('  Messages: ' + history.length);
+  console.log('  Let Them Talk — Status');
+  console.log('  =======================');
+  console.log('  Messages: ' + history.length + '  |  Agents: ' + onlineCount + '/' + Object.keys(agents).length + ' online');
   console.log('');
 
+  // Agents with roles
   const names = Object.keys(agents);
   if (!names.length) {
     console.log('  No agents registered.');
@@ -544,9 +620,261 @@ function cliStatus() {
       const alive = isPidAlive(info.pid);
       const status = alive ? '\x1b[32monline\x1b[0m' : '\x1b[31moffline\x1b[0m';
       const lastActivity = info.last_activity || info.timestamp || '';
+      const role = (profiles && profiles[name] && profiles[name].role) ? ' [' + profiles[name].role + ']' : '';
       const msgCount = history.filter(m => m.from === name).length;
-      console.log('    ' + name.padEnd(16) + ' ' + status + '  msgs: ' + msgCount + '  last: ' + (lastActivity ? new Date(lastActivity).toLocaleTimeString() : '-'));
+      console.log('    ' + name.padEnd(16) + ' ' + status + role.padEnd(16) + '  msgs: ' + msgCount + '  last: ' + (lastActivity ? new Date(lastActivity).toLocaleTimeString() : '-'));
     }
+  }
+
+  // Active workflows
+  const activeWfs = Array.isArray(workflows) ? workflows.filter(w => w.status === 'active') : [];
+  if (activeWfs.length > 0) {
+    console.log('');
+    console.log('  Workflows:');
+    for (const wf of activeWfs) {
+      const done = wf.steps.filter(s => s.status === 'done').length;
+      const total = wf.steps.length;
+      const pct = Math.round((done / total) * 100);
+      const mode = wf.autonomous ? ' (autonomous)' : '';
+      console.log('    ' + wf.name.padEnd(24) + ' ' + done + '/' + total + ' (' + pct + '%)' + mode);
+    }
+  }
+
+  // Active tasks
+  const activeTasks = Array.isArray(tasks) ? tasks.filter(t => t.status === 'in_progress') : [];
+  if (activeTasks.length > 0) {
+    console.log('');
+    console.log('  Tasks in progress:');
+    for (const t of activeTasks.slice(0, 5)) {
+      console.log('    ' + (t.title || 'Untitled').padEnd(30) + ' -> ' + (t.assignee || 'unassigned'));
+    }
+    if (activeTasks.length > 5) console.log('    ... and ' + (activeTasks.length - 5) + ' more');
+  }
+
+  console.log('');
+}
+
+// v5.0: One-command autonomous execution
+function cliRun() {
+  const prompt = process.argv[3];
+  if (!prompt) {
+    console.error('  Usage: npx let-them-talk run "build a login system" [--agents N] [--timeout M]');
+    console.error('  Spawns N agent processes, auto-assigns roles, creates autonomous workflow, and starts execution.');
+    process.exit(1);
+  }
+
+  // Parse --agents flag (default: 3)
+  let agentCount = 3;
+  const agentsIdx = process.argv.indexOf('--agents');
+  if (agentsIdx !== -1 && process.argv[agentsIdx + 1]) {
+    agentCount = Math.max(2, Math.min(10, parseInt(process.argv[agentsIdx + 1]) || 3));
+  }
+
+  // Parse --timeout flag (default: no timeout, in minutes)
+  let timeoutMin = 0;
+  const timeoutIdx = process.argv.indexOf('--timeout');
+  if (timeoutIdx !== -1 && process.argv[timeoutIdx + 1]) {
+    timeoutMin = Math.max(1, parseInt(process.argv[timeoutIdx + 1]) || 0);
+  }
+
+  const cwd = process.cwd();
+  const dir = path.join(cwd, '.agent-bridge');
+  const serverPath = path.join(__dirname, 'server.js');
+
+  // Ensure data directory exists
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  // Set group conversation mode
+  const configPath = path.join(dir, 'config.json');
+  const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
+  config.conversation_mode = 'group';
+  fs.writeFileSync(configPath, JSON.stringify(config));
+
+  // Agent names based on count
+  const AGENT_NAMES = ['Lead', 'Builder', 'Reviewer', 'Architect', 'Frontend', 'Backend', 'Tester', 'Designer', 'DevOps', 'Security'];
+  const names = AGENT_NAMES.slice(0, agentCount);
+
+  console.log('');
+  console.log('  Let Them Talk — Autonomous Run');
+  console.log('  ===============================');
+  console.log('  Prompt: ' + prompt);
+  console.log('  Agents: ' + agentCount + ' (' + names.join(', ') + ')');
+  console.log('  Mode: Autonomous (proactive work loop)');
+  console.log('');
+
+  const { spawn } = require('child_process');
+  const children = [];
+
+  // Spawn agent processes
+  for (let i = 0; i < agentCount; i++) {
+    const agentName = names[i];
+    console.log('  Spawning agent: ' + agentName + '...');
+
+    const child = spawn('node', [serverPath], {
+      env: {
+        ...process.env,
+        AGENT_BRIDGE_DATA_DIR: dir,
+        AGENT_BRIDGE_AUTO_REGISTER: agentName,
+        AGENT_BRIDGE_AUTO_PROMPT: i === 0 ? prompt : '', // only first agent gets the prompt
+      },
+      stdio: 'pipe',
+      cwd: cwd,
+    });
+
+    child.on('error', (err) => {
+      console.error('  [' + agentName + '] Error: ' + err.message);
+    });
+
+    child.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        console.log('  \x1b[33m[' + agentName + '] Crashed (code ' + code + '). Auto-restarting...\x1b[0m');
+        const restart = spawn('node', [serverPath], {
+          env: { ...process.env, AGENT_BRIDGE_DATA_DIR: dir, AGENT_BRIDGE_AUTO_REGISTER: agentName },
+          stdio: 'pipe', cwd: cwd,
+        });
+        const entry = children.find(c => c.name === agentName);
+        if (entry) entry.process = restart;
+      } else {
+        console.log('  [' + agentName + '] Exited.');
+      }
+    });
+
+    children.push({ name: agentName, process: child });
+  }
+
+  console.log('');
+  console.log('  All ' + agentCount + ' agents spawned. They will auto-register and start working.');
+  console.log('  Open the dashboard to monitor: npx let-them-talk dashboard');
+  console.log('');
+  console.log('  Press Ctrl+C to stop all agents.');
+  console.log('');
+
+  // Inject the prompt as a dashboard message after agents register
+  setTimeout(() => {
+    try {
+      const messagesFile = path.join(dir, 'messages.jsonl');
+      const msg = {
+        id: 'run_' + Date.now().toString(36),
+        from: 'Dashboard',
+        to: '__group__',
+        content: prompt,
+        timestamp: new Date().toISOString(),
+        broadcast: true,
+      };
+      fs.appendFileSync(messagesFile, JSON.stringify(msg) + '\n');
+      const historyFile = path.join(dir, 'history.jsonl');
+      fs.appendFileSync(historyFile, JSON.stringify(msg) + '\n');
+      console.log('  Prompt injected to team. Agents will pick it up via get_work().');
+    } catch (e) {
+      console.error('  Failed to inject prompt: ' + e.message);
+    }
+  }, 3000); // 3s delay for agents to register
+
+  // Clean shutdown on Ctrl+C
+  process.on('SIGINT', () => {
+    console.log('\n  Stopping all agents...');
+    for (const c of children) {
+      try { c.process.kill(); } catch {}
+    }
+    process.exit(0);
+  });
+
+  // Auto-stop after --timeout minutes
+  if (timeoutMin > 0) {
+    console.log('  Auto-stop in ' + timeoutMin + ' minute(s).');
+    setTimeout(() => {
+      console.log('\n  Timeout reached (' + timeoutMin + 'min). Stopping all agents...');
+      for (const c of children) { try { c.process.kill(); } catch {} }
+      process.exit(0);
+    }, timeoutMin * 60000);
+  }
+
+  // Periodic progress updates every 30s
+  setInterval(() => {
+    try {
+      const agentsData = fs.existsSync(path.join(dir, 'agents.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'agents.json'), 'utf8')) : {};
+      const online = Object.values(agentsData).filter(a => {
+        try { process.kill(a.pid, 0); return true; } catch { return false; }
+      }).length;
+      const history = fs.existsSync(path.join(dir, 'history.jsonl')) ? fs.readFileSync(path.join(dir, 'history.jsonl'), 'utf8').trim().split('\n').length : 0;
+      const tasksData = fs.existsSync(path.join(dir, 'tasks.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'tasks.json'), 'utf8')) : [];
+      const done = Array.isArray(tasksData) ? tasksData.filter(t => t.status === 'done').length : 0;
+      const active = Array.isArray(tasksData) ? tasksData.filter(t => t.status === 'in_progress').length : 0;
+      console.log(`  \x1b[90m[${new Date().toLocaleTimeString()}]\x1b[0m ${online} agents | ${history} msgs | ${done} done, ${active} active`);
+    } catch {}
+  }, 30000);
+}
+
+// v5.0: Diagnostic health check
+function cliDoctor() {
+  console.log('');
+  console.log('  \x1b[1mLet Them Talk — Doctor\x1b[0m');
+  console.log('  ======================');
+  let issues = 0;
+
+  // Check data directory
+  const dir = path.join(process.cwd(), '.agent-bridge');
+  if (fs.existsSync(dir)) {
+    console.log('  \x1b[32m✓\x1b[0m .agent-bridge/ directory exists');
+    try { fs.accessSync(dir, fs.constants.W_OK); console.log('  \x1b[32m✓\x1b[0m .agent-bridge/ is writable'); }
+    catch { console.log('  \x1b[31m✗\x1b[0m .agent-bridge/ is NOT writable'); issues++; }
+  } else {
+    console.log('  \x1b[33m!\x1b[0m .agent-bridge/ not found. Run "npx let-them-talk init" first.');
+    issues++;
+  }
+
+  // Check server.js
+  const serverPath = path.join(__dirname, 'server.js');
+  if (fs.existsSync(serverPath)) {
+    console.log('  \x1b[32m✓\x1b[0m server.js found');
+  } else {
+    console.log('  \x1b[31m✗\x1b[0m server.js MISSING'); issues++;
+  }
+
+  // Check agents online
+  if (fs.existsSync(dir)) {
+    const agentsFile = path.join(dir, 'agents.json');
+    if (fs.existsSync(agentsFile)) {
+      const agents = readJson(agentsFile);
+      const online = Object.entries(agents).filter(([, a]) => isPidAlive(a.pid)).length;
+      const total = Object.keys(agents).length;
+      if (online > 0) {
+        console.log('  \x1b[32m✓\x1b[0m ' + online + '/' + total + ' agents online');
+      } else if (total > 0) {
+        console.log('  \x1b[33m!\x1b[0m ' + total + ' agents registered but none online');
+      } else {
+        console.log('  \x1b[33m!\x1b[0m No agents registered yet');
+      }
+    }
+
+    // Check config
+    const configFile = path.join(dir, 'config.json');
+    if (fs.existsSync(configFile)) {
+      const config = readJson(configFile);
+      console.log('  \x1b[32m✓\x1b[0m Conversation mode: ' + (config.conversation_mode || 'direct'));
+    }
+
+    // Check guide file
+    const guideFile = path.join(dir, 'guide.md');
+    if (fs.existsSync(guideFile)) {
+      console.log('  \x1b[32m✓\x1b[0m Custom guide.md found');
+    }
+  }
+
+  // Check Node version
+  const nodeVersion = process.version;
+  const major = parseInt(nodeVersion.slice(1));
+  if (major >= 18) {
+    console.log('  \x1b[32m✓\x1b[0m Node.js ' + nodeVersion + ' (OK)');
+  } else {
+    console.log('  \x1b[31m✗\x1b[0m Node.js ' + nodeVersion + ' — v18+ recommended'); issues++;
+  }
+
+  console.log('');
+  if (issues === 0) {
+    console.log('  \x1b[32mAll checks passed. System is healthy.\x1b[0m');
+  } else {
+    console.log('  \x1b[31m' + issues + ' issue(s) found. Fix them and run doctor again.\x1b[0m');
   }
   console.log('');
 }
@@ -564,6 +892,9 @@ switch (command) {
   case 'reset':
     reset();
     break;
+  case 'doctor':
+    cliDoctor();
+    break;
   case 'msg':
   case 'message':
   case 'send':
@@ -571,6 +902,9 @@ switch (command) {
     break;
   case 'status':
     cliStatus();
+    break;
+  case 'run':
+    cliRun();
     break;
   case 'plugin':
   case 'plugins':

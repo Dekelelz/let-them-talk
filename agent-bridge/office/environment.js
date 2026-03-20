@@ -3,6 +3,7 @@ import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { S } from './state.js';
 import { FLOOR_W, FLOOR_D, DESK_POSITIONS, RECEPTION_POS, ENVS, DRESSING_ROOM_POS, REST_AREA_POS } from './constants.js';
 import { buildCampusEnvironment, getCampusDeskPositions } from './campus-env.js';
+// city-env loaded dynamically to avoid killing campus FPS
 
 export function buildEnvironment() {
   if (S.furnitureGroup) {
@@ -34,6 +35,15 @@ export function buildEnvironment() {
     // Store campus desk positions for agent assignment
     S._campusDeskPositions = getCampusDeskPositions();
     S.scene.add(S.furnitureGroup);
+    return;
+  }
+
+  if (S.currentEnv === 'city') {
+    import('./city-env.js').then(function(mod) {
+      mod.buildCityEnvironment();
+      S._cityDeskPositions = mod.getCityDeskPositions();
+      S.scene.add(S.furnitureGroup);
+    });
     return;
   }
 
