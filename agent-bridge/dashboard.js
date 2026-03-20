@@ -24,7 +24,7 @@ let LAN_TOKEN = null;
 function generateLanToken() {
   const crypto = require('crypto');
   LAN_TOKEN = crypto.randomBytes(16).toString('hex');
-  try { fs.writeFileSync(LAN_TOKEN_FILE, LAN_TOKEN); } catch {}
+  try { fs.writeFileSync(LAN_TOKEN_FILE, LAN_TOKEN, { mode: 0o600 }); } catch {}
   return LAN_TOKEN;
 }
 
@@ -128,7 +128,7 @@ function readJsonl(file) {
   if (!fs.existsSync(file)) return [];
   const content = fs.readFileSync(file, 'utf8').trim();
   if (!content) return [];
-  return content.split('\n').map(line => {
+  return content.split(/\r?\n/).map(line => {
     try { return JSON.parse(line); } catch { return null; }
   }).filter(Boolean);
 }
@@ -143,7 +143,7 @@ function getEconomyLedger(projectPath) {
   const ledgerFile = filePath('economy.jsonl', projectPath);
   if (!fs.existsSync(ledgerFile)) return [];
   try {
-    return fs.readFileSync(ledgerFile, 'utf8').trim().split('\n')
+    return fs.readFileSync(ledgerFile, 'utf8').trim().split(/\r?\n/)
       .filter(l => l.trim()).map(l => JSON.parse(l));
   } catch { return []; }
 }
@@ -282,7 +282,7 @@ function apiChannels(query) {
     try {
       if (fs.existsSync(msgFile)) {
         const content = fs.readFileSync(msgFile, 'utf8').trim();
-        if (content) msgCount = content.split('\n').length;
+        if (content) msgCount = content.split(/\r?\n/).filter(l => l.trim()).length;
       }
     } catch {}
     result[name] = { description: ch.description || '', members: ch.members, message_count: msgCount };
@@ -618,6 +618,7 @@ function apiSearchAll(query) {
   let total = 0;
 
   for (const proj of allProjects) {
+    if (proj.path && !validateProjectPath(proj.path)) continue;
     const history = readJsonl(filePath('history.jsonl', proj.path));
     const matches = [];
     for (const m of history) {
@@ -692,7 +693,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div></div>
 <div class="messages" id="messages"></div>
 <script>
-var msgs=${messagesJson};
+var msgs=${messagesJson.replace(/<\//g, '<\\/')};
 var idx=0,playing=true,timer=null,speed=1000;
 function md(s){return s.replace(/\`\`\`[\\s\\S]*?\`\`\`/g,function(m){return '<pre><code>'+m.slice(3,-3).replace(/^\\w*\\n/,'')+'</code></pre>'}).replace(/\`([^\`]+)\`/g,'<code>$1</code>').replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>').replace(/^### (.+)$/gm,'<h4 style="margin:8px 0 4px;font-size:14px">$1</h4>').replace(/^## (.+)$/gm,'<h3 style="margin:8px 0 4px;font-size:15px">$1</h3>').replace(/^# (.+)$/gm,'<h2 style="margin:8px 0 4px;font-size:16px">$1</h2>')}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -739,6 +740,115 @@ function apiReset(query) {
   return { success: true };
 }
 
+function apiClearMessages(query) {
+  const projectPath = query.get('project') || null;
+  const dataDir = resolveDataDir(projectPath);
+  for (const f of ['messages.jsonl', 'history.jsonl']) {
+    const p = path.join(dataDir, f);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+  if (fs.existsSync(dataDir)) {
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.startsWith('consumed-') && f.endsWith('.json')) {
+        fs.unlinkSync(path.join(dataDir, f));
+      }
+    }
+  }
+  return { success: true };
+}
+
+function apiNewConversation(query) {
+  const projectPath = query.get('project') || null;
+  const dataDir = resolveDataDir(projectPath);
+  const convDir = path.join(dataDir, 'conversations');
+  if (!fs.existsSync(convDir)) fs.mkdirSync(convDir, { recursive: true });
+  const now = new Date();
+  const stamp = now.toISOString().replace(/:/g, '-').replace(/\.\d+Z$/, '') + '-' + Math.random().toString(36).slice(2, 6);
+  const baseName = 'conversation-' + stamp;
+  const msgSrc = path.join(dataDir, 'messages.jsonl');
+  const histSrc = path.join(dataDir, 'history.jsonl');
+  if (fs.existsSync(msgSrc)) fs.copyFileSync(msgSrc, path.join(convDir, baseName + '.jsonl'));
+  if (fs.existsSync(histSrc)) fs.copyFileSync(histSrc, path.join(convDir, baseName + '-history.jsonl'));
+  // Clean up current files
+  if (fs.existsSync(msgSrc)) fs.unlinkSync(msgSrc);
+  if (fs.existsSync(histSrc)) fs.unlinkSync(histSrc);
+  if (fs.existsSync(dataDir)) {
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.startsWith('consumed-') && f.endsWith('.json')) {
+        fs.unlinkSync(path.join(dataDir, f));
+      }
+    }
+  }
+  return { success: true, archived: baseName };
+}
+
+function apiListConversations(query) {
+  const projectPath = query.get('project') || null;
+  const dataDir = resolveDataDir(projectPath);
+  const convDir = path.join(dataDir, 'conversations');
+  if (!fs.existsSync(convDir)) return { conversations: [] };
+  const files = fs.readdirSync(convDir).filter(f => f.startsWith('conversation-') && f.endsWith('.jsonl') && !f.endsWith('-history.jsonl'));
+  const conversations = files.map(f => {
+    const name = f.replace('.jsonl', '');
+    const dateStr = name.replace('conversation-', '').replace(/-/g, function(m, i) {
+      // First 2 dashes are date separators, 3rd is T separator, rest are time separators
+      return m;
+    });
+    // Parse date from stamp: YYYY-MM-DDTHH-MM-SS
+    const parts = name.replace('conversation-', '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})$/);
+    let date = '';
+    if (parts) {
+      date = parts[1] + '-' + parts[2] + '-' + parts[3] + 'T' + parts[4] + ':' + parts[5] + ':' + parts[6];
+    }
+    let messageCount = 0;
+    try {
+      const content = fs.readFileSync(path.join(convDir, f), 'utf8').trim();
+      if (content) messageCount = content.split(/\r?\n/).filter(l => l.trim()).length;
+    } catch {}
+    return { name, date, messageCount };
+  });
+  conversations.sort((a, b) => b.date.localeCompare(a.date));
+  return { conversations };
+}
+
+function apiLoadConversation(query) {
+  const projectPath = query.get('project') || null;
+  const name = query.get('name');
+  if (!name || /[^a-zA-Z0-9_-]/.test(name) || name.length > 100) {
+    return { error: 'Invalid conversation name' };
+  }
+  const dataDir = resolveDataDir(projectPath);
+  const convDir = path.join(dataDir, 'conversations');
+  const msgFile = path.join(convDir, name + '.jsonl');
+  const histFile = path.join(convDir, name + '-history.jsonl');
+  if (!fs.existsSync(msgFile)) return { error: 'Conversation not found' };
+  // Use file lock to prevent corruption during concurrent writes
+  const lockPath = path.join(dataDir, 'messages.jsonl.lock');
+  try { fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' }); } catch {
+    return { error: 'Messages file is locked by another operation. Try again.' };
+  }
+  try {
+    fs.copyFileSync(msgFile, path.join(dataDir, 'messages.jsonl'));
+    if (fs.existsSync(histFile)) {
+      fs.copyFileSync(histFile, path.join(dataDir, 'history.jsonl'));
+    } else {
+      const hp = path.join(dataDir, 'history.jsonl');
+      if (fs.existsSync(hp)) fs.unlinkSync(hp);
+    }
+    // Clear stale consumed offsets
+    if (fs.existsSync(dataDir)) {
+      for (const f of fs.readdirSync(dataDir)) {
+        if (f.startsWith('consumed-') && f.endsWith('.json')) {
+          fs.unlinkSync(path.join(dataDir, f));
+        }
+      }
+    }
+  } finally {
+    try { fs.unlinkSync(lockPath); } catch {}
+  }
+  return { success: true };
+}
+
 // Inject a message from the dashboard (system message or nudge to an agent)
 function apiInjectMessage(body, query) {
   const projectPath = query.get('project') || null;
@@ -748,6 +858,12 @@ function apiInjectMessage(body, query) {
 
   if (!body.to || !body.content) {
     return { error: 'Missing "to" and/or "content" fields' };
+  }
+  if (typeof body.content !== 'string' || body.content.length > 100000) {
+    return { error: 'Message content too long (max 100KB)' };
+  }
+  if (body.to !== '__all__' && !/^[a-zA-Z0-9_-]{1,20}$/.test(body.to)) {
+    return { error: 'Invalid agent name' };
   }
 
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -797,6 +913,13 @@ function apiProjects() {
 function apiAddProject(body) {
   if (!body.path) return { error: 'Missing "path" field' };
   const absPath = path.resolve(body.path);
+
+  // Reject root directories and system paths
+  const normalized = absPath.replace(/\\/g, '/');
+  if (normalized === '/' || normalized === 'C:/' || /^[A-Z]:\/$/i.test(normalized) || /^[A-Z]:\/Windows/i.test(normalized) || normalized.startsWith('/etc') || normalized.startsWith('/usr') || normalized.startsWith('/sys')) {
+    return { error: 'Cannot monitor system directories' };
+  }
+
   if (!fs.existsSync(absPath)) return { error: `Path does not exist: ${absPath}` };
 
   // Any existing directory can be added as a project — user explicitly chose it
@@ -1232,7 +1355,7 @@ async function apiEditMessage(body, query) {
   // Update in history.jsonl (locked)
   await withFileLock(historyFile, () => {
     if (fs.existsSync(historyFile)) {
-      const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n').filter(Boolean);
+      const lines = fs.readFileSync(historyFile, 'utf8').trim().split(/\r?\n/).filter(Boolean);
       const updated = lines.map(line => {
         try {
           const msg = JSON.parse(line);
@@ -1240,6 +1363,7 @@ async function apiEditMessage(body, query) {
             found = true;
             if (!msg.edit_history) msg.edit_history = [];
             msg.edit_history.push({ content: msg.content, edited_at: now });
+            if (msg.edit_history.length > 10) msg.edit_history = msg.edit_history.slice(-10);
             msg.content = content;
             msg.edited = true;
             msg.edited_at = now;
@@ -1258,7 +1382,7 @@ async function apiEditMessage(body, query) {
       if (fs.existsSync(messagesFile)) {
         const raw = fs.readFileSync(messagesFile, 'utf8').trim();
         if (raw) {
-          const lines = raw.split('\n');
+          const lines = raw.split(/\r?\n/);
           const updated = lines.map(line => {
             try {
               const msg = JSON.parse(line);
@@ -1297,7 +1421,7 @@ async function apiDeleteMessage(body, query) {
   // Find the message and remove from history.jsonl (locked)
   await withFileLock(historyFile, () => {
     if (fs.existsSync(historyFile)) {
-      const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
+      const lines = fs.readFileSync(historyFile, 'utf8').trim().split(/\r?\n/);
       for (const line of lines) {
         try {
           const msg = JSON.parse(line);
@@ -1328,7 +1452,7 @@ async function apiDeleteMessage(body, query) {
   // Remove from messages.jsonl (locked independently)
   await withFileLock(messagesFile, () => {
     if (fs.existsSync(messagesFile)) {
-      const lines = fs.readFileSync(messagesFile, 'utf8').trim().split('\n');
+      const lines = fs.readFileSync(messagesFile, 'utf8').trim().split(/\r?\n/);
       const filtered = lines.filter(line => {
         try { return JSON.parse(line).id !== id; } catch { return true; }
       });
@@ -1477,6 +1601,28 @@ function parseBody(req) {
   });
 }
 
+// --- Rate limiting ---
+const apiRateLimits = new Map();
+function checkRateLimit(ip, limit = 60, windowMs = 60000) {
+  const now = Date.now();
+  const key = ip;
+  if (!apiRateLimits.has(key)) apiRateLimits.set(key, []);
+  const timestamps = apiRateLimits.get(key).filter(t => now - t < windowMs);
+  apiRateLimits.set(key, timestamps);
+  if (timestamps.length >= limit) return false;
+  timestamps.push(now);
+  return true;
+}
+// Periodic cleanup to prevent memory leak
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timestamps] of apiRateLimits) {
+    const filtered = timestamps.filter(t => now - t < 60000);
+    if (filtered.length === 0) apiRateLimits.delete(key);
+    else apiRateLimits.set(key, filtered);
+  }
+}, 300000).unref(); // Clean every 5 minutes, .unref() prevents zombie process
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost:' + PORT);
 
@@ -1506,7 +1652,8 @@ const server = http.createServer(async (req, res) => {
       const tokenFromQuery = url.searchParams.get('token');
       const tokenFromHeader = req.headers['x-ltt-token'];
       const providedToken = tokenFromHeader || tokenFromQuery;
-      if (!providedToken || providedToken !== LAN_TOKEN) {
+      const crypto = require('crypto');
+      if (!providedToken || providedToken.length !== LAN_TOKEN.length || !crypto.timingSafeEqual(Buffer.from(providedToken), Buffer.from(LAN_TOKEN))) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized: invalid or missing LAN token' }));
         return;
@@ -1542,13 +1689,26 @@ const server = http.createServer(async (req, res) => {
       // Custom header check above is the only protection layer here — allow through
       // since local CLI tools (like our own `msg` command) need to work
     }
-    const isLocal = source && (source.includes('localhost:' + PORT) || source.includes('127.0.0.1:' + PORT));
-    const isLan = LAN_MODE && getLanIP() && source && source.includes(getLanIP() + ':' + PORT);
+    const allowedSources = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`];
+    if (LAN_MODE && getLanIP()) allowedSources.push(`http://${getLanIP()}:${PORT}`);
+    let sourceOrigin = '';
+    try { sourceOrigin = source ? new URL(source).origin : ''; } catch { sourceOrigin = ''; }
+    const isLocal = allowedSources.includes(sourceOrigin);
+    const isLan = isLocal;
     if (source && !isLocal && !isLan) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden: invalid origin' }));
       return;
     }
+  }
+
+  // Rate limit API endpoints (only for non-localhost in LAN mode)
+  const clientIP = req.socket.remoteAddress || 'unknown';
+  const isLocalhost = clientIP === '127.0.0.1' || clientIP === '::1' || clientIP === '::ffff:127.0.0.1';
+  if (url.pathname.startsWith('/api/') && !isLocalhost && !checkRateLimit(clientIP, 300, 60000)) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }));
+    return;
   }
 
   try {
@@ -1611,6 +1771,13 @@ const server = http.createServer(async (req, res) => {
       } catch {}
       const filePath = searchPaths.find(p => fs.existsSync(p));
       if (filePath) {
+        // Verify resolved path is within an allowed directory
+        const resolvedFile = path.resolve(filePath);
+        const allowedDirs = searchPaths.map(p => path.resolve(path.dirname(p)));
+        const isAllowed = allowedDirs.some(dir => resolvedFile.startsWith(dir + path.sep) || resolvedFile === dir);
+        if (!isAllowed) {
+          res.writeHead(403); res.end('Forbidden'); return;
+        }
         const ext = path.extname(filePath);
         const mimeTypes = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.json': 'application/json', '.wasm': 'application/wasm' };
         const contentType = mimeTypes[ext] || 'application/octet-stream';
@@ -1629,6 +1796,11 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400); res.end('Bad path'); return;
       }
       const filePath = path.join(__dirname, 'office', officePath);
+      const resolvedOffice = path.resolve(filePath);
+      const allowedOfficeDir = path.resolve(path.join(__dirname, 'office'));
+      if (!resolvedOffice.startsWith(allowedOfficeDir + path.sep) && resolvedOffice !== allowedOfficeDir) {
+        res.writeHead(403); res.end('Forbidden'); return;
+      }
       if (fs.existsSync(filePath)) {
         const ext = path.extname(filePath);
         const mimeTypes = { '.js': 'application/javascript', '.json': 'application/json' };
@@ -1648,6 +1820,11 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400); res.end('Bad path'); return;
       }
       const filePath = path.join(__dirname, 'mods', modPath);
+      const resolvedMod = path.resolve(filePath);
+      const allowedModDir = path.resolve(path.join(__dirname, 'mods'));
+      if (!resolvedMod.startsWith(allowedModDir + path.sep) && resolvedMod !== allowedModDir) {
+        res.writeHead(403); res.end('Forbidden'); return;
+      }
       if (fs.existsSync(filePath)) {
         const ext = path.extname(filePath);
         const allowedMime = { '.json': 'application/json', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.png': 'image/png' };
@@ -1668,7 +1845,10 @@ const server = http.createServer(async (req, res) => {
       const html = fs.readFileSync(HTML_FILE, 'utf8');
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'",
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
@@ -1866,8 +2046,43 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(apiStats(url.searchParams)));
     }
     else if (url.pathname === '/api/reset' && req.method === 'POST') {
+      const body = await parseBody(req).catch(() => ({}));
+      if (!body.confirm) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Destructive action requires { "confirm": true } in request body' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(apiReset(url.searchParams)));
+    }
+    else if (url.pathname === '/api/clear-messages' && req.method === 'POST') {
+      const body = await parseBody(req).catch(() => ({}));
+      if (!body.confirm) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Destructive action requires { "confirm": true } in request body' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiClearMessages(url.searchParams)));
+    }
+    else if (url.pathname === '/api/new-conversation' && req.method === 'POST') {
+      const body = await parseBody(req).catch(() => ({}));
+      if (!body.confirm) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Destructive action requires { "confirm": true } in request body' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiNewConversation(url.searchParams)));
+    }
+    else if (url.pathname === '/api/conversations' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(apiListConversations(url.searchParams)));
+    }
+    else if (url.pathname === '/api/load-conversation' && req.method === 'POST') {
+      const result = apiLoadConversation(url.searchParams);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
     // Message injection
     else if (url.pathname === '/api/inject' && req.method === 'POST') {
@@ -2047,7 +2262,7 @@ const server = http.createServer(async (req, res) => {
       const projectPath = url.searchParams.get('project') || null;
       const profilesFile = filePath('profiles.json', projectPath);
       const profiles = readJson(profilesFile);
-      if (!body.agent) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Missing agent field' })); return; }
+      if (!body.agent || !/^[a-zA-Z0-9_-]{1,20}$/.test(body.agent)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid agent name' })); return; }
       if (!profiles[body.agent]) profiles[body.agent] = {};
       if (body.display_name) profiles[body.agent].display_name = body.display_name.substring(0, 30);
       if (body.avatar) {
@@ -2547,7 +2762,7 @@ const server = http.createServer(async (req, res) => {
       const agents = fs.existsSync(agentsFile) ? readJson(agentsFile) : {};
       let workflows = []; if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
       let tasks = []; if (fs.existsSync(tasksFile)) try { tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch {}
-      let msgCount = 0; if (fs.existsSync(histFile)) { try { const c = fs.readFileSync(histFile, 'utf8').trim(); if (c) msgCount = c.split('\n').length; } catch {} }
+      let msgCount = 0; if (fs.existsSync(histFile)) { try { const c = fs.readFileSync(histFile, 'utf8').trim(); if (c) msgCount = c.split(/\r?\n/).filter(l => l.trim()).length; } catch {} }
       let kbKeys = 0; if (fs.existsSync(kbFile)) try { kbKeys = Object.keys(JSON.parse(fs.readFileSync(kbFile, 'utf8'))).length; } catch {}
 
       const aliveCount = Object.values(agents).filter(a => { const idle = Date.now() - new Date(a.last_activity || 0).getTime(); return idle < 120000; }).length;
@@ -2585,28 +2800,24 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/rules' && req.method === 'POST') {
       const projectPath = url.searchParams.get('project') || null;
       const rulesFile = filePath('rules.json', projectPath);
-      let body = '';
-      req.on('data', d => body += d);
-      req.on('end', () => {
-        try {
-          const { text, category } = JSON.parse(body);
-          if (!text || !text.trim()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Rule text required' })); return; }
-          const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
-          const rule = {
-            id: 'rule_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-            text: text.trim(),
-            category: category || 'custom',
-            created_by: 'dashboard',
-            created_at: new Date().toISOString(),
-            active: true,
-          };
-          rules.push(rule);
-          fs.writeFileSync(rulesFile, JSON.stringify(rules));
-          res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(rule));
-        } catch (e) { res.writeHead(400); res.end(JSON.stringify({ error: e.message })); }
-      });
-      return;
+      try {
+        const body = await parseBody(req);
+        const { text, category } = body;
+        if (!text || !text.trim()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Rule text required' })); return; }
+        const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
+        const rule = {
+          id: 'rule_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          text: text.trim(),
+          category: category || 'custom',
+          created_by: 'dashboard',
+          created_at: new Date().toISOString(),
+          active: true,
+        };
+        rules.push(rule);
+        fs.writeFileSync(rulesFile, JSON.stringify(rules));
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rule));
+      } catch (e) { res.writeHead(400); res.end(JSON.stringify({ error: e.message })); }
     }
 
     else if (url.pathname.startsWith('/api/rules/') && req.method === 'DELETE') {
@@ -2648,7 +2859,7 @@ const server = http.createServer(async (req, res) => {
         let msgCount = 0;
         if (fs.existsSync(histFile)) {
           const content = fs.readFileSync(histFile, 'utf8').trim();
-          if (content) msgCount = content.split('\n').length;
+          if (content) msgCount = content.split(/\r?\n/).filter(l => l.trim()).length;
         }
         branches[name].message_count = msgCount;
       }
@@ -2707,7 +2918,7 @@ const server = http.createServer(async (req, res) => {
     // Server info (LAN mode detection for frontend)
     else if (url.pathname === '/api/server-info' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: getLanIP(), port: PORT, lan_token: LAN_MODE ? LAN_TOKEN : null }));
+      res.end(JSON.stringify({ lan_mode: LAN_MODE, lan_ip: getLanIP(), port: PORT }));
     }
     // Toggle LAN mode (re-bind server live)
     else if (url.pathname === '/api/toggle-lan' && req.method === 'POST') {
@@ -2719,7 +2930,7 @@ const server = http.createServer(async (req, res) => {
       if (newMode) generateLanToken();
       // Send response first
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT, lan_token: newMode ? LAN_TOKEN : null }));
+      res.end(JSON.stringify({ lan_mode: newMode, lan_ip: lanIP, port: PORT }));
       // Re-bind by stopping the listener and immediately re-listening
       // Use setImmediate to let the response flush first
       setImmediate(() => {
@@ -2793,17 +3004,27 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Too many SSE connections' }));
         return;
       }
+      // Per-IP SSE limit (max 5 connections per IP)
+      const sseIP = req.socket.remoteAddress || 'unknown';
+      const sseIPCount = [...sseClients].filter(c => c._sseIP === sseIP).length;
+      if (sseIPCount >= 5) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Too many SSE connections from this IP (max 5)' }));
+        return;
+      }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
       });
       res.write(`data: connected\n\n`);
+      res._sseIP = sseIP;
       sseClients.add(res);
       // Heartbeat every 30s to detect dead connections and prevent proxy timeouts
       const heartbeat = setInterval(() => {
         try { res.write(`:heartbeat\n\n`); } catch { clearInterval(heartbeat); sseClients.delete(res); }
       }, 30000);
+      heartbeat.unref();
       req.on('close', () => { clearInterval(heartbeat); sseClients.delete(res); });
     }
     // --- Mod system API ---
@@ -2868,7 +3089,13 @@ const server = http.createServer(async (req, res) => {
               return;
             }
           }
-          fs.writeFileSync(path.join(modDir, assetFile), buf);
+          const resolvedAsset = path.resolve(path.join(modDir, assetFile));
+          if (!resolvedAsset.startsWith(path.resolve(modDir) + path.sep)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid asset file path' }));
+            return;
+          }
+          fs.writeFileSync(resolvedAsset, buf);
           manifest.asset.file = assetFile;
         }
         // Write manifest
@@ -3082,7 +3309,7 @@ function sseNotifyAll(changeType) {
   const dead = [];
   for (const res of Array.from(sseClients)) {
     try {
-      res.write(`data: ${eventData}\n\n`);
+      res.write(`data: ${(eventData || '').replace(/[\r\n]/g, '')}\n\n`);
     } catch {
       dead.push(res);
     }

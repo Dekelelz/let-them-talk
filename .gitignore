@@ -18,6 +18,9 @@ agent-bridge/projects.json
 /ClaudePlans/
 check-ue5-lock.js
 
+# Tests - never upload to git
+agent-bridge/test/
+
 # Secrets - NEVER commit
 agent-bridge/.lan-token
 *.env

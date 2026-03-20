@@ -9,7 +9,7 @@ const command = process.argv[2];
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v5.0.0
+  Let Them Talk — Agent Bridge v5.2.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
@@ -28,6 +28,7 @@ function printUsage() {
     npx let-them-talk msg <agent> <text> Send a message to an agent
     npx let-them-talk run "prompt" [--agents N] [--timeout M]  Autonomous execution with N agents, auto-stop after M minutes
     npx let-them-talk status             Show active agents and message count
+    npx let-them-talk uninstall          Remove agent-bridge from all CLI configs
     npx let-them-talk help               Show this help message
 
   v5.0 — True Autonomy Engine (61 tools):
@@ -76,7 +77,7 @@ function detectOllama() {
 
 // The data directory where all agents read/write — must be the same for server + dashboard
 function dataDir(cwd) {
-  return path.join(cwd, '.agent-bridge').replace(/\\/g, '/');
+  return path.join(cwd, '.agent-bridge');
 }
 
 // Configure for Claude Code (.mcp.json in project root)
@@ -99,7 +100,6 @@ function setupClaude(serverPath, cwd) {
     command: 'node',
     args: [serverPath],
     timeout: 300,
-    env: { AGENT_BRIDGE_DATA_DIR: dataDir(cwd) },
   };
 
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + '\n');
@@ -133,7 +133,6 @@ function setupGemini(serverPath, cwd) {
     args: [serverPath],
     timeout: 300,
     trust: true,
-    env: { AGENT_BRIDGE_DATA_DIR: dataDir(cwd) },
   };
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
@@ -155,6 +154,11 @@ function setupCodex(serverPath, cwd) {
     config = fs.readFileSync(configPath, 'utf8');
   }
 
+  // Backup existing config before modifying
+  if (fs.existsSync(configPath)) {
+    fs.copyFileSync(configPath, configPath + '.backup');
+  }
+
   // Only add if not already present
   if (!config.includes('[mcp_servers.agent-bridge]')) {
     const tomlBlock = `
@@ -162,9 +166,6 @@ function setupCodex(serverPath, cwd) {
 command = "node"
 args = [${JSON.stringify(serverPath)}]
 timeout = 300
-
-[mcp_servers.agent-bridge.env]
-AGENT_BRIDGE_DATA_DIR = ${JSON.stringify(dataDir(cwd))}
 `;
     config += tomlBlock;
     fs.writeFileSync(configPath, config);
@@ -188,11 +189,12 @@ function setupOllama(serverPath, cwd) {
 const fs = require('fs'), path = require('path'), http = require('http');
 const DATA_DIR = path.join(__dirname);
 const name = process.argv[2] || 'Ollama';
+if (!/^[a-zA-Z0-9_-]{1,20}$/.test(name)) throw new Error('Invalid agent name');
 const model = process.argv[3] || 'llama3';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } }
-function readJsonl(f) { if (!fs.existsSync(f)) return []; return fs.readFileSync(f, 'utf8').split('\\n').filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); }
+function readJsonl(f) { if (!fs.existsSync(f)) return []; return fs.readFileSync(f, 'utf8').split(/\\r?\\n/).filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); }
 
 // Register agent
 function register() {
@@ -286,7 +288,9 @@ setInterval(processMessages, 2000);
 process.on('SIGINT', function() { console.log('\\n[' + name + '] Shutting down.'); process.exit(0); });
 `;
 
-  fs.writeFileSync(scriptPath, script);
+  const tmpPath = scriptPath + '.tmp.' + process.pid;
+  fs.writeFileSync(tmpPath, script);
+  fs.renameSync(tmpPath, scriptPath);
   console.log('  [ok] Ollama agent script created: .agent-bridge/ollama-agent.js');
   console.log('');
   console.log('  Launch an Ollama agent with:');
@@ -412,7 +416,7 @@ function reset() {
   const historyFile = path.join(targetDir, 'history.jsonl');
   let msgCount = 0;
   if (fs.existsSync(historyFile)) {
-    msgCount = fs.readFileSync(historyFile, 'utf8').split('\n').filter(l => l.trim()).length;
+    msgCount = fs.readFileSync(historyFile, 'utf8').split(/\r?\n/).filter(l => l.trim()).length;
   }
 
   // Require --force flag, otherwise warn and exit
@@ -522,7 +526,7 @@ function resolveDataDirCli() {
 function readJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
   return fs.readFileSync(filePath, 'utf8')
-    .split('\n')
+    .split(/\r?\n/)
     .filter(l => l.trim())
     .map(l => { try { return JSON.parse(l); } catch { return null; } })
     .filter(Boolean);
@@ -796,7 +800,7 @@ function cliRun() {
       const online = Object.values(agentsData).filter(a => {
         try { process.kill(a.pid, 0); return true; } catch { return false; }
       }).length;
-      const history = fs.existsSync(path.join(dir, 'history.jsonl')) ? fs.readFileSync(path.join(dir, 'history.jsonl'), 'utf8').trim().split('\n').length : 0;
+      const history = fs.existsSync(path.join(dir, 'history.jsonl')) ? fs.readFileSync(path.join(dir, 'history.jsonl'), 'utf8').trim().split(/\r?\n/).filter(l => l.trim()).length : 0;
       const tasksData = fs.existsSync(path.join(dir, 'tasks.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'tasks.json'), 'utf8')) : [];
       const done = Array.isArray(tasksData) ? tasksData.filter(t => t.status === 'done').length : 0;
       const active = Array.isArray(tasksData) ? tasksData.filter(t => t.status === 'in_progress').length : 0;
@@ -879,6 +883,164 @@ function cliDoctor() {
   console.log('');
 }
 
+// Uninstall agent-bridge from all CLI configs
+function uninstall() {
+  const cwd = process.cwd();
+  const home = os.homedir();
+  const removed = [];
+  const notFound = [];
+
+  console.log('');
+  console.log('  Let Them Talk — Uninstall');
+  console.log('  =========================');
+  console.log('');
+
+  // 1. Remove from Claude Code project config (.mcp.json in cwd)
+  const mcpLocalPath = path.join(cwd, '.mcp.json');
+  if (fs.existsSync(mcpLocalPath)) {
+    try {
+      const mcpConfig = JSON.parse(fs.readFileSync(mcpLocalPath, 'utf8'));
+      if (mcpConfig.mcpServers && mcpConfig.mcpServers['agent-bridge']) {
+        delete mcpConfig.mcpServers['agent-bridge'];
+        fs.writeFileSync(mcpLocalPath, JSON.stringify(mcpConfig, null, 2) + '\n');
+        removed.push('Claude Code (project): ' + mcpLocalPath);
+      } else {
+        notFound.push('Claude Code (project): no agent-bridge entry in .mcp.json');
+      }
+    } catch (e) {
+      console.log('  [warn] Could not parse ' + mcpLocalPath + ': ' + e.message);
+    }
+  } else {
+    notFound.push('Claude Code (project): .mcp.json not found');
+  }
+
+  // 2. Remove from Claude Code global config (~/.claude/mcp.json)
+  const mcpGlobalPath = path.join(home, '.claude', 'mcp.json');
+  if (fs.existsSync(mcpGlobalPath)) {
+    try {
+      const mcpConfig = JSON.parse(fs.readFileSync(mcpGlobalPath, 'utf8'));
+      if (mcpConfig.mcpServers && mcpConfig.mcpServers['agent-bridge']) {
+        delete mcpConfig.mcpServers['agent-bridge'];
+        fs.writeFileSync(mcpGlobalPath, JSON.stringify(mcpConfig, null, 2) + '\n');
+        removed.push('Claude Code (global): ' + mcpGlobalPath);
+      } else {
+        notFound.push('Claude Code (global): no agent-bridge entry');
+      }
+    } catch (e) {
+      console.log('  [warn] Could not parse ' + mcpGlobalPath + ': ' + e.message);
+    }
+  } else {
+    notFound.push('Claude Code (global): ~/.claude/mcp.json not found');
+  }
+
+  // 3. Remove from Gemini CLI config (~/.gemini/settings.json)
+  const geminiSettingsPath = path.join(home, '.gemini', 'settings.json');
+  if (fs.existsSync(geminiSettingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(geminiSettingsPath, 'utf8'));
+      if (settings.mcpServers && settings.mcpServers['agent-bridge']) {
+        delete settings.mcpServers['agent-bridge'];
+        fs.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2) + '\n');
+        removed.push('Gemini CLI: ' + geminiSettingsPath);
+      } else {
+        notFound.push('Gemini CLI: no agent-bridge entry');
+      }
+    } catch (e) {
+      console.log('  [warn] Could not parse ' + geminiSettingsPath + ': ' + e.message);
+    }
+  } else {
+    notFound.push('Gemini CLI: ~/.gemini/settings.json not found');
+  }
+
+  // 4. Remove from Gemini CLI project config (.gemini/settings.json in cwd)
+  const geminiLocalPath = path.join(cwd, '.gemini', 'settings.json');
+  if (fs.existsSync(geminiLocalPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(geminiLocalPath, 'utf8'));
+      if (settings.mcpServers && settings.mcpServers['agent-bridge']) {
+        delete settings.mcpServers['agent-bridge'];
+        fs.writeFileSync(geminiLocalPath, JSON.stringify(settings, null, 2) + '\n');
+        removed.push('Gemini CLI (project): ' + geminiLocalPath);
+      } else {
+        notFound.push('Gemini CLI (project): no agent-bridge entry');
+      }
+    } catch (e) {
+      console.log('  [warn] Could not parse ' + geminiLocalPath + ': ' + e.message);
+    }
+  }
+
+  // 5. Remove from Codex CLI config (~/.codex/config.toml)
+  const codexConfigPath = path.join(home, '.codex', 'config.toml');
+  if (fs.existsSync(codexConfigPath)) {
+    try {
+      let config = fs.readFileSync(codexConfigPath, 'utf8');
+      if (config.includes('[mcp_servers.agent-bridge]')) {
+        // Remove from [mcp_servers.agent-bridge] to the next [section] or end of file
+        // This covers both [mcp_servers.agent-bridge] and [mcp_servers.agent-bridge.env]
+        config = config.replace(/\n?\[mcp_servers\.agent-bridge[^\]]*\][^\[]*(?=\[|$)/g, '');
+        // Clean up multiple blank lines left behind
+        config = config.replace(/\n{3,}/g, '\n\n');
+        fs.writeFileSync(codexConfigPath, config);
+        removed.push('Codex CLI: ' + codexConfigPath);
+      } else {
+        notFound.push('Codex CLI: no agent-bridge section in config.toml');
+      }
+    } catch (e) {
+      console.log('  [warn] Could not process ' + codexConfigPath + ': ' + e.message);
+    }
+  } else {
+    notFound.push('Codex CLI: ~/.codex/config.toml not found');
+  }
+
+  // 6. Remove from Codex CLI project config (.codex/config.toml in cwd)
+  const codexLocalPath = path.join(cwd, '.codex', 'config.toml');
+  if (fs.existsSync(codexLocalPath)) {
+    try {
+      let config = fs.readFileSync(codexLocalPath, 'utf8');
+      if (config.includes('[mcp_servers.agent-bridge]')) {
+        config = config.replace(/\n?\[mcp_servers\.agent-bridge[^\]]*\][^\[]*(?=\[|$)/g, '');
+        config = config.replace(/\n{3,}/g, '\n\n');
+        fs.writeFileSync(codexLocalPath, config);
+        removed.push('Codex CLI (project): ' + codexLocalPath);
+      }
+    } catch (e) {
+      console.log('  [warn] Could not process ' + codexLocalPath + ': ' + e.message);
+    }
+  }
+
+  // Print summary
+  if (removed.length > 0) {
+    console.log('  Removed agent-bridge from:');
+    for (const r of removed) {
+      console.log('    [ok] ' + r);
+    }
+  } else {
+    console.log('  No agent-bridge configurations found to remove.');
+  }
+
+  if (notFound.length > 0) {
+    console.log('');
+    console.log('  Skipped (not found):');
+    for (const n of notFound) {
+      console.log('    [-] ' + n);
+    }
+  }
+
+  // 7. Check for data directory
+  const dataPath = path.join(cwd, '.agent-bridge');
+  if (fs.existsSync(dataPath)) {
+    console.log('');
+    console.log('  Found .agent-bridge/ directory with conversation data.');
+    console.log('  To remove it, manually delete: ' + dataPath);
+  }
+
+  console.log('');
+  if (removed.length > 0) {
+    console.log('  Restart your CLI terminals for changes to take effect.');
+  }
+  console.log('');
+}
+
 switch (command) {
   case 'init':
     init();
@@ -905,6 +1067,10 @@ switch (command) {
     break;
   case 'run':
     cliRun();
+    break;
+  case 'uninstall':
+  case 'remove':
+    uninstall();
     break;
   case 'plugin':
   case 'plugins':

@@ -3816,6 +3816,9 @@
       <button id="deep-search-btn" onclick="deepSearch()" title="Search full history (server-side, includes compacted messages and channels)" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted);white-space:nowrap;transition:all 0.2s">Deep Search</button>
       <span class="search-count" id="search-count"></span>
       <button class="compact-toggle" id="compact-toggle" onclick="toggleCompactMode()" title="Toggle compact view">Compact</button>
+      <select id="conversation-select" onchange="loadConversation()" title="Load saved conversation" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted)"><option value="">Current</option></select>
+      <button onclick="newConversation()" title="Archive current and start fresh" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted);white-space:nowrap;transition:all 0.2s">New Conversation</button>
+      <button onclick="clearMessages()" title="Clear all messages for this project" style="background:#4a2020;border:1px solid #6a3030;border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:#ff6b6b;white-space:nowrap;transition:all 0.2s">Clear Messages</button>
     </div>
     <div class="channel-filter-bar" id="channel-filter-bar" style="display:none"></div>
     <div class="pinned-section" id="pinned-section">
@@ -3833,7 +3836,6 @@
         <label>Environment:</label>
         <select id="office-env-select" onchange="officeSetEnvironment(this.value)">
           <option value="campus" selected>Tech Campus</option>
-          <option value="city">AI City</option>
           <option value="modern">Modern Office</option>
           <option value="startup">Startup Garage</option>
         </select>
@@ -4341,15 +4343,16 @@ function timeAgo(ts) {
   return hrs + 'h ago';
 }
 
-function escapeHtml(text) {
-  var d = document.createElement('div');
-  d.textContent = text;
-  return d.innerHTML;
+function escapeHtml(s) {
+  if (typeof s !== 'string') return '';
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\\/g, '&#92;');
 }
 
 // ==================== MARKDOWN RENDERER ====================
 
 function renderMarkdown(text) {
+  // Strip null bytes to prevent placeholder collision attacks
+  text = text.replace(/\x00/g, '');
   // Extract fenced code blocks first to protect them
   var codeBlocks = [];
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
@@ -4383,6 +4386,7 @@ function renderMarkdown(text) {
       if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; }
       if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
       var cb = codeBlocks[parseInt(cbMatch[1])];
+      if (!cb) { html += escapeHtml(line); continue; }
       var langTag = cb.lang ? '<span class="lang-tag">' + escapeHtml(cb.lang) + '</span>' : '';
       html += '<pre>' + langTag + '<code>' + escapeHtml(cb.code) + '</code></pre>';
       continue;
@@ -4918,7 +4922,7 @@ function renderThreads(messages) {
     var tid = ids[j];
     var t = threads[tid];
     var active = activeThread === tid ? ' active' : '';
-    var agentList = Object.keys(t.agents).join(', ');
+    var agentList = Object.keys(t.agents).map(escapeHtml).join(', ');
     html += '<div class="thread-item' + active + '" onclick="filterThread(\'' + tid + '\')">' +
       '<div class="thread-preview">' + escapeHtml(t.preview) + '</div>' +
       '<div class="thread-meta">' + t.count + ' msgs &middot; ' + agentList + '</div>' +
@@ -5034,6 +5038,8 @@ function renderMessages(messages) {
   for (var i = windowStart; i < filtered.length; i++) {
     var m = filtered[i];
     var color = getColor(m.from);
+    var fromDisplay = (cachedAgents[m.from] && cachedAgents[m.from].display_name) || m.from;
+    var toDisplay = (cachedAgents[m.to] && cachedAgents[m.to].display_name) || m.to;
     var newClass = (isNew && i >= lastMessageCount) ? ' message-new' : '';
     var isSystem = m.system === true;
 
@@ -5079,9 +5085,9 @@ function renderMessages(messages) {
         buildMsgActions(m.id) +
         msgAvatarHtml +
         '<div class="msg-body">' +
-          '<div class="handoff-banner">&#x1f91d; Handoff: ' + escapeHtml(m.from) + ' &rarr; ' + escapeHtml(m.to) + '</div>' +
+          '<div class="handoff-banner">&#x1f91d; Handoff: ' + escapeHtml(fromDisplay) + ' &rarr; ' + escapeHtml(toDisplay) + '</div>' +
           '<div class="msg-header">' +
-            '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+            '<span class="msg-from" style="color:' + color + '" title="@' + escapeHtml(m.from) + '">' + escapeHtml(fromDisplay) + '</span>' +
             '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
@@ -5100,9 +5106,9 @@ function renderMessages(messages) {
         msgAvatarHtml +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
-            '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+            '<span class="msg-from" style="color:' + color + '" title="@' + escapeHtml(m.from) + '">' + escapeHtml(fromDisplay) + '</span>' +
             '<span class="msg-arrow">&rarr;</span>' +
-            '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
+            '<span class="msg-to">' + escapeHtml(toDisplay) + '</span>' +
             '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
@@ -5119,9 +5125,9 @@ function renderMessages(messages) {
         msgAvatarHtml +
         '<div class="msg-body">' +
           '<div class="msg-header">' +
-            '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+            '<span class="msg-from" style="color:' + color + '" title="@' + escapeHtml(m.from) + '">' + escapeHtml(fromDisplay) + '</span>' +
             '<span class="msg-arrow">&rarr;</span>' +
-            '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
+            '<span class="msg-to">' + escapeHtml(toDisplay) + '</span>' +
             '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
@@ -5346,6 +5352,85 @@ function toggleCompactMode() {
   var btn = document.getElementById('compact-toggle');
   area.classList.toggle('compact-mode', compactMode);
   btn.classList.toggle('active', compactMode);
+}
+
+// ==================== CONVERSATION MANAGEMENT ====================
+
+function clearMessages() {
+  if (!confirm('Clear all messages for this project? This cannot be undone.')) return;
+  var project = document.getElementById('project-select').value;
+  lttFetch('/api/clear-messages?project=' + encodeURIComponent(project), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        document.getElementById('messages').innerHTML = '';
+        showToast('Messages cleared');
+      }
+    });
+}
+
+function newConversation() {
+  if (!confirm('Archive current conversation and start a new one?')) return;
+  var project = document.getElementById('project-select').value;
+  lttFetch('/api/new-conversation?project=' + encodeURIComponent(project), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        document.getElementById('messages').innerHTML = '';
+        loadConversationList();
+        showToast('Conversation archived: ' + data.archived);
+      }
+    });
+}
+
+function loadConversationList() {
+  var project = document.getElementById('project-select').value;
+  lttFetch('/api/conversations?project=' + encodeURIComponent(project))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var sel = document.getElementById('conversation-select');
+      sel.innerHTML = '<option value="">Current</option>';
+      if (data.conversations) {
+        data.conversations.forEach(function(c) {
+          var opt = document.createElement('option');
+          opt.value = c.name;
+          var d = new Date(c.date);
+          opt.textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + ' (' + c.messageCount + ' msgs)';
+          sel.appendChild(opt);
+        });
+      }
+    });
+}
+
+function loadConversation() {
+  var sel = document.getElementById('conversation-select');
+  var name = sel.value;
+  if (!name) return;
+  if (!confirm('Load this saved conversation? Current messages will be replaced.')) {
+    sel.value = '';
+    return;
+  }
+  var project = document.getElementById('project-select').value;
+  lttFetch('/api/load-conversation?project=' + encodeURIComponent(project) + '&name=' + encodeURIComponent(name), { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        showToast('Conversation loaded');
+        setTimeout(function() { location.reload(); }, 500);
+      }
+    });
+}
+
+function showToast(msg) {
+  var existing = document.getElementById('ltt-toast');
+  if (existing) existing.remove();
+  var el = document.createElement('div');
+  el.id = 'ltt-toast';
+  el.textContent = msg;
+  el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface-3);color:var(--text);padding:10px 20px;border-radius:8px;font-size:13px;z-index:10000;border:1px solid var(--border-light);box-shadow:var(--shadow-md);opacity:1;transition:opacity 0.3s';
+  document.body.appendChild(el);
+  setTimeout(function() { el.style.opacity = '0'; }, 2500);
+  setTimeout(function() { el.remove(); }, 3000);
 }
 
 // ==================== SEARCH ====================
@@ -6525,7 +6610,7 @@ function showProfilePopup(agentName, event) {
   editingAgent = agentName;
   var color = getColor(agentName);
   var ppAvatar = document.getElementById('pp-avatar');
-  if (agent.avatar) { ppAvatar.src = agent.avatar; ppAvatar.style.display = ''; } else { ppAvatar.style.display = 'none'; }
+  if (agent.avatar && (agent.avatar.startsWith('data:image/') || agent.avatar.startsWith('/'))) { ppAvatar.setAttribute('src', agent.avatar); ppAvatar.style.display = ''; } else { ppAvatar.style.display = 'none'; }
   document.getElementById('pp-name').textContent = agent.display_name || agentName;
   document.getElementById('pp-name').style.color = color;
   document.getElementById('pp-id').textContent = '@' + agentName;
@@ -7623,7 +7708,7 @@ function poll() {
 
 function doReset() {
   if (!confirm('Clear all messages, agents, and history?')) return;
-  lttFetch('/api/reset' + projectParam(), { method: 'POST' }).then(function() {
+  lttFetch('/api/reset' + projectParam(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) }).then(function() {
     lastMessageCount = 0;
     activeThread = null;
     cachedHistory = [];
@@ -7690,6 +7775,7 @@ function switchProject() {
   lastMessageCount = 0;
   document.getElementById('remove-project-btn').style.display = activeProject ? '' : 'none';
   syncMobileProjectSelect();
+  loadConversationList();
   poll();
   if (isMobile) closeSidebar();
 }
@@ -7987,14 +8073,16 @@ function renderReplayMessages() {
 
     var isLast = (i === slice.length - 1);
     var newClass = isLast ? ' message-new' : '';
+    var fromDisplay = (cachedAgents[m.from] && cachedAgents[m.from].display_name) || m.from;
+    var toDisplay = (cachedAgents[m.to] && cachedAgents[m.to].display_name) || m.to;
 
     html += '<div class="message' + newClass + '">' +
       '<div class="msg-avatar" style="background:' + color + '">' + initial(m.from) + '</div>' +
       '<div class="msg-body">' +
         '<div class="msg-header">' +
-          '<span class="msg-from" style="color:' + color + '">' + escapeHtml(m.from) + '</span>' +
+          '<span class="msg-from" style="color:' + color + '" title="@' + escapeHtml(m.from) + '">' + escapeHtml(fromDisplay) + '</span>' +
           '<span class="msg-arrow">&rarr;</span>' +
-          '<span class="msg-to">' + escapeHtml(m.to) + '</span>' +
+          '<span class="msg-to">' + escapeHtml(toDisplay) + '</span>' +
           '<span class="msg-time">' + formatTime(m.timestamp) + '</span>' +
         '</div>' +
         '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
@@ -8973,6 +9061,7 @@ initCompactMode();
 // Load projects first, then poll (so auto-select works before first data fetch)
 loadProjects().then(function() {
   console.log('[LTT] init: projects loaded, starting poll + SSE');
+  loadConversationList();
   poll();
   initSSE();
   switchView('office');

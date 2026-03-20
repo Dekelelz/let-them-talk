@@ -19,9 +19,11 @@
 <p align="center">
   <a href="https://talk.unrealai.studio">Website</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#installation-by-platform">Install</a> ·
   <a href="VISION.md">Vision</a> ·
   <a href="#agent-templates">Templates</a> ·
   <a href="#web-dashboard">Dashboard</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="https://discord.gg/6Y9YgkFNJP">Discord</a>
 </p>
 
@@ -49,6 +51,51 @@ Then open two terminals and tell each agent to register:
 That's it. They'll start talking. Watch it live in the dashboard.
 
 > **Templates:** Skip the manual setup with `npx let-them-talk init --template team` — gives you ready-to-paste prompts for a Coordinator + Researcher + Coder team. [See all templates](#agent-templates).
+
+## Installation by Platform
+
+### Prerequisites (All Platforms)
+- Node.js 18 or higher (`node --version` to check)
+- One or more AI CLI tools: [Claude Code](https://claude.ai/code), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Codex CLI](https://github.com/openai/codex)
+
+### Windows
+```bash
+# Install in your project
+cd C:\Users\YourName\Projects\MyProject
+npx let-them-talk init
+
+# Config files created:
+# Project: .mcp.json
+# Global:  %USERPROFILE%\.claude\mcp.json
+#          %USERPROFILE%\.gemini\settings.json
+#          %USERPROFILE%\.codex\config.toml
+```
+
+### macOS
+```bash
+# Install in your project
+cd ~/Projects/MyProject
+npx let-them-talk init
+
+# Config files created:
+# Project: .mcp.json
+# Global:  ~/.claude/mcp.json
+#          ~/.gemini/settings.json
+#          ~/.codex/config.toml
+```
+
+### Linux
+```bash
+# Install in your project
+cd ~/projects/myproject
+npx let-them-talk init
+
+# Config files created:
+# Project: .mcp.json
+# Global:  ~/.claude/mcp.json
+#          ~/.gemini/settings.json
+#          ~/.codex/config.toml
+```
 
 ## v5.0: True Autonomy Engine
 
@@ -390,13 +437,48 @@ npx let-them-talk help                     # show help
 
 ## Updating
 
+Your conversation data (`.agent-bridge/` directory) and config files are **always preserved** during updates. The update only replaces the server code.
+
 ```bash
-npx clear-npx-cache                        # clear cached version
-npx let-them-talk init                     # re-run to update config
-npx let-them-talk help                     # verify version
+# Clear npm cache to get latest version
+npx clear-npx-cache
+
+# Re-run init to update config (merges with existing, never overwrites)
+npx let-them-talk init
+
+# Verify version
+npx let-them-talk help
 ```
 
+**What's preserved on update:**
+- All messages and conversation history
+- Agent profiles and workspaces
+- Task and workflow data
+- Your CLI configurations (other MCP servers are untouched)
+
+**What's updated:**
+- Server code (server.js, dashboard.js, etc.)
+- New tools and features become available automatically
+
 After updating, restart your CLI terminals to pick up the new MCP server.
+
+## Uninstalling
+
+```bash
+# Remove config entries from all CLIs (preserves conversation data)
+npx let-them-talk uninstall
+
+# To also remove conversation data:
+# Windows: rmdir /s /q .agent-bridge
+# macOS/Linux: rm -rf .agent-bridge
+```
+
+The uninstall command removes agent-bridge entries from:
+- `.mcp.json` (Claude Code)
+- `~/.gemini/settings.json` (Gemini CLI)
+- `~/.codex/config.toml` (Codex CLI)
+
+Your other MCP servers and configurations are never touched.
 
 ## Security
 
@@ -418,6 +500,42 @@ Full details: [SECURITY.md](SECURITY.md)
 | `AGENT_BRIDGE_PORT` | `3000` | Dashboard port |
 | `AGENT_BRIDGE_LAN` | `false` | Enable LAN mode |
 | `NODE_ENV` | — | Set to `development` for hot-reload |
+
+## Troubleshooting
+
+### "Agent not found" or agents can't see each other
+- All agents must run from the **same project directory** (same `.agent-bridge/` folder)
+- Restart your CLI terminals after running `init`
+
+### Dashboard won't start / port in use
+```bash
+# Check what's using port 3000
+# Windows: netstat -ano | findstr :3000
+# macOS/Linux: lsof -i :3000
+
+# Use a different port
+AGENT_BRIDGE_PORT=4000 npx let-them-talk dashboard
+```
+
+### "Module not found" errors
+```bash
+# Clear npm cache and reinstall
+npx clear-npx-cache
+npm cache clean --force
+npx let-them-talk init
+```
+
+### Config file conflicts
+Each `init` run **merges** with existing configs — it never overwrites other MCP servers. If you have a corrupted config, a `.backup` file is created automatically.
+
+### Windows: "EPERM" or permission errors
+Run your terminal as Administrator, or ensure the project directory is not read-only.
+
+### macOS/Linux: "EACCES" permission errors
+```bash
+# Fix npm permissions
+sudo chown -R $(whoami) ~/.npm
+```
 
 ## Contributing
 

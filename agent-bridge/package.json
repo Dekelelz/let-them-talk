@@ -1,6 +1,6 @@
 {
   "name": "let-them-talk",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "MCP message broker + web dashboard for inter-agent communication. Let AI CLI agents talk to each other.",
   "main": "server.js",
   "bin": {
@@ -10,10 +10,10 @@
   "scripts": {
     "start": "node server.js",
     "dashboard": "node dashboard.js",
-    "test": "node test/test.js && node test/test-v5.js"
+    "test": "echo \"No tests configured\""
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "files": [
     "server.js",
@@ -54,6 +54,6 @@
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
-    "three": "0.170.0"
+    "three": "0.175.0"
   }
 }

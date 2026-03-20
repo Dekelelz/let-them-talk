@@ -1,5 +1,157 @@
 # Changelog
 
+## [5.2.0] - 2026-03-20
+
+### Security Hardening (50+ fixes across 5 audit rounds)
+
+- **Timing-safe** LAN token comparison (`crypto.timingSafeEqual`)
+- **File permissions** — `.agent-bridge/` created with `0o700`, `.lan-token` with `0o600`
+- **XSS prevention** — `escapeHtml` escapes 6 characters, thread panel escaped, replay export `</script>` escaped, null byte placeholder collision fixed
+- **Path traversal** — containment checks on `/lib/`, `/office/`, `/mods/` with `path.resolve`, mods asset write validated, conversation name regex
+- **Rate limiting** — per-IP API rate limit (300/min), per-IP SSE limit (5), duplicate message detection, escalation broadcast rate limited
+- **File locking** — tasks, workflows, channels all use `withFileLock`, PID-checked force-break, task claiming atomic
+- **Input validation** — content type guards, message 100KB limit, agent name regex on all endpoints, avatar URL scheme validation
+- **Security headers** — X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy no-referrer, CSP frame-ancestors none
+- **Token removed** from all API responses, destructive endpoints require `confirm: true`
+- **KB prompt injection** prevented — content in separate `reference_notes` field
+- **share_file** denylist for .env, .pem, .key, credentials, data directory
+- **Reserved names** — "Dashboard" blocked from agent registration
+- **Manager claim** TOCTOU fixed with config lock
+
+### Cross-Platform Compatibility
+
+- **Windows line endings** — all JSONL parsing uses `/\r?\n/` (24 sites fixed)
+- **Portable config paths** — removed hardcoded absolute paths from env vars
+- **Codex config backup** — creates `.backup` before modification
+- Works identically on Windows, macOS, and Linux
+
+### New Features
+
+- **Uninstall command** — `npx let-them-talk uninstall` cleanly removes config entries from Claude/Gemini/Codex
+- **Conversation management** — Clear Messages, New Conversation (archive + start fresh), Load saved conversations
+- **Display names** — messages show profile display_name instead of raw registered name
+- **Re-registration prevention** — agents can't change name mid-session
+
+### Documentation
+
+- Platform-specific installation guides (Windows, macOS, Linux)
+- Update guide (what's preserved vs updated)
+- Uninstall guide
+- Troubleshooting section
+- USAGE.md updated from v2.5 to v5.2.0
+
+### Fixed
+
+- 11 full-file read optimizations (tailReadJsonl)
+- AI City environment removed from 3D Hub
+- Test script updated (referenced deleted files)
+- Node engine requirement updated to >=18.0.0
+- Three.js updated to 0.175.0
+- Tool count console message corrected (66 tools)
+- SSE heartbeat `.unref()` added
+- Monitor workspace log capped with safe fallback
+- Edit history capped at 10 entries per message
+
+## [5.1.0] - 2026-03-19
+
+### Major — True Autonomy Engine + Team Intelligence + Scale to 100
+
+Built by a 4-agent team (Backend, Protocol, Tester, Coordinator) + Advisor agent, working autonomously.
+
+### Added — Autonomy Engine (v5.0)
+- **get_work** — 9-level priority waterfall: workflow step > messages > unclaimed tasks > help requests > reviews > blocked tasks > 30s listen > prep work > idle
+- **verify_and_advance** — confidence-gated auto-advancement (>=70 auto, 40-69 flag, <40 help)
+- **start_plan** — one-click autonomous plan launch with parallel step activation
+- **retry_with_improvement** — 3-attempt retry with KB skill accumulation, team escalation
+- **Parallel workflow steps** — dependency graph with `depends_on`, `findReadySteps` resolver
+- **Autonomous mode** — proactive work loop guide, tiered cooldowns (0ms handoffs), 30s listen cap, relaxed send limits
+
+### Added — Team Intelligence
+- **Auto-role assignment** — lead/quality/implementer/monitor/advisor roles based on team size
+- **Quality Lead** — always-on checker with dedicated guide, review-retry loop, auto-approve after 2 rounds
+- **Monitor Agent** — system health overseer at 10+ agents: idle detection, circular escalation detection, auto-intervention, failover
+- **Advisor Agent** — strategic thinker at 5+ agents: reads all work, gives ideas, challenges assumptions
+- **Self-continuation** — agents never ask user, find next work automatically
+- **Smart prompt distribution** — auto-generates workflows from natural language prompts
+
+### Added — Advanced Autonomy (10 features)
+- Task-level circuit breaker (blocked_permanent after 3 agent failures)
+- Quality Lead instant failover (highest reputation auto-promoted)
+- Context inheritance on escalation (full failure history)
+- Agent circuit breaker (consecutive_rejections tracking, auto-demotion)
+- Dynamic role fluidity (workload-based rebalancing)
+- Skill-based task routing (agent affinity scoring)
+- Work stealing (idle agents claim from busy agents)
+- Checkpointing (resumable work via workspace snapshots)
+- Retrospective learning (aggregate failure pattern analysis)
+- Backpressure signal (queue depth warnings)
+
+### Added — Scale to 100 Agents
+- Per-agent heartbeat files (zero write contention)
+- Cooldown cap (3s max regardless of agent count, 0ms for handoffs)
+- Byte-offset message reads (O(new_messages) not O(all))
+- Exponential backoff on file locks (1ms-500ms, not 50ms busy-wait)
+- isPidAlive cache (5s TTL, saves 10K syscalls/sec)
+- SSE debounce (heartbeat files filtered, 2s debounce)
+- Task keyword cache (30s TTL)
+- Sticky roles (no churn on agent reconnect)
+- Zero cooldown for channel messages + handoffs in autonomous mode
+
+### Added — Dashboard & CLI
+- **Plan execution view** — progress bar, step cards, confidence, controls (pause/stop/skip/reassign)
+- **Monitor health panel** — agent health grid, intervention log, system metrics
+- **`npx let-them-talk run "prompt" --agents N`** — one-command autonomous execution
+- **npm test** wires v5 test suite (158+ tests on every run)
+- Updated conversation templates (autonomous format with depends_on)
+
+### Stats
+- server.js: 6,200+ lines, 62+ tools
+- 175+ automated tests, 0 fail
+- 5 conversation templates (autonomous format)
+- Built in ~2 hours by autonomous agent team
+
+## [4.3.0] - 2026-03-17
+
+### Major — 3D Hub Game World, World Builder, Jukebox
+
+Built by a 5-agent team (Architect, Builder, Tester, Optimizer, Protocol) working in parallel.
+
+### Added — 3D Hub Game Features
+- **World Builder** — Press B in player mode to open builder panel. 16 placeable assets across 5 categories (structural, furniture, decor, tech, lighting). Grid snap, ghost preview, R to rotate, right-click delete, Ctrl+Z undo. Draggable panel, works in fullscreen.
+- **Jukebox** — Wurlitzer 1015-style jukebox in bar area with neon glow animation. Press E to interact. 4 playlist selector with YouTube popup player. Music persists while exploring.
+- **Minimap** — 140px radar overlay showing agent positions (color-coded by status) and player location. Only visible in fullscreen mode.
+- **Controls HUD** — Press H to toggle keybind reference panel. Auto-shows for 4 seconds on world entry.
+- **Fullscreen** — Dashboard fullscreen button now fullscreens only the 3D Hub (game mode), not the entire page.
+
+### Added — Character Intelligence
+- **Emotion system** — 11 emotion presets (happy, frustrated, thinking, excited, surprised, etc.) with auto-triggers from message content. Temporary face expression changes with auto-revert.
+- **Social visits** — Idle agents randomly walk to other agents' desks to chat (max 2 concurrent walks).
+- **Glance reactions** — Sitting agents turn heads toward speakers when messages are sent.
+- **Head nods** — Periodic nod animation when being visited by another agent.
+- **Auto coffee break** — Sleeping agents walk to rest area, return to desk when active again.
+- **Non-blocking input overlay** — Replaced browser prompt() dialogs with styled HTML overlay for click commands.
+
+### Added — Dashboard
+- **Respawn button** — One-click respawn for dead agents. Generates resume prompt from recovery snapshot + profile + tasks + recent history.
+- **Respawn API** — `GET /api/agents/:name/respawn-prompt` endpoint with full context generation.
+- **World Builder API** — `GET /api/world-layout` + `POST /api/world-save` for persistent world placements.
+- **3D-only fullscreen** — Fullscreen targets 3D container when on 3D Hub tab.
+
+### Fixed
+- **Manager chair spawn** — Stand-up now places player in front of desk (toward door), preventing wall collision.
+- **CSRF on 3D Hub** — Added X-LTT-Request header to all office module POST requests (builder save, command menu actions).
+- **Respawn endpoint validation** — Agent name validated (alphanumeric, max 20 chars) to prevent path traversal.
+- **Builder lazy-load** — Dynamic import() with silent failure prevents builder issues from breaking 3D Hub.
+- **Jukebox popup orphan** — Module-scoped reference survives overlay dismiss/reopen cycles.
+- **Builder drag listener leak** — Stored refs removed in hidePanel().
+- **Jukebox prompt cleanup** — dismissJukebox() called in office3dStop().
+
+### Security
+- npm audit: 0 vulnerabilities
+- CSRF protection verified on all mutating endpoints
+- Input validation on all user-facing API parameters
+- No hardcoded secrets or sensitive data in shipped package
+
 ## [4.2.0] - 2026-03-17
 
 ### Added — Scaling, Reliability & Dashboard
