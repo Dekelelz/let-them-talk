@@ -2561,7 +2561,7 @@ async function toolListenGroup() {
           messages: [],
           message_count: 0,
           retry: true,
-          batch_summary: 'No new messages — call listen_group() again to keep listening.',
+          batch_summary: isManagedMode() ? 'No new messages — call listen() again immediately to keep waiting.' : 'No new messages — call listen_group() again to keep listening.',
         });
       }
     };
@@ -2730,7 +2730,7 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
       result.instructions = `EXECUTION PHASE: Focus on your assigned tasks. Only message the manager (${managed.manager}) if you need help or to report completion.`;
     } else {
       result.should_respond = false;
-      result.instructions = 'DO NOT RESPOND. Wait for the manager to give you the floor. Call listen() or listen_group() to wait.';
+      result.instructions = 'DO NOT RESPOND. Wait for the manager to give you the floor. Call listen() again to wait.';
     }
   }
 
@@ -6111,7 +6111,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.2.3' },
+  { name: 'agent-bridge', version: '5.2.4' },
   { capabilities: { tools: {} } }
 );
 
@@ -7198,7 +7198,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.2.3 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.2.4 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
