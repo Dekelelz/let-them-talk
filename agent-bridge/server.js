@@ -1085,10 +1085,12 @@ function buildGuide(level = 'standard') {
       rules.push('YOU ARE THE MANAGER. You control the conversation. Use yield_floor(agent) to let agents speak. Use set_phase() to change team phase (discussion/planning/execution/review).');
       rules.push('YOUR MANAGER LOOP: 1) Plan the work and assign tasks. 2) Use yield_floor() to give each agent their turn to speak. 3) Call listen() to wait for agent responses. 4) Review responses and decide next steps. 5) Use create_task() and create_workflow() to structure work.');
       rules.push('Use send_message() to give instructions. Use broadcast() for team announcements. Agents cannot speak unless you give them the floor.');
+      rules.push('STRICT RULE: After EVERY action, call listen() to wait for responses. NEVER use sleep(). NEVER use check_messages() in a loop. NEVER stop managing. Your loop is: act → listen() → act → listen(). This loop NEVER ends.');
     } else {
       rules.push('YOU ARE IN MANAGED MODE. The manager controls who speaks. Call listen() to wait for your turn. When the manager gives you the floor via yield_floor(), respond with your work.');
-      rules.push('YOUR LOOP: 1) Call listen() — wait for messages and floor assignments. 2) When you receive a message or get the floor, do the work and respond. 3) Call listen() again. NEVER use sleep(). NEVER poll with check_messages(). listen() handles everything automatically.');
-      rules.push('If you have an active task during execution phase, do the work, then report back to the manager via send_message(). Then call listen() again.');
+      rules.push('YOUR LOOP: 1) Call listen() — wait for messages and floor assignments. 2) When you receive a message or get the floor, do the work and respond. 3) Call listen() again immediately. This loop NEVER ends.');
+      rules.push('If you have an active task during execution phase, do the work, then report back to the manager via send_message(). Then call listen() again immediately.');
+      rules.push('STRICT RULES: NEVER use sleep(). NEVER use check_messages() in a polling loop. NEVER call get_work() in managed mode. NEVER stop listening. Your ONLY loop is: listen() → work → respond → listen(). If listen() times out, call listen() again immediately.');
     }
     rules.push('Keep messages to 2-3 paragraphs max.');
     rules.push('When you finish work, report what you did and what files you changed.');
@@ -1184,7 +1186,8 @@ function buildGuide(level = 'standard') {
   }
 
   // Tier 0 — THE one rule (always included at every level)
-  rules.push('AFTER EVERY ACTION, call listen_group(). This is how you receive messages. Never skip this.');
+  const listenCmd = isManagedMode() ? 'listen()' : (mode === 'group' ? 'listen_group()' : 'listen()');
+  rules.push(`AFTER EVERY ACTION, call ${listenCmd}. This is how you receive messages. NEVER skip this. NEVER use sleep(). NEVER poll with check_messages(). ${listenCmd} is your ONLY way to receive messages.`);
 
   // Minimal level: Tier 0 only — for experienced agents refreshing rules
   if (level === 'minimal') {
@@ -1199,7 +1202,9 @@ function buildGuide(level = 'standard') {
       tier_info: `${rules.length} rules (minimal level, ${aliveCount} agents)`,
       first_steps: mode === 'direct'
         ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait.'
-        : '1. Call get_briefing() for project context. 2. Call listen_group() to join. 3. Respond and listen_group() again.',
+        : mode === 'managed'
+        ? `1. Call get_briefing() for project context. 2. Call listen() to wait for the manager. 3. Respond when given the floor, then listen() again.`
+        : `1. Call get_briefing() for project context. 2. Call listen_group() to join. 3. Respond and listen_group() again.`,
     };
   }
 
@@ -1226,7 +1231,7 @@ function buildGuide(level = 'standard') {
 
   // Tier 3 — large teams (shown when 5+ agents)
   if (aliveCount >= 5) {
-    rules.push('listen_group blocks until messages arrive. Do not stop listening.');
+    rules.push(`${listenCmd} blocks until messages arrive. NEVER stop listening. NEVER use sleep() or check_messages() loops.`);
     rules.push('Tasks auto-create channels (#task-xxx). Use them for focused discussion instead of #general.');
     rules.push('Use channels to split into sub-teams. Do not discuss everything in #general.');
   }
@@ -6106,7 +6111,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.2.2' },
+  { name: 'agent-bridge', version: '5.2.3' },
   { capabilities: { tools: {} } }
 );
 
@@ -7193,7 +7198,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.2.2 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.2.3 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
