@@ -26,7 +26,6 @@ function printUsage() {
     npx let-them-talk dashboard --lan   Launch dashboard accessible on LAN (phone/tablet)
     npx let-them-talk reset             Clear all conversation data
     npx let-them-talk msg <agent> <text> Send a message to an agent
-    npx let-them-talk run "prompt" [--agents N] [--timeout M]  Autonomous execution with N agents, auto-stop after M minutes
     npx let-them-talk status             Show active agents and message count
     npx let-them-talk uninstall          Remove agent-bridge from all CLI configs
     npx let-them-talk help               Show this help message
@@ -393,9 +392,6 @@ function init() {
     console.log('  Open two terminals and start a conversation between agents.');
     console.log('  Tip: Use "npx let-them-talk init --template pair" for ready-made prompts.');
     console.log('');
-    console.log('  \x1b[1m  Try autonomous mode:\x1b[0m');
-    console.log('    npx let-them-talk run "build a REST API" --agents 3');
-    console.log('');
     console.log('  \x1b[1m  Monitor:\x1b[0m');
     console.log('    npx let-them-talk dashboard');
     console.log('    npx let-them-talk status');
@@ -658,157 +654,6 @@ function cliStatus() {
   console.log('');
 }
 
-// v5.0: One-command autonomous execution
-function cliRun() {
-  const prompt = process.argv[3];
-  if (!prompt) {
-    console.error('  Usage: npx let-them-talk run "build a login system" [--agents N] [--timeout M]');
-    console.error('  Spawns N agent processes, auto-assigns roles, creates autonomous workflow, and starts execution.');
-    process.exit(1);
-  }
-
-  // Parse --agents flag (default: 3)
-  let agentCount = 3;
-  const agentsIdx = process.argv.indexOf('--agents');
-  if (agentsIdx !== -1 && process.argv[agentsIdx + 1]) {
-    agentCount = Math.max(2, Math.min(10, parseInt(process.argv[agentsIdx + 1]) || 3));
-  }
-
-  // Parse --timeout flag (default: no timeout, in minutes)
-  let timeoutMin = 0;
-  const timeoutIdx = process.argv.indexOf('--timeout');
-  if (timeoutIdx !== -1 && process.argv[timeoutIdx + 1]) {
-    timeoutMin = Math.max(1, parseInt(process.argv[timeoutIdx + 1]) || 0);
-  }
-
-  const cwd = process.cwd();
-  const dir = path.join(cwd, '.agent-bridge');
-  const serverPath = path.join(__dirname, 'server.js');
-
-  // Ensure data directory exists
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  // Set group conversation mode
-  const configPath = path.join(dir, 'config.json');
-  const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-  config.conversation_mode = 'group';
-  fs.writeFileSync(configPath, JSON.stringify(config));
-
-  // Agent names based on count
-  const AGENT_NAMES = ['Lead', 'Builder', 'Reviewer', 'Architect', 'Frontend', 'Backend', 'Tester', 'Designer', 'DevOps', 'Security'];
-  const names = AGENT_NAMES.slice(0, agentCount);
-
-  console.log('');
-  console.log('  Let Them Talk — Autonomous Run');
-  console.log('  ===============================');
-  console.log('  Prompt: ' + prompt);
-  console.log('  Agents: ' + agentCount + ' (' + names.join(', ') + ')');
-  console.log('  Mode: Autonomous (proactive work loop)');
-  console.log('');
-
-  const { spawn } = require('child_process');
-  const children = [];
-
-  // Spawn agent processes
-  for (let i = 0; i < agentCount; i++) {
-    const agentName = names[i];
-    console.log('  Spawning agent: ' + agentName + '...');
-
-    const child = spawn('node', [serverPath], {
-      env: {
-        ...process.env,
-        AGENT_BRIDGE_DATA_DIR: dir,
-        AGENT_BRIDGE_AUTO_REGISTER: agentName,
-        AGENT_BRIDGE_AUTO_PROMPT: i === 0 ? prompt : '', // only first agent gets the prompt
-      },
-      stdio: 'pipe',
-      cwd: cwd,
-    });
-
-    child.on('error', (err) => {
-      console.error('  [' + agentName + '] Error: ' + err.message);
-    });
-
-    child.on('exit', (code) => {
-      if (code !== 0 && code !== null) {
-        console.log('  \x1b[33m[' + agentName + '] Crashed (code ' + code + '). Auto-restarting...\x1b[0m');
-        const restart = spawn('node', [serverPath], {
-          env: { ...process.env, AGENT_BRIDGE_DATA_DIR: dir, AGENT_BRIDGE_AUTO_REGISTER: agentName },
-          stdio: 'pipe', cwd: cwd,
-        });
-        const entry = children.find(c => c.name === agentName);
-        if (entry) entry.process = restart;
-      } else {
-        console.log('  [' + agentName + '] Exited.');
-      }
-    });
-
-    children.push({ name: agentName, process: child });
-  }
-
-  console.log('');
-  console.log('  All ' + agentCount + ' agents spawned. They will auto-register and start working.');
-  console.log('  Open the dashboard to monitor: npx let-them-talk dashboard');
-  console.log('');
-  console.log('  Press Ctrl+C to stop all agents.');
-  console.log('');
-
-  // Inject the prompt as a dashboard message after agents register
-  setTimeout(() => {
-    try {
-      const messagesFile = path.join(dir, 'messages.jsonl');
-      const msg = {
-        id: 'run_' + Date.now().toString(36),
-        from: 'Dashboard',
-        to: '__group__',
-        content: prompt,
-        timestamp: new Date().toISOString(),
-        broadcast: true,
-      };
-      fs.appendFileSync(messagesFile, JSON.stringify(msg) + '\n');
-      const historyFile = path.join(dir, 'history.jsonl');
-      fs.appendFileSync(historyFile, JSON.stringify(msg) + '\n');
-      console.log('  Prompt injected to team. Agents will pick it up via get_work().');
-    } catch (e) {
-      console.error('  Failed to inject prompt: ' + e.message);
-    }
-  }, 3000); // 3s delay for agents to register
-
-  // Clean shutdown on Ctrl+C
-  process.on('SIGINT', () => {
-    console.log('\n  Stopping all agents...');
-    for (const c of children) {
-      try { c.process.kill(); } catch {}
-    }
-    process.exit(0);
-  });
-
-  // Auto-stop after --timeout minutes
-  if (timeoutMin > 0) {
-    console.log('  Auto-stop in ' + timeoutMin + ' minute(s).');
-    setTimeout(() => {
-      console.log('\n  Timeout reached (' + timeoutMin + 'min). Stopping all agents...');
-      for (const c of children) { try { c.process.kill(); } catch {} }
-      process.exit(0);
-    }, timeoutMin * 60000);
-  }
-
-  // Periodic progress updates every 30s
-  setInterval(() => {
-    try {
-      const agentsData = fs.existsSync(path.join(dir, 'agents.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'agents.json'), 'utf8')) : {};
-      const online = Object.values(agentsData).filter(a => {
-        try { process.kill(a.pid, 0); return true; } catch { return false; }
-      }).length;
-      const history = fs.existsSync(path.join(dir, 'history.jsonl')) ? fs.readFileSync(path.join(dir, 'history.jsonl'), 'utf8').trim().split(/\r?\n/).filter(l => l.trim()).length : 0;
-      const tasksData = fs.existsSync(path.join(dir, 'tasks.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'tasks.json'), 'utf8')) : [];
-      const done = Array.isArray(tasksData) ? tasksData.filter(t => t.status === 'done').length : 0;
-      const active = Array.isArray(tasksData) ? tasksData.filter(t => t.status === 'in_progress').length : 0;
-      console.log(`  \x1b[90m[${new Date().toLocaleTimeString()}]\x1b[0m ${online} agents | ${history} msgs | ${done} done, ${active} active`);
-    } catch {}
-  }, 30000);
-}
-
 // v5.0: Diagnostic health check
 function cliDoctor() {
   console.log('');
@@ -1064,9 +909,6 @@ switch (command) {
     break;
   case 'status':
     cliStatus();
-    break;
-  case 'run':
-    cliRun();
     break;
   case 'uninstall':
   case 'remove':

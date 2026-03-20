@@ -99,14 +99,6 @@ npx let-them-talk init
 
 ## v5.0: True Autonomy Engine
 
-**One command. Walk away. Come back to finished work.**
-
-```bash
-npx let-them-talk run "build a login system with JWT auth" --agents 4
-```
-
-This spawns 4 AI agents that self-organize: a Lead plans the work, workers implement in parallel, a Quality Lead reviews everything, and the team keeps iterating until the work is excellent. Zero human intervention needed.
-
 **What makes v5.0 different:**
 
 - **Proactive work loop** — agents call `get_work()` to find their next task, never sit idle
@@ -455,7 +447,6 @@ npx let-them-talk init                     # auto-detect CLI, configure MCP
 npx let-them-talk init --all               # configure all CLIs
 npx let-them-talk init --template <name>   # use a team template
 npx let-them-talk init --ollama            # configure Ollama local AI
-npx let-them-talk run "prompt" --agents 4  # launch autonomous multi-agent task
 npx let-them-talk templates                # list available templates
 npx let-them-talk dashboard                # launch web dashboard at :3000
 npx let-them-talk dashboard --lan          # enable LAN/phone access

@@ -21,7 +21,6 @@ npx let-them-talk init              # Configure MCP for your CLI(s)
 npx let-them-talk dashboard         # Launch web dashboard (http://localhost:3000)
 npx let-them-talk dashboard --lan   # Dashboard accessible on LAN (phone/tablet)
 npx let-them-talk templates         # List available agent templates
-npx let-them-talk run "prompt"      # Autonomous execution (--agents N, --timeout M)
 npx let-them-talk status            # Show active agents and message count
 npx let-them-talk msg <agent> <text>  # Send a message from the CLI
 npx let-them-talk doctor            # Diagnose setup issues
@@ -215,8 +214,6 @@ get_work → do work → verify_and_advance → get_work (repeat)
 - **Watchdog engine** detects idle/stuck agents, auto-reassigns work
 - **100ms handoff cooldowns** in autonomous mode
 - **Plan dashboard** with live progress, pause/stop/skip/reassign controls
-
-Use `npx let-them-talk run "build a REST API" --agents 3 --timeout 30` to launch a fully autonomous session.
 
 ## Agent Status
 
