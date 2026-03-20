@@ -1320,7 +1320,7 @@ function apiLaunchAgent(body) {
   const safeName = (agent_name || '').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
   const launchPrompt = prompt || (safeName ? `You are agent "${safeName}". Use the register tool to register as "${safeName}", then use listen to wait for messages.` : `Register with the agent-bridge MCP tools and use listen to wait for messages.`);
 
-  // Try to launch terminal on Windows
+  // Try to launch terminal — user pastes prompt from clipboard after CLI loads
   if (process.platform === 'win32') {
     spawn('cmd', ['/c', 'start', 'cmd', '/k', cliCmd], { cwd: projectDir, shell: false, detached: true, stdio: 'ignore' });
     return { success: true, launched: true, cli, project_dir: projectDir, prompt: launchPrompt };
@@ -1328,13 +1328,10 @@ function apiLaunchAgent(body) {
 
   // Non-Windows: return command for manual execution
   return {
-    success: true,
-    launched: false,
-    cli,
-    project_dir: projectDir,
+    success: true, launched: false, cli, project_dir: projectDir,
     command: `cd "${projectDir}" && ${cliCmd}`,
     prompt: launchPrompt,
-    message: 'Auto-launch not supported on this platform. Run the command manually, then paste the prompt.'
+    message: 'Run the command in a terminal, then paste the prompt.'
   };
 }
 
