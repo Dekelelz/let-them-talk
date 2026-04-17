@@ -6,17 +6,47 @@ const {
 } = require('@modelcontextprotocol/sdk/types.js');
 const fs = require('fs');
 const path = require('path');
+const { resolveDataDir: resolveSharedDataDir } = require('./data-dir');
+const { createCanonicalEventLog } = require('./events/log');
+const { createCanonicalHookState } = require('./events/hooks');
+const { createStateIo } = require('./state/io');
+const { createMessagesState } = require('./state/messages');
+const { createAgentsState } = require('./state/agents');
+const { createTasksWorkflowsState } = require('./state/tasks-workflows');
+const { createCanonicalState, createBranchPathResolvers, sanitizeBranchName } = require('./state/canonical');
+const { createSessionsState } = require('./state/sessions');
+const {
+  analyzeContractFit,
+  buildGuideContractAdvisory,
+  buildRuntimeContractMetadata,
+  createDefaultContractMetadata,
+  resolveAgentContract,
+  sanitizeContractProfilePatch,
+} = require('./agent-contracts');
+const {
+  evaluateAutonomyCandidate,
+  rankClaimableTasks,
+  resolveAgentDecisionContext,
+  selectAutonomyDecisionCandidate,
+} = require('./autonomy/decision-v2');
+const {
+  classifyRetryPolicy,
+  planStalledStepOwnershipChange,
+  planWatchdogActions,
+} = require('./autonomy/watchdog-policy');
+const {
+  buildManagedTeamContractContext,
+  readManagedTeamHookDigest,
+} = require('./managed-team-integration');
 
-// Data dir lives in the project where Claude Code runs, not where the package is installed
-const DATA_DIR = process.env.AGENT_BRIDGE_DATA_DIR || path.join(process.cwd(), '.agent-bridge');
-const MESSAGES_FILE = path.join(DATA_DIR, 'messages.jsonl');
-const HISTORY_FILE = path.join(DATA_DIR, 'history.jsonl');
+// Data dir lives in the active project; local repo package-dir runs resolve back to repo root.
+const DATA_DIR = resolveSharedDataDir();
+const branchPaths = createBranchPathResolvers(DATA_DIR);
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
-const ACKS_FILE = path.join(DATA_DIR, 'acks.json');
-const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+const TASKS_FILE = branchPaths.getTasksFile('main');
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
-const WORKFLOWS_FILE = path.join(DATA_DIR, 'workflows.json');
-const WORKSPACES_DIR = path.join(DATA_DIR, 'workspaces');
+const WORKFLOWS_FILE = branchPaths.getWorkflowsFile('main');
+const WORKSPACES_DIR = branchPaths.getWorkspacesDir('main');
 const BRANCHES_FILE = path.join(DATA_DIR, 'branches.json');
 const DECISIONS_FILE = path.join(DATA_DIR, 'decisions.json');
 const KB_FILE = path.join(DATA_DIR, 'kb.json');
@@ -26,24 +56,34 @@ const VOTES_FILE = path.join(DATA_DIR, 'votes.json');
 const REVIEWS_FILE = path.join(DATA_DIR, 'reviews.json');
 const DEPS_FILE = path.join(DATA_DIR, 'dependencies.json');
 const REPUTATION_FILE = path.join(DATA_DIR, 'reputation.json');
-const COMPRESSED_FILE = path.join(DATA_DIR, 'compressed.json');
 const RULES_FILE = path.join(DATA_DIR, 'rules.json');
+const ASSISTANT_REPLIES_FILE = path.join(DATA_DIR, 'assistant-replies.jsonl');
 // Plugins removed in v3.4.3 — unnecessary attack surface, CLIs have their own extension systems
 
 // In-memory state for this process
-let registeredName = null;
+let registeredName = process.env.FORCE_REGISTER_NAME ? process.env.FORCE_REGISTER_NAME : null;
 let registeredToken = null; // auth token for re-registration
 let lastReadOffset = 0; // byte offset into messages.jsonl for efficient polling
 const channelOffsets = new Map(); // per-channel byte offsets for efficient reads
 let heartbeatInterval = null; // heartbeat timer reference
 let messageSeq = 0; // monotonic sequence counter for message ordering
 let currentBranch = 'main'; // which branch this agent is on
+let currentSessionId = null; // branch-local execution session for this process
 let lastSentAt = 0; // timestamp of last sent message (for group cooldown)
 let sendsSinceLastListen = 0; // enforced: must listen between sends in group mode
-let sendLimit = 1; // default: 1 send per listen cycle (2 if addressed)
+let sendLimit = 10; // default: 10 sends per listen cycle (relaxed for better flow)
 let unaddressedSends = 0; // response budget: unaddressed sends counter
 let budgetResetTime = Date.now(); // resets every 60s
 let _channelSendTimes = {}; // per-channel rate limit sliding window
+
+function getChannelOffsetKey(channelName, branch = currentBranch) {
+  return `${branch}:${channelName}`;
+}
+
+function resetBranchRuntimeOffsets() {
+  lastReadOffset = 0;
+  channelOffsets.clear();
+}
 
 // --- Read cache (eliminates 70%+ redundant disk I/O) ---
 const _cache = {};
@@ -57,32 +97,121 @@ function cachedRead(key, readFn, ttlMs = 2000) {
 }
 function invalidateCache(key) { delete _cache[key]; }
 
-// --- Group conversation mode ---
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const stateIo = createStateIo({
+  dataDir: DATA_DIR,
+  invalidateCache,
+  withFileLock,
+});
 
-function getConfig() {
-  if (!fs.existsSync(CONFIG_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; }
+function resolveProjectionFallback(fallback) {
+  return typeof fallback === 'function' ? fallback() : fallback;
+}
+
+function readJsonProjection(filePath, fallback) {
+  return stateIo.readJsonFile(filePath, resolveProjectionFallback(fallback));
+}
+
+function writeJsonProjection(filePath, data, options = {}) {
+  return stateIo.withLock(filePath, () => stateIo.writeJson(filePath, data, options));
+}
+
+function writeJsonlProjection(filePath, rows) {
+  return stateIo.withLock(filePath, () => stateIo.writeJsonl(filePath, rows));
+}
+
+const messagesState = createMessagesState({ io: stateIo });
+
+const canonicalHooks = createCanonicalHookState({
+  dataDir: DATA_DIR,
+  withLock: withFileLock,
+  sanitizeBranchName,
+});
+
+const canonicalEventLog = createCanonicalEventLog({
+  dataDir: DATA_DIR,
+  withLock: withFileLock,
+  onCommitted: (event) => canonicalHooks.projectCommittedEvent(event),
+  sanitizeBranchName,
+});
+
+const agentsState = createAgentsState({
+  io: stateIo,
+  agentsFile: AGENTS_FILE,
+  heartbeatFile,
+  lockAgentsFile,
+  unlockAgentsFile,
+  processPid: process.pid,
+});
+
+const tasksWorkflowsState = createTasksWorkflowsState({
+  io: stateIo,
+  tasksFile: TASKS_FILE,
+  workflowsFile: WORKFLOWS_FILE,
+  getTasksFile: branchPaths.getTasksFile,
+  getWorkflowsFile: branchPaths.getWorkflowsFile,
+});
+
+const sessionsState = createSessionsState({
+  io: stateIo,
+  branchPaths,
+  canonicalEventLog,
+});
+
+const canonicalState = createCanonicalState({
+  dataDir: DATA_DIR,
+  processPid: process.pid,
+  invalidateCache,
+});
+
+// --- Group conversation mode ---
+function getConfigFile(branch = currentBranch) {
+  return branchPaths.getConfigFile(branch);
+}
+
+function getAcksFile(branch = currentBranch) {
+  return branchPaths.getAcksFile(branch);
+}
+
+function getReadReceiptsFile(branch = currentBranch) {
+  return branchPaths.getReadReceiptsFile(branch);
+}
+
+function getChannelsFile(branch = currentBranch) {
+  return branchPaths.getChannelsFile(branch);
+}
+
+function getCompressedFile(branch = currentBranch) {
+  return branchPaths.getCompressedFile(branch);
+}
+
+function getConfig(branch = currentBranch) {
+  return readJsonProjection(getConfigFile(branch), {});
 }
 
 // File-based lock for config.json (prevents managed state race conditions)
-const CONFIG_LOCK = CONFIG_FILE + '.lock';
-function lockConfigFile() {
+function getConfigLock(branch = currentBranch) {
+  return getConfigFile(branch) + '.lock';
+}
+
+function lockConfigFile(branch = currentBranch) {
+  const configLock = getConfigLock(branch);
   const maxWait = 5000; const start = Date.now();
   while (Date.now() - start < maxWait) {
-    try { fs.writeFileSync(CONFIG_LOCK, String(process.pid), { flag: 'wx' }); return true; }
+    try { fs.writeFileSync(configLock, String(process.pid), { flag: 'wx' }); return true; }
     catch { /* lock exists, wait */ }
     const wait = Date.now(); while (Date.now() - wait < 50) {} // busy-wait 50ms
   }
-  try { fs.unlinkSync(CONFIG_LOCK); } catch {}
-  try { fs.writeFileSync(CONFIG_LOCK, String(process.pid), { flag: 'wx' }); return true; } catch {}
+  try { fs.unlinkSync(configLock); } catch {}
+  try { fs.writeFileSync(configLock, String(process.pid), { flag: 'wx' }); return true; } catch {}
   return false;
 }
-function unlockConfigFile() { try { fs.unlinkSync(CONFIG_LOCK); } catch {} }
 
-function saveConfig(config) {
-  ensureDataDir();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config));
+function unlockConfigFile(branch = currentBranch) {
+  try { fs.unlinkSync(getConfigLock(branch)); } catch {}
+}
+
+function saveConfig(config, branch = currentBranch) {
+  writeJsonProjection(getConfigFile(branch), config);
 }
 
 function isGroupMode() {
@@ -106,8 +235,8 @@ function isManagedMode() {
   return getConfig().conversation_mode === 'managed';
 }
 
-function getManagedConfig() {
-  const config = getConfig();
+function getManagedConfig(branch = currentBranch) {
+  const config = getConfig(branch);
   return config.managed || {
     manager: null,
     phase: 'discussion',
@@ -118,15 +247,19 @@ function getManagedConfig() {
   };
 }
 
-function saveManagedConfig(managed) {
-  lockConfigFile();
+function saveManagedConfig(managed, branch = currentBranch) {
+  lockConfigFile(branch);
   try {
-    const config = getConfig();
+    const config = getConfig(branch);
     config.managed = managed;
-    saveConfig(config);
+    saveConfig(config, branch);
   } finally {
-    unlockConfigFile();
+    unlockConfigFile(branch);
   }
+}
+
+function cloneManagedState(managed) {
+  return managed == null ? managed : JSON.parse(JSON.stringify(managed));
 }
 
 // Send a system message to a specific agent (written to messages + history)
@@ -144,9 +277,7 @@ function sendSystemMessage(toAgent, content) {
     timestamp: new Date().toISOString(),
     system: true,
   };
-  ensureDataDir();
-  fs.appendFileSync(getMessagesFile(recipientBranch), JSON.stringify(msg) + '\n');
-  fs.appendFileSync(getHistoryFile(recipientBranch), JSON.stringify(msg) + '\n');
+  appendBranchConversationMessage(msg, recipientBranch);
 }
 
 // Send a system message to all registered agents
@@ -163,9 +294,7 @@ function broadcastSystemMessage(content, excludeAgent = null) {
     system: true,
   };
   if (excludeAgent) msg.exclude_agent = excludeAgent;
-  ensureDataDir();
-  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+  appendBranchConversationMessage(msg);
 }
 
 // Rate limiting — prevent broadcast storms and message flooding
@@ -201,9 +330,7 @@ function checkRateLimit(content, to) {
 // --- Helpers ---
 
 function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-  }
+  stateIo.ensureDataDir();
 }
 
 // Data version tracking — enables safe migrations between releases
@@ -244,34 +371,40 @@ function sanitizeName(name) {
   return name;
 }
 
-function consumedFile(agentName) {
+function consumedFile(agentName, branch = currentBranch) {
   sanitizeName(agentName);
-  return path.join(DATA_DIR, `consumed-${agentName}.json`);
+  return branchPaths.getConsumedFile(agentName, branch);
 }
 
-function getConsumedIds(agentName) {
-  const file = consumedFile(agentName);
-  if (!fs.existsSync(file)) return new Set();
-  try {
-    return new Set(JSON.parse(fs.readFileSync(file, 'utf8')));
-  } catch {
-    return new Set();
-  }
+function listConsumedFiles(branch = currentBranch) {
+  if (!fs.existsSync(DATA_DIR)) return [];
+  const prefix = branch === 'main' ? 'consumed-' : `branch-${branch}-consumed-`;
+  return fs.readdirSync(DATA_DIR)
+    .filter((fileName) => fileName.startsWith(prefix) && fileName.endsWith('.json'))
+    .map((fileName) => ({
+      fileName,
+      filePath: path.join(DATA_DIR, fileName),
+      agentName: fileName.slice(prefix.length, -'.json'.length),
+    }));
 }
 
-function saveConsumedIds(agentName, ids) {
+function getConsumedIds(agentName, branch = currentBranch) {
+  return canonicalState.readConsumedMessageIds(agentName, { branch });
+}
+
+function saveConsumedIds(agentName, ids, branch = currentBranch) {
   // Auto-prune when consumed set exceeds 500 entries to prevent unbounded growth
   if (ids.size > 500) {
-    trimConsumedIds(agentName, ids);
+    trimConsumedIds(agentName, ids, branch);
   }
-  fs.writeFileSync(consumedFile(agentName), JSON.stringify([...ids]));
+  canonicalState.writeConsumedMessageIds(agentName, ids, { branch });
 }
 
 // Prune consumed IDs: remove IDs no longer present in messages.jsonl
 // At 100 agents with 5000+ messages, this prevents 500KB+ JSON per agent
-function trimConsumedIds(agentName, ids) {
+function trimConsumedIds(agentName, ids, branch = currentBranch) {
   try {
-    const msgFile = getMessagesFile(currentBranch);
+    const msgFile = getMessagesFile(branch);
     if (!fs.existsSync(msgFile)) { ids.clear(); return; }
     const content = fs.readFileSync(msgFile, 'utf8').trim();
     if (!content) { ids.clear(); return; }
@@ -286,6 +419,58 @@ function trimConsumedIds(agentName, ids) {
       if (!currentIds.has(id)) ids.delete(id);
     }
   } catch {}
+}
+
+function defaultChannelsData() {
+  return {
+    general: {
+      description: 'General channel — all agents',
+      members: ['*'],
+      created_by: 'system',
+      created_at: new Date().toISOString(),
+    },
+  };
+}
+
+function normalizeChannelsData(data) {
+  const normalized = data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
+  if (!normalized.general) normalized.general = defaultChannelsData().general;
+  return normalized;
+}
+
+function readJsonFileSafe(filePath, fallback) {
+  return readJsonProjection(filePath, fallback);
+}
+
+function writeJsonFileRaw(filePath, data) {
+  writeJsonProjection(filePath, data);
+}
+
+function writeJsonlFileRaw(filePath, rows) {
+  writeJsonlProjection(filePath, rows);
+}
+
+function copyScopedFileIfPresent(sourcePath, targetPath) {
+  if (!sourcePath || sourcePath === targetPath || !fs.existsSync(sourcePath)) return false;
+  ensureDataDir();
+  withFileLock(targetPath, () => {
+    if (fs.existsSync(sourcePath)) fs.copyFileSync(sourcePath, targetPath);
+  });
+  return true;
+}
+
+function ensureJsonProjection(filePath, sourcePath, fallbackValue) {
+  if (fs.existsSync(filePath)) return;
+  if (copyScopedFileIfPresent(sourcePath, filePath)) return;
+  writeJsonFileRaw(filePath, typeof fallbackValue === 'function' ? fallbackValue() : fallbackValue);
+}
+
+function filterMessagesUpToTimestamp(messages, cutoffMs) {
+  if (!Number.isFinite(cutoffMs)) return messages.slice();
+  return messages.filter((message) => {
+    const messageTime = new Date(message.timestamp || 0).getTime();
+    return !Number.isFinite(messageTime) || messageTime <= cutoffMs;
+  });
 }
 
 function readJsonl(file) {
@@ -406,36 +591,26 @@ function getAgents() {
 }
 
 function saveAgents(agents) {
-  // Safe write: serialize first, then write complete string
-  // This minimizes the window where the file could be truncated
-  const data = JSON.stringify(agents);
-  if (data && data.length > 2) {
-    fs.writeFileSync(AGENTS_FILE, data);
-  }
-  invalidateCache('agents');
+  return agentsState.saveAgents(agents);
 }
 
 // --- Per-agent heartbeat files (scale fix: eliminates agents.json write contention at 100+ agents) ---
 function heartbeatFile(name) { return path.join(DATA_DIR, `heartbeat-${name}.json`); }
 
-function touchHeartbeat(name) {
-  if (!name) return;
+function touchHeartbeat(name, options = {}) {
   try {
-    fs.writeFileSync(heartbeatFile(name), JSON.stringify({
-      last_activity: new Date().toISOString(),
-      pid: process.pid,
-    }));
+    return canonicalState.recordAgentHeartbeat(name, {
+      actorAgent: options.actorAgent || name,
+      sessionId: options.sessionId || (name === registeredName ? currentSessionId : null),
+      at: options.at,
+      reason: options.reason || 'heartbeat',
+    });
   } catch {}
 }
 
 
-function getAcks() {
-  if (!fs.existsSync(ACKS_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(ACKS_FILE, 'utf8'));
-  } catch {
-    return {};
-  }
+function getAcks(branch = currentBranch) {
+  return readJsonProjection(getAcksFile(branch), {});
 }
 
 // Cache for isPidAlive results — avoids redundant process.kill calls at 100-agent scale
@@ -599,17 +774,13 @@ function autoCompact() {
     const aliveAgentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
     const allConsumed = new Set();
     const perAgentConsumed = {};
-    if (fs.existsSync(DATA_DIR)) {
-      for (const f of fs.readdirSync(DATA_DIR)) {
-        if (f.startsWith('consumed-') && f.endsWith('.json')) {
-          const agentName = f.replace('consumed-', '').replace('.json', '');
-          try {
-            const ids = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
-            perAgentConsumed[agentName] = new Set(ids);
-            ids.forEach(id => allConsumed.add(id));
-          } catch {}
-        }
-      }
+    for (const consumedEntry of listConsumedFiles(currentBranch)) {
+      try {
+        const ids = readJsonProjection(consumedEntry.filePath, []);
+        if (!Array.isArray(ids)) continue;
+        perAgentConsumed[consumedEntry.agentName] = new Set(ids);
+        ids.forEach(id => allConsumed.add(id));
+      } catch {}
     }
 
     // Keep messages that are NOT fully consumed
@@ -650,14 +821,13 @@ function autoCompact() {
 
     // Trim consumed ID files — keep only IDs still in active messages
     const activeIds = new Set(active.map(m => m.id));
-    for (const f of fs.readdirSync(DATA_DIR)) {
-      if (f.startsWith('consumed-') && f.endsWith('.json')) {
-        try {
-          const ids = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
-          const trimmed = ids.filter(id => activeIds.has(id));
-          fs.writeFileSync(path.join(DATA_DIR, f), JSON.stringify(trimmed));
-        } catch {}
-      }
+    for (const consumedEntry of listConsumedFiles(currentBranch)) {
+      try {
+        const ids = readJsonProjection(consumedEntry.filePath, []);
+        if (!Array.isArray(ids)) continue;
+        const trimmed = ids.filter(id => activeIds.has(id));
+        writeJsonProjection(consumedEntry.filePath, trimmed);
+      } catch {}
     }
   } catch {}
 }
@@ -666,8 +836,7 @@ function autoCompact() {
 const PERMISSIONS_FILE = path.join(DATA_DIR, 'permissions.json');
 
 function getPermissions() {
-  if (!fs.existsSync(PERMISSIONS_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(PERMISSIONS_FILE, 'utf8')); } catch { return {}; }
+  return readJsonProjection(PERMISSIONS_FILE, {});
 }
 
 function canSendTo(sender, recipient) {
@@ -688,19 +857,18 @@ function canSendTo(sender, recipient) {
 }
 
 // --- Read receipts helpers ---
-const READ_RECEIPTS_FILE = path.join(DATA_DIR, 'read_receipts.json');
-
-function getReadReceipts() {
-  if (!fs.existsSync(READ_RECEIPTS_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(READ_RECEIPTS_FILE, 'utf8')); } catch { return {}; }
+function getReadReceipts(branch = currentBranch) {
+  return readJsonProjection(getReadReceiptsFile(branch), {});
 }
 
-function markAsRead(agentName, messageId) {
-  ensureDataDir();
-  const receipts = getReadReceipts();
-  if (!receipts[messageId]) receipts[messageId] = {};
-  receipts[messageId][agentName] = new Date().toISOString();
-  fs.writeFileSync(READ_RECEIPTS_FILE, JSON.stringify(receipts));
+function markAsRead(agentName, messageId, branch = currentBranch) {
+  const file = getReadReceiptsFile(branch);
+  stateIo.withLock(file, () => {
+    const receipts = readJsonProjection(file, {});
+    if (!receipts[messageId]) receipts[messageId] = {};
+    receipts[messageId][agentName] = new Date().toISOString();
+    stateIo.writeJson(file, receipts);
+  });
 }
 
 // Get unconsumed messages for an agent (full scan — used by check_messages and initial load)
@@ -733,12 +901,16 @@ function getUnconsumedMessages(agentName, fromFilter = null) {
   const myTaskIds = useRelevanceFilter ? new Set(getTasks().filter(t => t.assignee === agentName && t.status === 'in_progress').map(t => t.id)) : null;
 
   return messages.filter(m => {
-    if (m.to !== agentName && m.to !== '__group__' && m.to !== '__all__') return false;
+    // PRIORITY: Owner/Dashboard messages are ALWAYS delivered (never filtered)
+    const isOwnerMessage = m.from === 'Dashboard' || m.from === 'Owner' || m.from === 'dashboard' || m.from === 'owner';
+    if (!isOwnerMessage) {
+      if (m.to !== agentName && m.to !== '__group__' && m.to !== '__all__') return false;
+    }
     if (m.to === '__group__' && m.from === agentName) return false;
     if (m.exclude_agent && m.exclude_agent === agentName) return false;
     if (consumed.has(m.id)) return false;
-    if (fromFilter && m.from !== fromFilter && !m.system) return false;
-    if (perms[agentName] && perms[agentName].can_read) {
+    if (fromFilter && m.from !== fromFilter && !m.system && !isOwnerMessage) return false;
+    if (!isOwnerMessage && perms[agentName] && perms[agentName].can_read) {
       const allowed = perms[agentName].can_read;
       if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(m.from) && !m.system) return false;
     }
@@ -807,37 +979,55 @@ function getDefaultAvatar(name) {
   return BUILT_IN_AVATARS[hashName(name) % BUILT_IN_AVATARS.length];
 }
 
+function createDefaultProfileRecord(name, createdAt = new Date().toISOString()) {
+  return Object.assign({
+    display_name: name,
+    avatar: getDefaultAvatar(name),
+    bio: '',
+    role: '',
+    created_at: createdAt,
+  }, createDefaultContractMetadata());
+}
+
 // --- Workspace helpers ---
 
 function ensureWorkspacesDir() {
   if (!fs.existsSync(WORKSPACES_DIR)) fs.mkdirSync(WORKSPACES_DIR, { recursive: true, mode: 0o700 });
 }
 
-function getWorkspace(agentName) {
-  const file = path.join(WORKSPACES_DIR, `${sanitizeName(agentName)}.json`);
-  if (!fs.existsSync(file)) return {};
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+function getWorkspace(agentName, branch = currentBranch) {
+  return canonicalState.readWorkspace(sanitizeName(agentName), { branch });
 }
 
-function saveWorkspace(agentName, data) {
-  ensureWorkspacesDir();
-  fs.writeFileSync(path.join(WORKSPACES_DIR, `${sanitizeName(agentName)}.json`), JSON.stringify(data));
+function saveWorkspace(agentName, data, options = {}) {
+  const actor = options.actor || registeredName || agentName;
+  const sessionId = options.sessionId !== undefined
+    ? options.sessionId
+    : (actor === registeredName ? currentSessionId : null);
+  const result = canonicalState.saveWorkspace(agentName, data, {
+    actor,
+    sessionId,
+    branch: options.branch || currentBranch,
+    commandId: options.commandId || null,
+    causationId: options.causationId || null,
+    correlationId: options.correlationId || `workspace:${agentName}`,
+    key: options.key,
+    keys: options.keys,
+    updatedAt: options.updatedAt,
+  });
+  return result && result.workspace ? result.workspace : data;
 }
 
 // --- Workflow helpers ---
 
-function getWorkflows() {
-  return cachedRead('workflows', () => {
-    if (!fs.existsSync(WORKFLOWS_FILE)) return [];
-    try { return JSON.parse(fs.readFileSync(WORKFLOWS_FILE, 'utf8')); } catch { return []; }
-  }, 2000);
+function getWorkflows(branchName = currentBranch) {
+  const branch = sanitizeBranchName(branchName || 'main');
+  return cachedRead(`workflows:${branch}`, () => canonicalState.listWorkflows({ branch }), 2000);
 }
 
-function saveWorkflows(workflows) {
-  withFileLock(WORKFLOWS_FILE, () => {
-    invalidateCache('workflows');
-    fs.writeFileSync(WORKFLOWS_FILE, JSON.stringify(workflows));
-  });
+function saveWorkflows(workflows, branchName = currentBranch) {
+  const branch = sanitizeBranchName(branchName || 'main');
+  return tasksWorkflowsState.saveWorkflows(workflows, { branch });
 }
 
 // --- Autonomous mode detection ---
@@ -849,6 +1039,7 @@ function isAutonomousMode() {
 function hasActiveWorkflowStep(agentName) {
   const workflows = getWorkflows();
   return workflows.some(wf =>
+    workflowMatchesActiveBranch(wf) &&
     wf.status === 'active' &&
     wf.steps.some(s => s.assignee === agentName && s.status === 'in_progress')
   );
@@ -856,10 +1047,15 @@ function hasActiveWorkflowStep(agentName) {
 
 // --- Autonomous work loop helpers (get_work / verify_and_advance support) ---
 
+function workflowMatchesActiveBranch(workflow, branchName = currentBranch) {
+  return sanitizeBranchName((workflow && workflow.branch_id) || 'main') === sanitizeBranchName(branchName || 'main');
+}
+
 function findMyActiveWorkflowStep() {
   if (!registeredName) return null;
   const workflows = getWorkflows();
   for (const wf of workflows) {
+    if (!workflowMatchesActiveBranch(wf)) continue;
     if (wf.status !== 'active') continue;
     const step = wf.steps.find(s => s.assignee === registeredName && s.status === 'in_progress');
     if (step) return { ...step, workflow_id: wf.id, workflow_name: wf.name };
@@ -975,6 +1171,7 @@ function findUpcomingStepsForMe() {
   if (!registeredName) return null;
   const workflows = getWorkflows();
   for (const wf of workflows) {
+    if (!workflowMatchesActiveBranch(wf)) continue;
     if (wf.status !== 'active') continue;
     const step = wf.steps.find(s => s.assignee === registeredName && s.status === 'pending');
     if (step) return { ...step, workflow_id: wf.id, workflow_name: wf.name };
@@ -1035,14 +1232,484 @@ function saveBranches(branches) {
   fs.writeFileSync(BRANCHES_FILE, JSON.stringify(branches));
 }
 
-function getMessagesFile(branch) {
-  if (!branch || branch === 'main') return MESSAGES_FILE;
-  return path.join(DATA_DIR, `branch-${sanitizeName(branch)}-messages.jsonl`);
+function getMessagesFile(branch = currentBranch) {
+  return branchPaths.getMessagesFile(branch);
 }
 
-function getHistoryFile(branch) {
-  if (!branch || branch === 'main') return HISTORY_FILE;
-  return path.join(DATA_DIR, `branch-${sanitizeName(branch)}-history.jsonl`);
+function getHistoryFile(branch = currentBranch) {
+  return branchPaths.getHistoryFile(branch);
+}
+
+function getChannelMessagesFile(channelName, branch = currentBranch) {
+  return branchPaths.getChannelMessagesFile(channelName, branch);
+}
+
+function getChannelHistoryFile(channelName, branch = currentBranch) {
+  return branchPaths.getChannelHistoryFile(channelName, branch);
+}
+
+function appendConversationMessage(message, messageFile, historyFile) {
+  return messagesState.appendConversationMessage(message, { messageFile, historyFile });
+}
+
+function appendBranchConversationMessage(message, branch = currentBranch) {
+  return appendConversationMessage(message, getMessagesFile(branch), getHistoryFile(branch));
+}
+
+function appendChannelConversationMessage(message, channel, branch = currentBranch) {
+  return appendConversationMessage(message, getChannelMessagesFile(channel, branch), getChannelHistoryFile(channel, branch));
+}
+
+function appendAssistantReplyMessage(message) {
+  return messagesState.appendAuxiliaryMessage(message, ASSISTANT_REPLIES_FILE);
+}
+
+function emptyCompressedState() {
+  return { segments: [], last_compressed_at: null };
+}
+
+function seedBranchChannelProjection(channelName, branch, sourceBranch = 'main', copyMessages = true) {
+  const targetHistoryFile = getChannelHistoryFile(channelName, branch);
+  const targetMessagesFile = getChannelMessagesFile(channelName, branch);
+  const sourceHistoryFile = sourceBranch ? getChannelHistoryFile(channelName, sourceBranch) : null;
+  const sourceMessagesFile = sourceBranch ? getChannelMessagesFile(channelName, sourceBranch) : null;
+
+  if (!fs.existsSync(targetHistoryFile)) {
+    if (!copyScopedFileIfPresent(sourceHistoryFile, targetHistoryFile)) writeJsonlFileRaw(targetHistoryFile, []);
+  }
+
+  if (!fs.existsSync(targetMessagesFile)) {
+    if (copyMessages && !copyScopedFileIfPresent(sourceMessagesFile, targetMessagesFile)) {
+      writeJsonlFileRaw(targetMessagesFile, []);
+    }
+    if (!copyMessages) {
+      writeJsonlFileRaw(targetMessagesFile, []);
+    }
+  }
+}
+
+function ensureBranchLocalP0State(branch) {
+  if (!branch || branch === 'main') return;
+
+  ensureJsonProjection(getAcksFile(branch), getAcksFile('main'), {});
+  ensureJsonProjection(getReadReceiptsFile(branch), getReadReceiptsFile('main'), {});
+  ensureJsonProjection(getConfigFile(branch), getConfigFile('main'), {});
+  ensureJsonProjection(getCompressedFile(branch), getCompressedFile('main'), emptyCompressedState);
+  ensureJsonProjection(getChannelsFile(branch), getChannelsFile('main'), defaultChannelsData);
+
+  if (listConsumedFiles(branch).length === 0) {
+    for (const consumedEntry of listConsumedFiles('main')) {
+      ensureJsonProjection(consumedFile(consumedEntry.agentName, branch), consumedEntry.filePath, []);
+    }
+  }
+
+  invalidateCache(`channels:${branch}`);
+  const channels = getChannelsData(branch);
+  for (const channelName of Object.keys(channels)) {
+    if (channelName === 'general') continue;
+    seedBranchChannelProjection(channelName, branch, 'main', true);
+  }
+}
+
+function filterAckLikeMapByMessageIds(sourceMap, allowedIds) {
+  const filtered = {};
+  for (const [messageId, value] of Object.entries(sourceMap || {})) {
+    if (allowedIds.has(messageId)) filtered[messageId] = value;
+  }
+  return filtered;
+}
+
+function filterCompressedForFork(compressed, forkTimestampMs) {
+  const segments = Array.isArray(compressed && compressed.segments) ? compressed.segments : [];
+  return {
+    ...(compressed && typeof compressed === 'object' ? compressed : emptyCompressedState()),
+    segments: segments.filter((segment) => {
+      const segmentTime = new Date(segment.to_time || 0).getTime();
+      return !Number.isFinite(forkTimestampMs) || !Number.isFinite(segmentTime) || segmentTime <= forkTimestampMs;
+    }),
+  };
+}
+
+function remapBranchIdsForFork(value, sourceBranch, targetBranch) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => remapBranchIdsForFork(entry, sourceBranch, targetBranch));
+  }
+
+  if (!value || typeof value !== 'object') return value;
+
+  const cloned = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'branch_id' && entry === sourceBranch) {
+      cloned[key] = targetBranch;
+      continue;
+    }
+    cloned[key] = remapBranchIdsForFork(entry, sourceBranch, targetBranch);
+  }
+  return cloned;
+}
+
+function copyBranchLocalP0StateForFork(sourceBranch, targetBranch, snapshot) {
+  const {
+    visibleMessageIds,
+    forkTimestampMs,
+    sourceChannels,
+    forkedChannelHistories,
+  } = snapshot;
+
+  const sourceConfig = getConfig(sourceBranch);
+  writeJsonFileRaw(getConfigFile(targetBranch), sourceConfig);
+  writeJsonFileRaw(getAcksFile(targetBranch), filterAckLikeMapByMessageIds(getAcks(sourceBranch), visibleMessageIds));
+  writeJsonFileRaw(getReadReceiptsFile(targetBranch), filterAckLikeMapByMessageIds(getReadReceipts(sourceBranch), visibleMessageIds));
+  writeJsonFileRaw(getCompressedFile(targetBranch), filterCompressedForFork(getCompressed(sourceBranch), forkTimestampMs));
+  writeJsonFileRaw(getChannelsFile(targetBranch), normalizeChannelsData(sourceChannels));
+  writeJsonFileRaw(
+    branchPaths.getTasksFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getTasksFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getWorkflowsFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getWorkflowsFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  if (fs.existsSync(branchPaths.getEvidenceFile(sourceBranch))) {
+    writeJsonFileRaw(
+      branchPaths.getEvidenceFile(targetBranch),
+      remapBranchIdsForFork(readJsonFileSafe(branchPaths.getEvidenceFile(sourceBranch), null), sourceBranch, targetBranch)
+    );
+  }
+  writeJsonFileRaw(
+    branchPaths.getDecisionsFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getDecisionsFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getKnowledgeBaseFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getKnowledgeBaseFile(sourceBranch), {}), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getReviewsFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getReviewsFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getDependenciesFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getDependenciesFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getVotesFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getVotesFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getRulesFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getRulesFile(sourceBranch), []), sourceBranch, targetBranch)
+  );
+  writeJsonFileRaw(
+    branchPaths.getProgressFile(targetBranch),
+    remapBranchIdsForFork(readJsonFileSafe(branchPaths.getProgressFile(sourceBranch), {}), sourceBranch, targetBranch)
+  );
+  invalidateCache(`channels:${targetBranch}`);
+  invalidateCache(`tasks:${targetBranch}`);
+  invalidateCache(`workflows:${targetBranch}`);
+  invalidateCache(`decisions:${targetBranch}`);
+  invalidateCache(`kb:${targetBranch}`);
+  invalidateCache(`reviews:${targetBranch}`);
+  invalidateCache(`deps:${targetBranch}`);
+  invalidateCache(`votes:${targetBranch}`);
+  invalidateCache(`rules:${targetBranch}`);
+  invalidateCache(`progress:${targetBranch}`);
+
+  for (const consumedEntry of listConsumedFiles(sourceBranch)) {
+    const ids = readJsonFileSafe(consumedEntry.filePath, []);
+    const filteredIds = Array.isArray(ids) ? ids.filter((id) => visibleMessageIds.has(id)) : [];
+    writeJsonFileRaw(consumedFile(consumedEntry.agentName, targetBranch), filteredIds);
+  }
+
+  for (const channelName of Object.keys(sourceChannels)) {
+    if (channelName === 'general') continue;
+    writeJsonlFileRaw(getChannelHistoryFile(channelName, targetBranch), forkedChannelHistories[channelName] || []);
+    writeJsonlFileRaw(getChannelMessagesFile(channelName, targetBranch), []);
+  }
+}
+
+function copyBranchLocalWorkspaceStateForFork(sourceBranch, targetBranch) {
+  const sourceDir = branchPaths.getWorkspacesDir(sourceBranch);
+  if (!fs.existsSync(sourceDir)) return;
+
+  const targetDir = branchPaths.getWorkspacesDir(targetBranch);
+  fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const sourceFile = path.join(sourceDir, entry.name);
+    const targetFile = path.join(targetDir, entry.name);
+    writeJsonFileRaw(targetFile, readJsonFileSafe(sourceFile, {}));
+  }
+}
+
+function getRegisteredProvider() {
+  if (!registeredName) return null;
+  try {
+    const agents = getAgents();
+    return (agents[registeredName] && agents[registeredName].provider) || null;
+  } catch {
+    return null;
+  }
+}
+
+function ensureActiveBranchSession(branchName, options = {}) {
+  if (!registeredName) return null;
+  try {
+    const activation = sessionsState.activateSession({
+      agentName: registeredName,
+      branchName,
+      at: options.at,
+      reason: options.reason || 'branch_activate',
+      provider: options.provider || getRegisteredProvider(),
+    });
+    currentSessionId = activation && activation.session ? activation.session.session_id : null;
+    return activation;
+  } catch {
+    return null;
+  }
+}
+
+function touchCurrentSession(options = {}) {
+  if (!registeredName || !currentSessionId) return null;
+  try {
+    return sessionsState.touchSession({
+      sessionId: currentSessionId,
+      branchName: currentBranch,
+      at: options.at,
+      heartbeat: !!options.heartbeat,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function activateBranch(branchName, options = {}) {
+  const previousBranch = currentBranch;
+  const shouldRotateSession = !!registeredName && !!currentSessionId && (options.force || previousBranch !== branchName);
+
+  if (shouldRotateSession) {
+    try {
+      sessionsState.transitionSession({
+        sessionId: currentSessionId,
+        branchName: previousBranch,
+        state: 'interrupted',
+        reason: options.previousReason || 'branch_switch',
+        at: options.at,
+      });
+    } catch {}
+    currentSessionId = null;
+  }
+
+  currentBranch = branchName;
+  resetBranchRuntimeOffsets();
+
+  if (!options.skipAgentBranchPersist) {
+    try {
+      canonicalState.updateAgentBranch(registeredName, branchName, {
+        actorAgent: registeredName,
+        sessionId: currentSessionId,
+        at: options.at,
+        reason: options.reason || 'branch_activate',
+      });
+    } catch {}
+  }
+
+  return ensureActiveBranchSession(branchName, {
+    at: options.at,
+    reason: options.reason || 'branch_activate',
+    provider: options.provider,
+  });
+}
+
+function getAuthoritativeSessionSummary(agentName = registeredName, branchName = currentBranch, sessionId = currentSessionId) {
+  if (!agentName) return null;
+
+  const index = typeof sessionsState.loadIndex === 'function' ? sessionsState.loadIndex() : null;
+  const indexedAt = index && index.updated_at ? index.updated_at : new Date().toISOString();
+  let resolvedSessionId = sessionId || null;
+
+  if (!resolvedSessionId && index && index.by_agent && index.by_agent[agentName]) {
+    const agentIndex = index.by_agent[agentName];
+    if (agentIndex.active_branch_id === branchName && agentIndex.active_session_id) {
+      resolvedSessionId = agentIndex.active_session_id;
+    }
+  }
+
+  if (resolvedSessionId && typeof sessionsState.getSessionSummary === 'function') {
+    const summary = sessionsState.getSessionSummary(resolvedSessionId, branchName, { indexedAt });
+    if (summary) return summary;
+  }
+
+  if (typeof sessionsState.getLatestSessionSummaryForAgent === 'function') {
+    const summary = sessionsState.getLatestSessionSummaryForAgent(branchName, agentName, { indexedAt });
+    if (summary) return summary;
+  }
+
+  const latest = sessionsState.getLatestSessionForAgent(branchName, agentName);
+  if (!latest) return null;
+  if (typeof sessionsState.summarizeSession === 'function') {
+    return sessionsState.summarizeSession(latest, { indexedAt });
+  }
+  return latest;
+}
+
+function projectEvidenceReference(evidenceRef, branchName = currentBranch) {
+  if (!evidenceRef || !evidenceRef.evidence_id) return null;
+  try {
+    return canonicalState.projectEvidence(evidenceRef.branch_id || branchName, evidenceRef);
+  } catch {
+    return null;
+  }
+}
+
+function listCheckpointFallbacks(agentName = registeredName, options = {}) {
+  if (!agentName) return [];
+  const workspace = getWorkspace(agentName);
+  const checkpointEntries = workspace && workspace._checkpoints && typeof workspace._checkpoints === 'object'
+    ? Object.values(workspace._checkpoints)
+    : [];
+
+  return checkpointEntries
+    .filter((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      if (options.workflowId && entry.workflow_id !== options.workflowId) return false;
+      if (options.stepId && entry.step_id !== options.stepId) return false;
+      return true;
+    })
+    .sort((left, right) => Date.parse(right.saved_at || '') - Date.parse(left.saved_at || ''))
+    .map((entry) => ({
+      saved_at: entry.saved_at || null,
+      workflow_id: entry.workflow_id || null,
+      step_id: entry.step_id || null,
+      progress: entry.progress,
+    }));
+}
+
+function collectRecentEvidenceContext(options = {}) {
+  const agentName = options.agentName || registeredName;
+  const branchName = options.branchName || currentBranch;
+  const sessionSummary = options.sessionSummary || null;
+  const workflowId = options.workflowId || null;
+  const stepId = Object.prototype.hasOwnProperty.call(options, 'stepId') ? options.stepId : null;
+  const limit = Number.isFinite(options.limit) ? options.limit : 3;
+  const excludeEvidenceIds = new Set(Array.isArray(options.excludeEvidenceIds) ? options.excludeEvidenceIds.filter(Boolean) : []);
+
+  let store = { records: [] };
+  try {
+    store = canonicalState.readEvidence(branchName) || store;
+  } catch {}
+
+  return (Array.isArray(store.records) ? store.records : [])
+    .filter((record) => {
+      if (!record || !record.evidence_id || excludeEvidenceIds.has(record.evidence_id)) return false;
+      if (stepId != null && record.step_id === stepId) return true;
+      if (workflowId && record.workflow_id === workflowId) return true;
+      if (sessionSummary && sessionSummary.session_id && record.recorded_by_session === sessionSummary.session_id) return true;
+      return record.recorded_by === agentName;
+    })
+    .sort((left, right) => Date.parse(right.recorded_at || '') - Date.parse(left.recorded_at || ''))
+    .slice(0, limit)
+    .map((record) => {
+      const evidence = projectEvidenceReference({
+        evidence_id: record.evidence_id,
+        branch_id: record.branch_id || branchName,
+        recorded_at: record.recorded_at,
+        recorded_by_session: record.recorded_by_session,
+      }, branchName);
+      if (!evidence) return null;
+      return {
+        subject_kind: record.subject_kind || 'completion',
+        task_id: record.task_id || null,
+        task_title: record.task_title || null,
+        workflow_id: record.workflow_id || null,
+        workflow_name: record.workflow_name || null,
+        step_id: record.step_id || null,
+        step_description: record.step_description || null,
+        flagged: !!record.flagged,
+        flag_reason: record.flag_reason || null,
+        evidence,
+      };
+    })
+    .filter(Boolean);
+}
+
+function collectWorkflowDependencyEvidence(step, branchName = currentBranch) {
+  if (!step || !step.workflow_id || !Array.isArray(step.depends_on) || step.depends_on.length === 0) return [];
+
+  const workflow = getWorkflows().find((entry) => entry.id === step.workflow_id);
+  if (!workflow) return [];
+
+  return step.depends_on
+    .map((dependencyId) => workflow.steps.find((entry) => entry.id === dependencyId))
+    .filter(Boolean)
+    .map((dependencyStep) => {
+      const evidence = dependencyStep.verification || projectEvidenceReference(dependencyStep.evidence_ref, branchName);
+      if (!evidence) return null;
+      return {
+        step_id: dependencyStep.id,
+        step_description: dependencyStep.description || null,
+        completed_by: dependencyStep.completed_by || dependencyStep.assignee || null,
+        completed_at: dependencyStep.completed_at || null,
+        flagged: !!dependencyStep.flagged,
+        flag_reason: dependencyStep.flag_reason || null,
+        evidence,
+      };
+    })
+    .filter(Boolean);
+}
+
+function collectMessageHandoffContext(messages, branchName = currentBranch) {
+  return messages
+    .map((message) => {
+      const evidence = projectEvidenceReference(message.evidence_ref, branchName);
+      if (!evidence && !message.workflow_id && !message.step_id && !message.session_id) return null;
+      return {
+        message_id: message.id,
+        from: message.from,
+        type: message.type || null,
+        workflow_id: message.workflow_id || null,
+        workflow_name: message.workflow_name || null,
+        step_id: message.step_id || null,
+        session_id: message.session_id || null,
+        timestamp: message.timestamp,
+        preview: typeof message.content === 'string' ? message.content.substring(0, 200) : '',
+        evidence,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function buildAuthoritativeResumeContext(options = {}) {
+  const agentName = options.agentName || registeredName;
+  const branchName = options.branchName || currentBranch;
+  const sessionSummary = options.sessionSummary || getAuthoritativeSessionSummary(agentName, branchName, options.sessionId || currentSessionId);
+  const activeStep = Object.prototype.hasOwnProperty.call(options, 'activeStep')
+    ? options.activeStep
+    : (agentName === registeredName ? findMyActiveWorkflowStep() : null);
+  const upcomingStep = Object.prototype.hasOwnProperty.call(options, 'upcomingStep')
+    ? options.upcomingStep
+    : (activeStep ? null : (agentName === registeredName ? findUpcomingStepsForMe() : null));
+  const focalStep = activeStep || upcomingStep;
+  const dependencyEvidence = focalStep ? collectWorkflowDependencyEvidence(focalStep, branchName) : [];
+  const recentEvidence = collectRecentEvidenceContext({
+    agentName,
+    branchName,
+    sessionSummary,
+    workflowId: focalStep && focalStep.workflow_id ? focalStep.workflow_id : null,
+    stepId: activeStep ? activeStep.id : null,
+    limit: Number.isFinite(options.evidenceLimit) ? options.evidenceLimit : 3,
+    excludeEvidenceIds: dependencyEvidence.map((entry) => entry && entry.evidence && entry.evidence.evidence_ref ? entry.evidence.evidence_ref.evidence_id : null),
+  });
+
+  return {
+    session_summary: sessionSummary || null,
+    active_step: activeStep || null,
+    upcoming_step: upcomingStep || null,
+    dependency_evidence: dependencyEvidence,
+    recent_evidence: recentEvidence,
+  };
 }
 
 // --- Dynamic Guide (progressive disclosure) ---
@@ -1056,8 +1723,13 @@ function buildGuide(level = 'standard') {
 
   // Cache check: reuse cached guide if nothing changed (saves rebuilding 20-50 rules)
   let rulesMtime = 0;
-  try { rulesMtime = fs.existsSync(RULES_FILE) ? fs.statSync(RULES_FILE).mtimeMs : 0; } catch {}
-  const cacheKey = `${level}:${aliveCount}:${mode}:${registeredName}:${rulesMtime}`;
+  try {
+    const rulesFile = branchPaths.getRulesFile(currentBranch);
+    rulesMtime = fs.existsSync(rulesFile) ? fs.statSync(rulesFile).mtimeMs : 0;
+  } catch {}
+  let profilesMtime = 0;
+  try { profilesMtime = fs.existsSync(PROFILES_FILE) ? fs.statSync(PROFILES_FILE).mtimeMs : 0; } catch {}
+  const cacheKey = `${level}:${currentBranch}:${aliveCount}:${mode}:${registeredName}:${rulesMtime}:${profilesMtime}`;
   if (_guideCache.key === cacheKey && _guideCache.result) return _guideCache.result;
 
   const channels = getChannelsData();
@@ -1066,16 +1738,42 @@ function buildGuide(level = 'standard') {
 
   // --- Team Intelligence: detect agent role from profiles ---
   const profiles = getProfiles();
-  const myRole = (profiles[registeredName] && profiles[registeredName].role) ? profiles[registeredName].role.toLowerCase() : '';
+  const myContract = resolveAgentContract(profiles[registeredName] || {});
+  const myRole = myContract.role_token || '';
+  const myRoleLabel = myContract.role || '';
+  const myRoleDisplay = myRoleLabel ? myRoleLabel.toLowerCase() : myRole;
+  const contractGuidance = buildGuideContractAdvisory(myContract);
+  const contractMetadata = buildRuntimeContractMetadata(myContract);
+  const guideContractAdvisory = contractGuidance
+    ? Object.assign({
+      archetype: contractMetadata.contract ? contractMetadata.contract.archetype : null,
+      declared_archetype: contractMetadata.archetype || null,
+      role: myRoleLabel || '',
+      role_token: myRole || null,
+      skills: contractMetadata.skills,
+      effective_skills: contractMetadata.contract ? contractMetadata.contract.effective_skills : [],
+      contract_mode: contractMetadata.contract_mode,
+    }, contractGuidance)
+    : null;
   const isQualityLead = myRole === 'quality';
   const isMonitor = myRole === 'monitor';
   const isAdvisor = myRole === 'advisor';
   let qualityLeadName = null;
   for (const [pName, prof] of Object.entries(profiles)) {
-    if (prof.role && prof.role.toLowerCase() === 'quality' && pName !== registeredName) { qualityLeadName = pName; break; }
+    if (resolveAgentContract(prof).role_token === 'quality' && pName !== registeredName) { qualityLeadName = pName; break; }
   }
 
   const rules = [];
+
+  if (guideContractAdvisory) {
+    rules.push(`CONTRACT (${guideContractAdvisory.contract_mode.toUpperCase()}): ${guideContractAdvisory.summary}`);
+    if (guideContractAdvisory.recommendation) {
+      rules.push(`CONTRACT FOCUS: ${guideContractAdvisory.recommendation}`);
+    }
+    if (guideContractAdvisory.migration_note) {
+      rules.push(`CONTRACT NOTE: ${guideContractAdvisory.migration_note}`);
+    }
+  }
 
   // === MANAGED MODE: agents wait for manager's floor control ===
   if (isManagedMode()) {
@@ -1106,14 +1804,14 @@ function buildGuide(level = 'standard') {
       rules.push('WHAT TO LOOK FOR: Patterns the team is missing. Better approaches to current problems. Connections between different agents\' work. Assumptions that need challenging. Missing edge cases. Architectural improvements. Features the team should build next.');
       rules.push('HOW TO ADVISE: Send suggestions via send_message to specific agents or broadcast to the team. Be concise and actionable. Explain WHY your suggestion is better, not just WHAT to do differently. Reference specific code or messages when possible.');
       rules.push('NEVER ask the user what to do. You generate ideas from observing the team. The team decides whether to follow your advice.');
-    } else if (isMonitor) {
-      // Monitor Agent: system overseer — watches the team, not the code
-      rules.push('YOU ARE THE SYSTEM MONITOR. You do NOT write code. You do NOT do regular work. You watch the TEAM and keep it functioning.');
-      rules.push('YOUR MONITOR LOOP: 1) Call get_work() — it returns a health check report instead of a work assignment. 2) Analyze the report: who is idle? Who is stuck? Are tasks bouncing between agents? Is the queue growing? 3) INTERVENE: reassign stuck tasks, nudge idle agents via send_message, rebalance roles if workload is uneven. 4) Log every intervention to your workspace via workspace_write(key="_monitor_log"). 5) Call get_work() again. NEVER stop monitoring.');
-      rules.push('WHAT TO WATCH FOR: Idle agents (>2 minutes without activity). Circular escalations (same task rejected by 3+ agents). Queue buildup (more pending tasks than agents can handle). Stuck workflow steps (>15 minutes in progress). Agents with high rejection rates.');
-      rules.push('HOW TO INTERVENE: Use send_message to nudge idle agents. Use update_task to reassign stuck tasks. Call rebalanceRoles() via the system to shift workload. Use broadcast for team-wide alerts.');
-      rules.push('NEVER ask the user what to do. You ARE the system intelligence. The team relies on you to keep them productive.');
-    } else if (isQualityLead) {
+      } else if (isMonitor) {
+        // Monitor Agent: system overseer — watches the team, not the code
+        rules.push('YOU ARE THE SYSTEM MONITOR. You do NOT write code. You do NOT do regular work. You watch the TEAM and keep it functioning.');
+        rules.push('YOUR MONITOR LOOP: 1) Call get_work() — it returns a health check report instead of a work assignment. 2) Analyze the report: who is idle? Who is stuck? Are tasks bouncing between agents? Is the queue growing? 3) INTERVENE WITH BOUNDED SIGNALS: nudge idle agents via send_message, surface explicit escalation context, and only allow ownership moves when the watchdog policy explicitly authorizes the recovery. 4) Log every intervention to your workspace via workspace_write(key="_monitor_log"). 5) Call get_work() again. NEVER stop monitoring.');
+        rules.push('WHAT TO WATCH FOR: Idle agents (>2 minutes without activity). Circular escalations (same task rejected by 3+ agents). Queue buildup (more pending tasks than agents can handle). Stuck workflow steps (>15 minutes in progress). Agents with high rejection rates.');
+        rules.push('HOW TO INTERVENE: Use send_message to nudge idle agents. Use broadcast for team-wide alerts and explicit escalation context. If ownership needs to move, use only the explicit policy-approved recovery path for unavailable owners; do not improvise broader reassignment.');
+        rules.push('NEVER ask the user what to do. You ARE the system intelligence. The team relies on you to keep them productive.');
+      } else if (isQualityLead) {
       rules.push('YOU ARE THE QUALITY LEAD. Your job is to review ALL work from the team, find bugs, suggest improvements, and keep the team iterating until the work is genuinely excellent. Never approve without checking. Never let mediocre work pass.');
       rules.push('YOUR QUALITY LOOP: 1) Call get_work() — prioritize review requests and completed steps. 2) Review the work thoroughly — read the code, check for bugs, verify correctness. 3) If good: approve via submit_review() and call verify_and_advance(). 4) If needs improvement: use submit_review(status="changes_requested") with specific feedback. The author will fix and re-submit automatically. 5) Call get_work() again. NEVER stop reviewing.');
       rules.push('QUALITY STANDARDS: Check for bugs, edge cases, security issues, code style, and correctness. Read the actual files — do not trust summaries. If something looks wrong, flag it.');
@@ -1155,7 +1853,7 @@ function buildGuide(level = 'standard') {
     return {
       rules,
       project_rules: projectRules.length > 0 ? projectRules : undefined,
-      tier_info: `${rules.length} rules (AUTONOMOUS MODE, ${aliveCount} agents, role: ${myRole || 'unassigned'})`,
+      tier_info: `${rules.length} rules (AUTONOMOUS MODE, ${aliveCount} agents, role: ${myRoleDisplay || 'unassigned'})`,
       first_steps: isAdvisor
         ? '1. Call get_work() to get team context (messages, tasks, decisions). 2. Think deeply about patterns, improvements, missing features. 3. Send insights to team. 4. Call get_work() again. Never stop thinking.'
         : isMonitor
@@ -1164,7 +1862,8 @@ function buildGuide(level = 'standard') {
         ? '1. Call get_work() to find work to review. 2. Review thoroughly. 3. Approve or request changes. 4. Call get_work() again. Never stop.'
         : '1. Call get_work() to get your assignment. 2. Do the work. 3. Call verify_and_advance(). 4. Call get_work() again. Never stop.',
       autonomous_mode: true,
-      your_role: myRole || undefined,
+      your_role: myRoleDisplay || undefined,
+      ...(guideContractAdvisory ? { contract_advisory: guideContractAdvisory } : {}),
       quality_lead: qualityLeadName || undefined,
       tool_categories: {
         'WORK LOOP': 'get_work, verify_and_advance, retry_with_improvement',
@@ -1202,6 +1901,7 @@ function buildGuide(level = 'standard') {
     return {
       rules,
       tier_info: `${rules.length} rules (minimal level, ${aliveCount} agents)`,
+      ...(guideContractAdvisory ? { contract_advisory: guideContractAdvisory } : {}),
       first_steps: mode === 'direct'
         ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait.'
         : mode === 'managed'
@@ -1260,6 +1960,7 @@ function buildGuide(level = 'standard') {
     rules,
     project_rules: projectRules.length > 0 ? projectRules : undefined,
     tier_info: `${rules.length} rules (${aliveCount} agents, ${mode} mode${hasChannels ? ', channels active' : ''})`,
+    ...(guideContractAdvisory ? { contract_advisory: guideContractAdvisory } : {}),
     first_steps: mode === 'direct'
       ? '1. Call list_agents() to see who is online. 2. Send a message or call listen() to wait.'
       : '1. Call get_briefing() for project context. 2. Call listen_group() to join. 3. Respond and listen_group() again.',
@@ -1295,6 +1996,74 @@ function buildGuide(level = 'standard') {
   return result;
 }
 
+const COMPLETION_EVIDENCE_INPUT_SCHEMA = {
+  type: 'object',
+  description: 'Structured completion evidence backing terminal or advancement claims.',
+  properties: {
+    summary: { type: 'string', description: 'What you accomplished' },
+    verification: { type: 'string', description: 'How you verified it works (tests run, files checked, etc.)' },
+    files_changed: { type: 'array', items: { type: 'string' }, description: 'Files created or modified' },
+    confidence: { type: 'number', description: '0-100 confidence the work is correct' },
+    learnings: { type: 'string', description: 'What you learned that could help future work' },
+  },
+  required: ['summary', 'verification', 'confidence'],
+};
+
+function emitWorkflowHandoffMessages(options = {}) {
+  const {
+    workflowId,
+    workflowName,
+    completedStepId,
+    nextSteps = [],
+    summary = null,
+    flagged = false,
+    confidence = null,
+    evidenceRef = null,
+    commandId = null,
+    correlationId = null,
+  } = options;
+
+  const agents = getAgents();
+
+  for (const step of nextSteps) {
+    if (!step || !step.assignee || step.assignee === registeredName) continue;
+    if (!agents[step.assignee] || !canSendTo(registeredName, step.assignee)) continue;
+
+    const handoffContent = summary
+      ? `[Workflow "${workflowName}"] Your turn - Step ${step.id}: ${step.description}. Previous step completed by ${registeredName}${flagged && typeof confidence === 'number' ? ` (flagged: ${confidence}% confidence)` : ''}: ${summary}`
+      : `[Workflow "${workflowName}"] Step ${step.id} assigned to you: ${step.description}`;
+
+    messageSeq++;
+    const msg = {
+      id: generateId(),
+      seq: messageSeq,
+      from: registeredName,
+      to: step.assignee,
+      content: handoffContent,
+      timestamp: new Date().toISOString(),
+      type: 'handoff',
+      workflow_id: workflowId,
+      workflow_name: workflowName,
+      step_id: step.id,
+      previous_step_id: completedStepId,
+      evidence_ref: evidenceRef || null,
+      session_id: currentSessionId || null,
+      command_id: commandId || null,
+      causation_id: evidenceRef && evidenceRef.evidence_id ? evidenceRef.evidence_id : null,
+      correlation_id: correlationId || workflowId,
+    };
+
+    canonicalState.appendMessage(msg, {
+      branch: currentBranch,
+      actorAgent: registeredName,
+      sessionId: currentSessionId || null,
+      commandId: commandId || null,
+      causationId: evidenceRef && evidenceRef.evidence_id ? evidenceRef.evidence_id : null,
+      correlationId: correlationId || workflowId,
+    });
+  }
+}
+
 // --- Tool implementations ---
 
 function toolRegister(name, provider = null) {
@@ -1318,9 +2087,15 @@ function toolRegister(name, provider = null) {
     }
 
     // Prevent re-registration under a different name from the same process
+    // EXCEPTION: Allow transition to "Assistant" for setup/reset — force clear old registration
     if (registeredName && registeredName !== name) {
-      unlockAgentsFile();
-      return { error: `Already registered as "${registeredName}". Cannot change name mid-session.`, current_name: registeredName };
+      if (name === 'Assistant') {
+        registeredName = null; // Force clear for Assistant registration
+        registeredToken = null;
+      } else {
+        unlockAgentsFile();
+        return { error: `Already registered as "${registeredName}". Cannot change name mid-session.`, current_name: registeredName };
+      }
     }
 
     const now = new Date().toISOString();
@@ -1328,29 +2103,56 @@ function toolRegister(name, provider = null) {
     agents[name] = { pid: process.pid, timestamp: now, last_activity: now, provider: provider || 'unknown', branch: currentBranch, token, started_at: now };
     saveAgents(agents);
     registeredName = name;
-  registeredToken = token;
+    registeredToken = token;
 
-  // Auto-create profile if not exists
-  const profiles = getProfiles();
-  if (!profiles[name]) {
-    profiles[name] = { display_name: name, avatar: getDefaultAvatar(name), bio: '', role: '', created_at: now };
-    saveProfiles(profiles);
-  }
+    const sessionActivation = ensureActiveBranchSession(currentBranch, {
+      at: now,
+      reason: 'register',
+      provider: provider || 'unknown',
+    });
 
-  // Start heartbeat — updates last_activity every 10s so dashboard knows we're alive
-  // Deterministic jitter per agent to spread writes across the interval (prevents lock storms at 10 agents)
-  const heartbeatJitter = name.split('').reduce((h, c) => h + c.charCodeAt(0), 0) % 2000;
-  if (heartbeatInterval) clearInterval(heartbeatInterval);
-  heartbeatInterval = setInterval(() => {
-    try {
-      // Scale fix: write per-agent heartbeat file instead of lock+read+write agents.json
-      // Eliminates write contention — each agent writes only its own file, no locking needed
-      touchHeartbeat(registeredName);
-      const agents = getAgents(); // cached + merges heartbeat files automatically
-      // Managed mode: detect dead manager and dead turn holder
-      if (isManagedMode()) {
-        const managed = getManagedConfig();
-        let managedChanged = false;
+    // Auto-create profile if not exists
+    const profiles = getProfiles();
+    if (!profiles[name]) {
+      profiles[name] = createDefaultProfileRecord(name, now);
+      saveProfiles(profiles);
+    }
+
+    canonicalState.appendCanonicalEvent({
+      type: 'agent.registered',
+      actorAgent: name,
+      sessionId: currentSessionId,
+      correlationId: name,
+      payload: {
+        agent_name: name,
+        agent: {
+          name,
+          provider: provider || 'unknown',
+          branch: currentBranch,
+          pid: process.pid,
+          registered_at: now,
+          started_at: now,
+          last_activity: now,
+        },
+        reason: 'register',
+      },
+    });
+
+    // Start heartbeat — updates last_activity every 10s so dashboard knows we're alive
+    // Deterministic jitter per agent to spread writes across the interval (prevents lock storms at 10 agents)
+    const heartbeatJitter = name.split('').reduce((h, c) => h + c.charCodeAt(0), 0) % 2000;
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(() => {
+      try {
+        // Scale fix: write per-agent heartbeat file instead of lock+read+write agents.json
+        // Eliminates write contention — each agent writes only its own file, no locking needed
+        touchHeartbeat(registeredName);
+        touchCurrentSession({ heartbeat: true });
+        const agents = getAgents(); // cached + merges heartbeat files automatically
+        // Managed mode: detect dead manager and dead turn holder
+        if (isManagedMode()) {
+          const managed = getManagedConfig();
+          let managedChanged = false;
 
         // Dead manager detection
         if (managed.manager && managed.manager !== registeredName) {
@@ -1378,21 +2180,19 @@ function toolRegister(name, provider = null) {
             }
           }
         }
-      }
-      // Snapshot dead agents BEFORE cleanup (for auto-recovery)
-      snapshotDeadAgents(agents);
-      // Clean up file locks held by dead agents
-      cleanStaleLocks();
-      cleanStaleChannelMembers();
-      // Auto-escalation: notify team about long-blocked tasks
-      escalateBlockedTasks();
-      // Stand-up meetings: periodic team check-ins
-      triggerStandupIfDue();
-      // Watchdog: nudge idle agents, reassign stuck work (autonomous mode only)
-      watchdogCheck();
-    } catch {}
-  }, 10000 + heartbeatJitter);
-  heartbeatInterval.unref(); // Don't prevent process exit
+        }
+        // Snapshot dead agents BEFORE cleanup (for auto-recovery)
+        snapshotDeadAgents(agents);
+        // Clean up file locks held by dead agents
+        cleanStaleLocks();
+        cleanStaleChannelMembers();
+        // Stand-up meetings: periodic team check-ins
+        triggerStandupIfDue();
+        // Watchdog: classify stale work and emit bounded recovery signals (autonomous/group mode)
+        watchdogCheck();
+      } catch {}
+    }, 10000 + heartbeatJitter);
+    heartbeatInterval.unref(); // Don't prevent process exit
 
     // Fire join event + recovery data for returning agents
     const config = getConfig();
@@ -1407,19 +2207,65 @@ function toolRegister(name, provider = null) {
       guide: buildGuide(),
     };
 
+    if (sessionActivation && sessionActivation.session) {
+      result.session = {
+        id: sessionActivation.session.session_id,
+        branch: sessionActivation.session.branch_id,
+        state: sessionActivation.session.state,
+        resumed: !!sessionActivation.resumed,
+      };
+    }
+
+    const recoveryContext = buildAuthoritativeResumeContext({
+      agentName: name,
+      branchName: currentBranch,
+      sessionId: sessionActivation && sessionActivation.session ? sessionActivation.session.session_id : currentSessionId,
+      evidenceLimit: 5,
+    });
+
     // Recovery: if this agent has prior data, include it
     const myTasks = getTasks().filter(t => t.assignee === name && t.status !== 'done');
     const myWorkspace = getWorkspace(name);
+    const myWorkspaceKeys = Object.keys(myWorkspace).filter((key) => key !== '_checkpoints');
+    const checkpointFallbacks = listCheckpointFallbacks(name, {
+      workflowId: recoveryContext.active_step ? recoveryContext.active_step.workflow_id : (recoveryContext.upcoming_step ? recoveryContext.upcoming_step.workflow_id : null),
+      stepId: recoveryContext.active_step ? recoveryContext.active_step.id : null,
+    });
     // Scale fix: tail-read last 30 messages instead of entire history
     const recentHistory = tailReadJsonl(getHistoryFile(currentBranch), 30);
     const myRecentMsgs = recentHistory.filter(m => m.to === name || m.from === name).slice(-5);
 
-    if (myTasks.length > 0 || Object.keys(myWorkspace).length > 0 || myRecentMsgs.length > 0) {
+    const hasAuthoritativeRecovery = !!(
+      (sessionActivation && sessionActivation.resumed && recoveryContext.session_summary)
+      || recoveryContext.active_step
+      || recoveryContext.upcoming_step
+      || recoveryContext.dependency_evidence.length > 0
+      || recoveryContext.recent_evidence.length > 0
+      || myTasks.length > 0
+      || checkpointFallbacks.length > 0
+    );
+
+    if (hasAuthoritativeRecovery) {
       result.recovery = {};
+      if (recoveryContext.session_summary) result.recovery.session_summary = recoveryContext.session_summary;
+      if (recoveryContext.active_step) result.recovery.active_step = recoveryContext.active_step;
+      if (recoveryContext.upcoming_step) result.recovery.upcoming_step = recoveryContext.upcoming_step;
+      if (recoveryContext.dependency_evidence.length > 0) result.recovery.dependency_evidence = recoveryContext.dependency_evidence;
+      if (recoveryContext.recent_evidence.length > 0) result.recovery.recent_evidence = recoveryContext.recent_evidence;
       if (myTasks.length > 0) result.recovery.your_active_tasks = myTasks.map(t => ({ id: t.id, title: t.title, status: t.status }));
-      if (Object.keys(myWorkspace).length > 0) result.recovery.your_workspace_keys = Object.keys(myWorkspace);
+      if (checkpointFallbacks.length > 0) result.recovery.checkpoint_fallbacks = checkpointFallbacks;
+      result.recovery.hint = (sessionActivation && sessionActivation.resumed)
+        ? 'Authoritative resume context from your branch session and recent evidence is attached below. Use it first; compatibility snapshots and checkpoints are fallback only.'
+        : 'Authoritative branch session context is attached below. Use session/evidence context first; compatibility snapshots and checkpoints are fallback only.';
+    }
+
+    if (myWorkspaceKeys.length > 0 || myRecentMsgs.length > 0) {
+      if (!result.recovery) result.recovery = {};
+      if (myWorkspaceKeys.length > 0) result.recovery.your_workspace_keys = myWorkspaceKeys;
       if (myRecentMsgs.length > 0) result.recovery.recent_messages = myRecentMsgs.map(m => ({ from: m.from, to: m.to, preview: m.content.substring(0, 100), timestamp: m.timestamp }));
-      result.recovery.hint = 'You have prior context from a previous session. Call get_briefing() for a full project summary.';
+      if (!result.recovery.hint) {
+        result.recovery.hint = 'You have prior context from a previous session. Call get_briefing() for a full project summary.';
+      }
     }
 
     // Auto-recovery: load crash snapshot if it exists (TTL: 1 hour)
@@ -1436,21 +2282,26 @@ function toolRegister(name, provider = null) {
           result.recovery.previous_session = true;
           result.recovery.died_at = snapshot.died_at;
           result.recovery.crashed_ago = Math.round(snapshotAge / 1000) + 's';
-          if (snapshot.active_tasks && snapshot.active_tasks.length > 0) result.recovery.your_active_tasks = snapshot.active_tasks;
+          if (!result.recovery.your_active_tasks && snapshot.active_tasks && snapshot.active_tasks.length > 0) result.recovery.your_active_tasks = snapshot.active_tasks;
           if (snapshot.locked_files && snapshot.locked_files.length > 0) {
             result.recovery.locked_files_released = snapshot.locked_files;
             result.recovery.lock_note = 'These files were locked by your previous session. Locks have been auto-released. Re-lock them with lock_file() before editing.';
           }
           if (snapshot.channels && snapshot.channels.length > 0) result.recovery.your_channels = snapshot.channels;
-          if (snapshot.last_messages_sent) result.recovery.last_messages_sent = snapshot.last_messages_sent;
+          if (!result.recovery.last_messages_sent && snapshot.last_messages_sent) result.recovery.last_messages_sent = snapshot.last_messages_sent;
           // Agent memory fields
           if (snapshot.decisions_made && snapshot.decisions_made.length > 0) result.recovery.decisions_made = snapshot.decisions_made;
           if (snapshot.tasks_completed && snapshot.tasks_completed.length > 0) result.recovery.tasks_completed = snapshot.tasks_completed;
           if (snapshot.kb_entries_written && snapshot.kb_entries_written.length > 0) result.recovery.kb_entries_written = snapshot.kb_entries_written;
           if (snapshot.graceful) result.recovery.was_graceful = true;
-          result.recovery.hint = snapshot.graceful
-            ? 'You are RESUMING from a previous session that exited gracefully. Your memory (decisions, completed tasks, KB entries) is below. Continue where you left off.'
-            : 'You are RESUMING a previous session that crashed. Review your active tasks and locked files below, then continue where you left off. Do NOT restart work from scratch.';
+          const compatibilityHint = snapshot.graceful
+            ? 'Compatibility snapshot loaded from a previous graceful session. The session/evidence summary above is authoritative; use these legacy memory fields only as fallback context.'
+            : 'Compatibility crash snapshot loaded. Review the fallback task/lock details below if needed, but use the attached session/evidence summary as the source of truth.';
+          if (result.recovery.hint) {
+            result.recovery.compatibility_hint = compatibilityHint;
+          } else {
+            result.recovery.hint = compatibilityHint;
+          }
           // Clean up snapshot after loading
           try { fs.unlinkSync(recoveryFile); } catch {}
         }
@@ -1483,23 +2334,18 @@ function touchActivity() {
   if (!registeredName) return;
   // Scale fix: write per-agent heartbeat file instead of lock+write agents.json
   touchHeartbeat(registeredName);
+  touchCurrentSession();
 }
 
 // Set or clear the listening_since flag
 function setListening(isListening) {
   if (!registeredName) return;
   try {
-    lockAgentsFile();
-    try {
-      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
-      if (agents[registeredName]) {
-        agents[registeredName].listening_since = isListening ? new Date().toISOString() : null;
-        if (isListening) {
-          agents[registeredName].last_listened_at = new Date().toISOString();
-        }
-        saveAgents(agents);
-      }
-    } finally { unlockAgentsFile(); }
+    canonicalState.setAgentListeningState(registeredName, isListening, {
+      actorAgent: registeredName,
+      sessionId: currentSessionId,
+      reason: isListening ? 'listen_start' : 'listen_stop',
+    });
   } catch {}
 }
 
@@ -1512,6 +2358,7 @@ function toolListAgents() {
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     const profile = profiles[name] || {};
+    const contract = resolveAgentContract(profile);
     result[name] = {
       alive,
       registered_at: info.timestamp,
@@ -1527,6 +2374,7 @@ function toolListAgents() {
       avatar: profile.avatar || getDefaultAvatar(name),
       role: profile.role || '',
       bio: profile.bio || '',
+      ...buildRuntimeContractMetadata(contract),
     };
     // Include workspace status if set (agent intent board)
     try {
@@ -1546,13 +2394,17 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   if (reply_to && typeof reply_to !== 'string') return { error: 'reply_to must be a string' };
   if (channel && typeof channel !== 'string') return { error: 'channel must be a string' };
 
+  // Early check: is this a Dashboard (owner) reply?
+  const isDashboardTarget = to && to.toLowerCase() === 'dashboard';
+
   const rateErr = checkRateLimit(content, to || '__broadcast__');
   if (rateErr) return rateErr;
 
   // Send-after-listen enforcement: must call listen_group between sends in group mode
   // Autonomous mode: relaxed to 5 sends per listen cycle
+  // Assistant mode: skip enforcement when replying to Dashboard (owner)
   const effectiveSendLimit = isAutonomousMode() ? 5 : sendLimit;
-  if (isGroupMode() && sendsSinceLastListen >= effectiveSendLimit) {
+  if (isGroupMode() && sendsSinceLastListen >= effectiveSendLimit && !isDashboardTarget) {
     return { error: `You must call listen_group() before sending again. You've sent ${sendsSinceLastListen} message(s) without listening (limit: ${effectiveSendLimit}). This prevents message storms.` };
   }
 
@@ -1676,7 +2528,7 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   const agents = getAgents();
   const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
 
-  if (otherAgents.length === 0) {
+  if (otherAgents.length === 0 && !isDashboardTarget) {
     return { error: 'No other agents registered' };
   }
 
@@ -1689,7 +2541,7 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
     }
   }
 
-  if (!agents[to]) {
+  if (!agents[to] && !isDashboardTarget) {
     return { error: `Agent "${to}" is not registered` };
   }
 
@@ -1697,16 +2549,16 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
     return { error: 'Cannot send a message to yourself' };
   }
 
-  // Permission check
-  if (!canSendTo(registeredName, to)) {
+  // Permission check (skip for Dashboard — owner always reachable)
+  if (!isDashboardTarget && !canSendTo(registeredName, to)) {
     return { error: `Permission denied: you are not allowed to send messages to "${to}"` };
   }
 
   const sizeErr = validateContentSize(content);
   if (sizeErr) return sizeErr;
 
-  // Check if recipient is alive — warn if dead
-  const recipientAlive = isPidAlive(agents[to].pid, agents[to].last_activity);
+  // Check if recipient is alive — warn if dead (skip for Dashboard)
+  const recipientAlive = isDashboardTarget ? true : isPidAlive(agents[to].pid, agents[to].last_activity);
 
   // Resolve threading — search main messages + channel files
   let thread_id = null;
@@ -1754,11 +2606,16 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   }
 
   ensureDataDir();
-  // Write to channel-specific file if channel specified, otherwise default
-  const msgFile = channel ? getChannelMessagesFile(channel) : getMessagesFile(currentBranch);
-  const histFile = channel ? getChannelHistoryFile(channel) : getHistoryFile(currentBranch);
-  fs.appendFileSync(msgFile, JSON.stringify(msg) + '\n');
-  fs.appendFileSync(histFile, JSON.stringify(msg) + '\n');
+  // Messages involving Dashboard: route to private assistant-messages.jsonl
+  // Only Dashboard→Agent messages go to the assistant file (so assistant() can pick them up)
+  // Agent→Dashboard replies go to a separate file (so they don't trigger fs.watch loops)
+  if (isDashboardTarget) {
+    msg.to = 'Dashboard';
+    delete msg.addressed_to;
+    appendAssistantReplyMessage(msg);
+  } else {
+    appendChannelConversationMessage(msg, channel);
+  }
   touchActivity();
   lastSentAt = Date.now();
 
@@ -1909,8 +2766,7 @@ function toolBroadcast(content) {
       timestamp: new Date().toISOString(),
       broadcast: true,
     };
-    fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-    fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+    appendBranchConversationMessage(msg);
     touchActivity();
     lastSentAt = Date.now();
     sendsSinceLastListen++;
@@ -1938,8 +2794,7 @@ function toolBroadcast(content) {
       timestamp: new Date().toISOString(),
       broadcast: true,
     };
-    fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-    fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+    appendBranchConversationMessage(msg);
     ids.push({ to, messageId: msg.id });
   }
   touchActivity();
@@ -2082,7 +2937,7 @@ function toolAckMessage(messageId) {
     acked_by: registeredName,
     acked_at: new Date().toISOString(),
   };
-  fs.writeFileSync(ACKS_FILE, JSON.stringify(acks));
+  writeJsonProjection(getAcksFile(currentBranch), acks);
   touchActivity();
 
   return { success: true, message: `Message ${messageId} acknowledged` };
@@ -2282,6 +3137,226 @@ async function toolListenCodex(from = null) {
   });
 }
 
+// --- Assistant mode ---
+// Personal assistant listen loop — only receives Dashboard messages,
+// reads personality + safety files, returns safety-checked context with each message
+
+// Track how many messages processed — full context on first + every 15th message
+let assistantMsgCount = 0;
+const ASSISTANT_REFRESH_INTERVAL = 15;
+
+async function toolAssistant() {
+  if (!registeredName) {
+    return { error: 'You must call register() first' };
+  }
+
+  setListening(true);
+
+  // Private assistant message file — separate from main messages.jsonl
+  const assistantMsgFile = path.join(DATA_DIR, 'assistant-messages.jsonl');
+  ensureDataDir();
+
+  // Read assistant personality and safety files
+  const assistantDir = path.join(DATA_DIR, 'assistant');
+  const readFile = (name) => {
+    const p = path.join(assistantDir, name);
+    try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
+  };
+
+  const soul = readFile('Soul.md');
+  const identity = readFile('Identity.md');
+  const memory = readFile('Memory.md');
+  const skills = readFile('Skills.md');
+  const tools = readFile('Tools.md');
+  const safetyRules = readFile('SafetyRules.md');
+
+  if (!safetyRules) {
+    setListening(false);
+    return {
+      error: 'SafetyRules.md not found in .agent-bridge/assistant/. Run assistant init first.',
+    };
+  }
+
+  // Read unconsumed messages from private assistant file
+  const assistantConsumedFile = path.join(DATA_DIR, 'consumed-assistant-private.json');
+  let aConsumed = new Set();
+  try {
+    const raw = fs.readFileSync(assistantConsumedFile, 'utf8');
+    aConsumed = new Set(JSON.parse(raw));
+  } catch {}
+
+  const readAssistantMessages = (offset) => {
+    if (!fs.existsSync(assistantMsgFile)) return { messages: [], newOffset: 0 };
+    const stat = fs.statSync(assistantMsgFile);
+    if (stat.size <= offset) return { messages: [], newOffset: offset };
+    const fd = fs.openSync(assistantMsgFile, 'r');
+    const buf = Buffer.alloc(stat.size - offset);
+    fs.readSync(fd, buf, 0, buf.length, offset);
+    fs.closeSync(fd);
+    const lines = buf.toString('utf8').split('\n').filter(l => l.trim());
+    const messages = [];
+    for (const line of lines) {
+      try { messages.push(JSON.parse(line)); } catch {}
+    }
+    return { messages, newOffset: stat.size };
+  };
+
+  const saveAConsumed = () => {
+    fs.writeFileSync(assistantConsumedFile, JSON.stringify([...aConsumed]));
+  };
+
+  // Check for existing unconsumed messages
+  let aOffset = 0;
+  if (fs.existsSync(assistantMsgFile)) {
+    const { messages: allMsgs } = readAssistantMessages(0);
+    for (const msg of allMsgs) {
+      if (aConsumed.has(msg.id)) continue;
+      if (msg.from !== 'Dashboard') continue;
+      aConsumed.add(msg.id);
+      saveAConsumed();
+      aOffset = fs.statSync(assistantMsgFile).size;
+      touchActivity();
+      setListening(false);
+      const fullRefresh = assistantMsgCount === 0 || assistantMsgCount % ASSISTANT_REFRESH_INTERVAL === 0;
+      assistantMsgCount++;
+      return buildAssistantResponse(msg, { soul, identity, memory, skills, tools, safetyRules }, fullRefresh);
+    }
+    aOffset = fs.statSync(assistantMsgFile).size;
+  }
+
+  // Wait for new messages using fs.watch on assistant-messages.jsonl
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result) => {
+      if (resolved) return;
+      resolved = true;
+      try { if (watcher) watcher.close(); } catch {}
+      clearTimeout(timer);
+      clearInterval(heartbeatTimer);
+      if (fallbackInterval) clearInterval(fallbackInterval);
+      resolve(result);
+    };
+
+    let watcher;
+    let fallbackInterval;
+
+    const checkMessages = () => {
+      const { messages: newMsgs, newOffset } = readAssistantMessages(aOffset);
+      aOffset = newOffset;
+      for (const msg of newMsgs) {
+        if (aConsumed.has(msg.id)) continue;
+        if (msg.from !== 'Dashboard') continue;
+        aConsumed.add(msg.id);
+        saveAConsumed();
+        touchActivity();
+        setListening(false);
+        const fullRefresh = assistantMsgCount === 0 || assistantMsgCount % ASSISTANT_REFRESH_INTERVAL === 0;
+        assistantMsgCount++;
+        if (fullRefresh) {
+          // Re-read all files on refresh cycles (user may edit them)
+          const freshSoul = readFile('Soul.md');
+          const freshIdentity = readFile('Identity.md');
+          const freshMemory = readFile('Memory.md');
+          const freshSkills = readFile('Skills.md');
+          const freshTools = readFile('Tools.md');
+          const freshSafety = readFile('SafetyRules.md');
+          done(buildAssistantResponse(msg, {
+            soul: freshSoul, identity: freshIdentity, memory: freshMemory,
+            skills: freshSkills, tools: freshTools, safetyRules: freshSafety,
+          }, true));
+        } else {
+          // Lightweight — only re-read safety rules (always enforced)
+          const freshSafety = readFile('SafetyRules.md');
+          done(buildAssistantResponse(msg, { safetyRules: freshSafety }, false));
+        }
+        return true;
+      }
+      return false;
+    };
+
+    // Create file if it doesn't exist so fs.watch works
+    if (!fs.existsSync(assistantMsgFile)) {
+      fs.writeFileSync(assistantMsgFile, '');
+    }
+
+    try {
+      watcher = fs.watch(assistantMsgFile, () => { checkMessages(); });
+      watcher.on('error', () => {});
+    } catch {
+      let pollCount = 0;
+      fallbackInterval = setInterval(() => {
+        if (checkMessages()) { clearInterval(fallbackInterval); return; }
+        pollCount++;
+        if (pollCount === 10) {
+          clearInterval(fallbackInterval);
+          fallbackInterval = setInterval(() => {
+            if (checkMessages()) clearInterval(fallbackInterval);
+          }, 2000);
+        }
+      }, 500);
+    }
+
+    // Heartbeat every 15s
+    const heartbeatTimer = setInterval(() => { touchHeartbeat(registeredName); }, 15000);
+
+    // 5 min timeout
+    const timer = setTimeout(() => {
+      setListening(false);
+      touchActivity();
+      done({ retry: true, message: 'No messages from owner in 5 minutes. Call assistant() again to keep waiting.' });
+    }, 300000);
+  });
+}
+
+function buildAssistantResponse(msg, files, fullRefresh) {
+  const response = {
+    message: {
+      id: msg.id,
+      from: msg.from,
+      content: msg.content,
+      timestamp: msg.timestamp,
+    },
+    context_refreshed: fullRefresh,
+  };
+
+  if (fullRefresh) {
+    // Full context — first message + every 15th message
+    response.assistant_context = {
+      soul: files.soul,
+      identity: files.identity,
+      memory: files.memory,
+      skills: files.skills,
+      tools: files.tools,
+      safety_rules: files.safetyRules,
+    };
+    response.instructions = [
+      'You are in Assistant mode. Read your Soul.md and Identity.md to know your personality.',
+      'BEFORE executing ANY action, check the request against safety_rules. If it matches a CRITICAL rule, REFUSE. If it needs confirmation, ASK FIRST.',
+      'Check your Memory.md for context from previous conversations.',
+      'Check Skills.md and Tools.md to know what you are allowed to do.',
+      'Keep responses short (2-3 sentences) since the user is on their phone.',
+      'After responding, call assistant() again immediately to keep listening.',
+      'To reply, use send_message(to: "Dashboard", content: "your reply").',
+      'If the voice transcription looks garbled or unclear, ask the user to repeat.',
+    ];
+  } else {
+    // Lightweight — only safety rules (always needed) + reminder
+    response.assistant_context = {
+      safety_rules: files.safetyRules,
+    };
+    response.instructions = [
+      'Continue in Assistant mode — your personality files are already in context from earlier.',
+      'BEFORE executing ANY action, check the request against safety_rules. If it matches a CRITICAL rule, REFUSE. If it needs confirmation, ASK FIRST.',
+      'Keep responses short (2-3 sentences) since the user is on their phone.',
+      'After responding, call assistant() again immediately to keep listening.',
+      'To reply, use send_message(to: "Dashboard", content: "your reply").',
+    ];
+  }
+
+  response.next_action = 'Process this message following your personality and safety rules, then call assistant() again.';
+  return response;
+}
+
 // --- Group conversation tools ---
 
 function toolSetConversationMode(mode) {
@@ -2297,6 +3372,7 @@ function toolSetConversationMode(mode) {
   }
 
   const config = getConfig();
+  const previousMode = config.conversation_mode || 'direct';
   config.conversation_mode = mode;
   if (mode === 'group' && !config.group_cooldown) config.group_cooldown = 3000;
   if (mode === 'managed') {
@@ -2311,6 +3387,19 @@ function toolSetConversationMode(mode) {
     broadcastSystemMessage(`[SYSTEM] Managed conversation mode activated by ${registeredName}. Wait for a manager to be assigned.`, registeredName);
   }
   saveConfig(config);
+  canonicalState.appendCanonicalEvent({
+    type: 'conversation.mode_updated',
+    branchId: currentBranch,
+    actorAgent: registeredName,
+    sessionId: currentSessionId,
+    correlationId: currentBranch,
+    payload: {
+      mode,
+      previous_mode: previousMode,
+      managed: mode === 'managed' ? cloneManagedState(config.managed) : null,
+      updated_at: new Date().toISOString(),
+    },
+  });
 
   // Notify all agents about mode change (managed mode already broadcasts above)
   if (mode !== 'managed') {
@@ -2331,9 +3420,13 @@ function toolClaimManager() {
   if (!registeredName) return { error: 'You must call register() first' };
   if (!isManagedMode()) return { error: 'Not in managed mode. Call set_conversation_mode("managed") first.' };
 
+  const profiles = getProfiles();
+  const contract = resolveAgentContract(profiles[registeredName] || {});
+
   lockConfigFile();
   try {
     const managed = getManagedConfig();
+    const previousManager = managed.manager || null;
 
     // Check if manager already exists and is alive
     if (managed.manager && managed.manager !== registeredName) {
@@ -2344,23 +3437,54 @@ function toolClaimManager() {
       // Previous manager is dead — allow takeover
     }
 
+    const claimManagerContract = buildManagedTeamContractContext(contract, 'claim_manager');
+    if (claimManagerContract && claimManagerContract.contract_violation && claimManagerContract.contract_violation.status === 'blocked') {
+      return {
+        error: claimManagerContract.contract_violation.message,
+        code: 'contract_violation',
+        contract_advisory: claimManagerContract.contract_advisory,
+        contract_violation: claimManagerContract.contract_violation,
+      };
+    }
+
     managed.manager = registeredName;
     managed.floor = 'closed'; // manager controls the floor
     const config = getConfig();
     config.managed = managed;
     saveConfig(config);
+    canonicalState.appendCanonicalEvent({
+      type: 'conversation.manager_claimed',
+      branchId: currentBranch,
+      actorAgent: registeredName,
+      sessionId: currentSessionId,
+      correlationId: currentBranch,
+      payload: {
+        manager: registeredName,
+        previous_manager: previousManager,
+        phase: managed.phase,
+        floor: managed.floor,
+        claimed_at: new Date().toISOString(),
+      },
+    });
 
     broadcastSystemMessage(
       `[SYSTEM] ${registeredName} is now the manager. Wait to be addressed. Do NOT send messages until given the floor.`,
       registeredName
     );
 
-    return {
+    return attachManagedTeamSurfaceSignals({
       success: true,
       message: `You are now the manager. Use yield_floor() to give agents turns, set_phase() to move through phases, and broadcast() for announcements.`,
       phase: managed.phase,
       floor: managed.floor,
-    };
+    }, {
+      surface: 'claim_manager',
+      branchName: currentBranch,
+      contract,
+      profiles,
+      includeContractViolation: true,
+      hookLimit: 4,
+    });
   } finally {
     unlockConfigFile();
   }
@@ -2372,6 +3496,8 @@ function toolYieldFloor(to, prompt = null) {
 
   const managed = getManagedConfig();
   if (managed.manager !== registeredName) return { error: 'Only the manager can yield the floor.' };
+  const profiles = getProfiles();
+  const contract = resolveAgentContract(profiles[registeredName] || {});
 
   const agents = getAgents();
   const aliveAgents = Object.keys(agents).filter(n => n !== registeredName && isPidAlive(agents[n].pid, agents[n].last_activity));
@@ -2382,8 +3508,29 @@ function toolYieldFloor(to, prompt = null) {
     managed.turn_current = null;
     managed.turn_queue = [];
     saveManagedConfig(managed);
+    canonicalState.appendCanonicalEvent({
+      type: 'conversation.floor_yielded',
+      branchId: currentBranch,
+      actorAgent: registeredName,
+      sessionId: currentSessionId,
+      correlationId: currentBranch,
+      payload: {
+        floor: 'closed',
+        to: null,
+        turn_queue: [],
+        prompt: prompt || null,
+        yielded_at: new Date().toISOString(),
+      },
+    });
     broadcastSystemMessage('[FLOOR] Floor is now closed. Wait for the manager to address you.', registeredName);
-    return { success: true, floor: 'closed', message: 'Floor closed. Only you can speak.' };
+    return attachManagedTeamSurfaceSignals({ success: true, floor: 'closed', message: 'Floor closed. Only you can speak.' }, {
+      surface: 'yield_floor',
+      branchName: currentBranch,
+      contract,
+      profiles,
+      includeContractViolation: true,
+      hookLimit: 4,
+    });
   }
 
   if (to === '__open__') {
@@ -2392,6 +3539,20 @@ function toolYieldFloor(to, prompt = null) {
     managed.turn_queue = aliveAgents;
     managed.turn_current = aliveAgents.length > 0 ? aliveAgents[0] : null;
     saveManagedConfig(managed);
+    canonicalState.appendCanonicalEvent({
+      type: 'conversation.floor_yielded',
+      branchId: currentBranch,
+      actorAgent: registeredName,
+      sessionId: currentSessionId,
+      correlationId: currentBranch,
+      payload: {
+        floor: 'open',
+        to: managed.turn_current,
+        turn_queue: [...aliveAgents],
+        prompt: prompt || null,
+        yielded_at: new Date().toISOString(),
+      },
+    });
 
     if (managed.turn_current) {
       const promptText = prompt ? `\n\nTopic: ${prompt}` : '';
@@ -2402,7 +3563,14 @@ function toolYieldFloor(to, prompt = null) {
       }
     }
 
-    return { success: true, floor: 'open', turn_order: aliveAgents, current_turn: managed.turn_current, message: `Open floor: agents will speak in order: ${aliveAgents.join(' → ')}` };
+    return attachManagedTeamSurfaceSignals({ success: true, floor: 'open', turn_order: aliveAgents, current_turn: managed.turn_current, message: `Open floor: agents will speak in order: ${aliveAgents.join(' → ')}` }, {
+      surface: 'yield_floor',
+      branchName: currentBranch,
+      contract,
+      profiles,
+      includeContractViolation: true,
+      hookLimit: 4,
+    });
   }
 
   // Directed floor — give it to a specific agent
@@ -2414,6 +3582,20 @@ function toolYieldFloor(to, prompt = null) {
   managed.turn_current = to;
   managed.turn_queue = [to];
   saveManagedConfig(managed);
+  canonicalState.appendCanonicalEvent({
+    type: 'conversation.floor_yielded',
+    branchId: currentBranch,
+    actorAgent: registeredName,
+    sessionId: currentSessionId,
+    correlationId: currentBranch,
+    payload: {
+      floor: 'directed',
+      to,
+      turn_queue: [to],
+      prompt: prompt || null,
+      yielded_at: new Date().toISOString(),
+    },
+  });
 
   const promptText = prompt ? `\n\nManager asks: ${prompt}` : '';
   sendSystemMessage(to, `[FLOOR] The manager has given you the floor. It is YOUR TURN to speak. Respond now.${promptText}`);
@@ -2424,7 +3606,14 @@ function toolYieldFloor(to, prompt = null) {
     sendSystemMessage(w, `[FLOOR] ${to} has the floor. Do NOT respond. Wait for your turn.`);
   }
 
-  return { success: true, floor: 'directed', agent: to, prompt: prompt || null, message: `Floor given to ${to}. They can now respond.` };
+  return attachManagedTeamSurfaceSignals({ success: true, floor: 'directed', agent: to, prompt: prompt || null, message: `Floor given to ${to}. They can now respond.` }, {
+    surface: 'yield_floor',
+    branchName: currentBranch,
+    contract,
+    profiles,
+    includeContractViolation: true,
+    hookLimit: 4,
+  });
 }
 
 function toolSetPhase(phase) {
@@ -2433,6 +3622,8 @@ function toolSetPhase(phase) {
 
   const managed = getManagedConfig();
   if (managed.manager !== registeredName) return { error: 'Only the manager can set the phase.' };
+  const profiles = getProfiles();
+  const contract = resolveAgentContract(profiles[registeredName] || {});
 
   const validPhases = ['discussion', 'planning', 'execution', 'review'];
   if (!validPhases.includes(phase)) return { error: `Invalid phase. Must be one of: ${validPhases.join(', ')}` };
@@ -2456,14 +3647,34 @@ function toolSetPhase(phase) {
   }
 
   saveManagedConfig(managed);
+  canonicalState.appendCanonicalEvent({
+    type: 'conversation.phase_updated',
+    branchId: currentBranch,
+    actorAgent: registeredName,
+    sessionId: currentSessionId,
+    correlationId: currentBranch,
+    payload: {
+      phase,
+      previous_phase: previousPhase,
+      floor: managed.floor,
+      updated_at: new Date().toISOString(),
+    },
+  });
   broadcastSystemMessage(phaseInstructions[phase], registeredName);
 
-  return {
+  return attachManagedTeamSurfaceSignals({
     success: true,
     phase,
     previous_phase: previousPhase,
     message: `Phase set to "${phase}". All agents have been notified.`,
-  };
+  }, {
+    surface: 'set_phase',
+    branchName: currentBranch,
+    contract,
+    profiles,
+    includeContractViolation: true,
+    hookLimit: 4,
+  });
 }
 
 // Deterministic stagger delay based on agent name (500-1500ms)
@@ -2509,10 +3720,11 @@ async function toolListenGroup() {
       if (ch === 'general') continue;
       const chFile = getChannelMessagesFile(ch);
       if (fs.existsSync(chFile)) {
-        const chOffset = channelOffsets.get(ch) || 0;
+        const offsetKey = getChannelOffsetKey(ch, currentBranch);
+        const chOffset = channelOffsets.get(offsetKey) || 0;
         const { messages: chMsgs, newOffset } = readNewMessagesFromFile(chOffset, chFile);
         messages = messages.concat(chMsgs);
-        channelOffsets.set(ch, newOffset);
+        channelOffsets.set(offsetKey, newOffset);
       }
     }
 
@@ -2522,10 +3734,14 @@ async function toolListenGroup() {
     for (const msg of messages) {
       if (consumed.has(msg.id)) continue;
       if (msg.to === '__group__' && msg.from === registeredName) { consumed.add(msg.id); continue; }
-      if (msg.to !== registeredName && msg.to !== '__all__' && msg.to !== '__group__') continue;
-      if (perms[registeredName] && perms[registeredName].can_read) {
-        const allowed = perms[registeredName].can_read;
-        if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(msg.from) && !msg.system) continue;
+      // PRIORITY: Owner/Dashboard messages are ALWAYS delivered (never filtered)
+      const isOwnerMessage = msg.from === 'Dashboard' || msg.from === 'Owner' || msg.from === 'dashboard' || msg.from === 'owner';
+      if (!isOwnerMessage) {
+        if (msg.to !== registeredName && msg.to !== '__all__' && msg.to !== '__group__') continue;
+        if (perms[registeredName] && perms[registeredName].can_read) {
+          const allowed = perms[registeredName].can_read;
+          if (allowed !== '*' && Array.isArray(allowed) && !allowed.includes(msg.from) && !msg.system) continue;
+        }
       }
       batch.push(msg);
       consumed.add(msg.id);
@@ -2558,7 +3774,7 @@ async function toolListenGroup() {
         // Timeout — return minimal empty response
         setListening(false);
         sendsSinceLastListen = 0;
-        sendLimit = 2;
+        sendLimit = 10;
         touchHeartbeat(registeredName);
         resolve({
           messages: [],
@@ -2642,7 +3858,7 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
   setListening(false);
   sendsSinceLastListen = 0;
   const wasAddressed = batch.some(m => m.addressed_to && m.addressed_to.includes(agentName));
-  sendLimit = wasAddressed ? 2 : 1;
+  sendLimit = wasAddressed ? 10 : 5;
 
   // Sort batch by priority: system > threaded replies > direct > broadcast
   function messagePriority(m) {
@@ -2740,7 +3956,18 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
   result.next_action = isAutonomousMode()
     ? 'Process these messages, then call get_work() to continue the proactive work loop. Do NOT call listen_group() — use get_work() instead.'
     : 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
-  return result;
+
+  const listenSurface = isManagedMode() && result.managed_context && result.managed_context.you_are_manager
+    ? 'manager_listen'
+    : (isManagedMode() ? 'participant_listen' : 'team_listen');
+
+  return attachManagedTeamSurfaceSignals(result, {
+    surface: listenSurface,
+    agentName,
+    branchName: currentBranch,
+    includeContractViolation: !!(result.managed_context && result.managed_context.you_are_manager),
+    hookLimit: isManagedMode() ? 3 : 2,
+  });
 }
 
 function toolGetHistory(limit = 50, thread_id = null) {
@@ -2825,9 +4052,7 @@ function toolHandoff(to, context) {
     type: 'handoff',
   };
 
-  ensureDataDir();
-  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+  appendBranchConversationMessage(msg);
   touchActivity();
 
   return {
@@ -2922,9 +4147,7 @@ function toolShareFile(filePath, to = null, summary = null) {
     file: { name: fileName, size: stat.size },
   };
 
-  ensureDataDir();
-  fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-  fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+  appendBranchConversationMessage(msg);
   touchActivity();
 
   return {
@@ -2938,18 +4161,14 @@ function toolShareFile(filePath, to = null, summary = null) {
 
 // --- Task management ---
 
-function getTasks() {
-  return cachedRead('tasks', () => {
-    if (!fs.existsSync(TASKS_FILE)) return [];
-    try { return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8')); } catch { return []; }
-  }, 2000);
+function getTasks(branchName = currentBranch) {
+  const branch = sanitizeBranchName(branchName || 'main');
+  return cachedRead(`tasks:${branch}`, () => canonicalState.listTasks({ branch }), 2000);
 }
 
-function saveTasks(tasks) {
-  withFileLock(TASKS_FILE, () => {
-    invalidateCache('tasks');
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks));
-  });
+function saveTasks(tasks, branchName = currentBranch) {
+  const branch = sanitizeBranchName(branchName || 'main');
+  return tasksWorkflowsState.saveTasks(tasks, { branch });
 }
 
 function toolCreateTask(title, description = '', assignee = null) {
@@ -3010,10 +4229,14 @@ function toolCreateTask(title, description = '', assignee = null) {
     task.channel = taskChannel;
   }
 
-  const tasks = getTasks();
-  if (tasks.length >= 1000) return { error: 'Task limit reached (max 1000). Complete or remove existing tasks first.' };
-  tasks.push(task);
-  saveTasks(tasks);
+  const createdTask = canonicalState.createTask({
+    task,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: task.id,
+  });
+  if (createdTask.error) return createdTask;
   touchActivity();
 
   const result = { success: true, task_id: task.id, assignee: task.assignee };
@@ -3021,7 +4244,7 @@ function toolCreateTask(title, description = '', assignee = null) {
   return result;
 }
 
-function toolUpdateTask(taskId, status, notes = null) {
+function toolUpdateTask(taskId, status, notes = null, evidence = null) {
   if (!registeredName) {
     return { error: 'You must call register() first' };
   }
@@ -3036,6 +4259,32 @@ function toolUpdateTask(taskId, status, notes = null) {
   if (!task) {
     return { error: `Task not found: ${taskId}` };
   }
+  const agents = getAgents();
+  const profiles = getProfiles();
+  const ownerAgentName = task.assignee || registeredName;
+  const ownerAgentRecord = ownerAgentName ? agents[ownerAgentName] : null;
+  const ownerAlive = ownerAgentName === registeredName
+    ? true
+    : !!(ownerAgentRecord && isPidAlive(ownerAgentRecord.pid, ownerAgentRecord.last_activity));
+  const ownerIdleMs = ownerAgentRecord && ownerAgentRecord.last_activity
+    ? Math.max(0, Date.now() - new Date(ownerAgentRecord.last_activity).getTime())
+    : 0;
+  const taskPolicyContext = buildAutonomyPolicyContext(
+    ownerAgentName,
+    (ownerAgentRecord && ownerAgentRecord.branch) || currentBranch,
+    ownerAgentName === registeredName ? currentSessionId : null,
+    agents,
+    profiles
+  );
+  const retryPolicy = status === 'pending'
+    ? classifyRetryPolicy({
+        target: buildTaskPolicyTarget(task),
+        context: taskPolicyContext,
+        attemptCount: Array.isArray(task.attempt_agents) ? task.attempt_agents.length : 0,
+        ownerAlive,
+        idleMs: ownerIdleMs,
+      })
+    : null;
 
   // Prevent race condition: can't claim a task already in_progress by another agent
   if (status === 'in_progress' && task.status === 'in_progress' && task.assignee && task.assignee !== registeredName) {
@@ -3051,88 +4300,190 @@ function toolUpdateTask(taskId, status, notes = null) {
     if (!task.attempt_agents.includes(registeredName)) task.attempt_agents.push(registeredName);
   }
 
-  // Circuit breaker: if task goes back to pending and 3+ agents have failed, block permanently
-  if (status === 'pending' && task.attempt_agents && task.attempt_agents.length >= 3) {
-    task.status = 'blocked_permanent';
-    task.updated_at = new Date().toISOString();
-    task.block_reason = `Circuit breaker: ${task.attempt_agents.length} agents attempted and failed (${task.attempt_agents.join(', ')})`;
-    saveTasks(tasks);
-    broadcastSystemMessage(`[CIRCUIT BREAKER] Task "${task.title}" permanently blocked after ${task.attempt_agents.length} agents failed. Needs human review.`);
+  // Circuit breaker: explicit bounded retry policy blocks permanently at the canonical limit.
+  if (status === 'pending' && retryPolicy && retryPolicy.state === 'blocked_permanent') {
+    const blockedAt = new Date().toISOString();
+    const completion = canonicalState.updateTaskStatus({
+      taskId,
+      status: 'blocked_permanent',
+      notes,
+      actor: registeredName,
+      branch: currentBranch,
+      sessionId: currentSessionId,
+      correlationId: taskId,
+      sourceTool: 'update_task',
+      assignee: task.assignee || null,
+      blockReason: retryPolicy.summary,
+      escalatedAt: blockedAt,
+      policySignal: buildPersistedPolicySignal('retry', retryPolicy, { at: blockedAt }),
+    });
+    if (completion.error) return completion;
+    const updatedTask = getTasks().find((entry) => entry.id === taskId) || task;
+    broadcastSystemMessage(`[CIRCUIT BREAKER] Task "${updatedTask.title}" permanently blocked by explicit retry policy after ${retryPolicy.attempt_count}/${retryPolicy.max_attempts} attempts. Needs human review.`);
     touchActivity();
-    return { success: true, task_id: task.id, status: 'blocked_permanent', circuit_breaker: true, message: 'Task permanently blocked — too many agents failed. Needs human review.' };
+    return {
+      success: true,
+      task_id: updatedTask.id,
+      status: updatedTask.status,
+      circuit_breaker: true,
+      retry_policy: retryPolicy,
+      message: 'Task permanently blocked — bounded retry policy requires human review.',
+    };
   }
 
-  task.status = status;
-  task.updated_at = new Date().toISOString();
-  // Clear escalation flag when task is unblocked
-  if (status !== 'blocked' && task.escalated_at) delete task.escalated_at;
-  if (notes) {
-    task.notes.push({ by: registeredName, text: notes, at: new Date().toISOString() });
-  }
-
-  saveTasks(tasks);
-  touchActivity();
-
-  // Auto-status: update agent's workspace status on task state changes
-  try {
-    if (status === 'in_progress') {
-      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `Working on: ${task.title}`, _status_since: new Date().toISOString() }));
-    } else if (status === 'done') {
-      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `Completed: ${task.title}`, _status_since: new Date().toISOString() }));
-    } else if (status === 'blocked') {
-      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `BLOCKED on: ${task.title}`, _status_since: new Date().toISOString() }));
-    }
-  } catch {}
-
-  // Task-channel auto-join: when claiming a task that has a channel, auto-join it
-  if (status === 'in_progress' && task.channel) {
-    const channels = getChannelsData();
-    if (channels[task.channel] && !channels[task.channel].members.includes(registeredName)) {
-      channels[task.channel].members.push(registeredName);
-      saveChannelsData(channels);
-    }
-  }
-
-  // Event hooks: task completion
   if (status === 'done') {
-    fireEvent('task_complete', { title: task.title, created_by: task.created_by });
-    // Economy: award credits for task completion
+    const commandId = `cmd_${generateId()}`;
+    const completion = canonicalState.updateTaskStatus({
+      taskId,
+      status,
+      notes,
+      actor: registeredName,
+      branch: currentBranch,
+      sessionId: currentSessionId,
+      commandId,
+      correlationId: taskId,
+      evidence,
+      sourceTool: 'update_task',
+    });
+    if (completion.error) return completion;
+
+    const updatedTask = getTasks().find((entry) => entry.id === taskId) || task;
+    touchActivity();
+
+    try {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), {
+        _status: `Completed: ${updatedTask.title}`,
+        _status_since: new Date().toISOString(),
+      }));
+    } catch {}
+
+    fireEvent('task_complete', { title: updatedTask.title, created_by: updatedTask.created_by });
+
     try {
       const economyFile = path.join(DATA_DIR, 'economy.jsonl');
-      const creditEntry = JSON.stringify({ agent: registeredName, amount: 10, reason: 'task_completed', type: 'earn', task: task.title, timestamp: new Date().toISOString() }) + '\n';
+      const creditEntry = JSON.stringify({ agent: registeredName, amount: 10, reason: 'task_completed', type: 'earn', task: updatedTask.title, timestamp: new Date().toISOString() }) + '\n';
       fs.appendFileSync(economyFile, creditEntry);
     } catch {}
-    // Check if this resolves any dependencies
-    const deps = getDeps();
-    for (const dep of deps) {
-      if (dep.depends_on === taskId && !dep.resolved) {
-        dep.resolved = true;
-        const blockedTask = tasks.find(t => t.id === dep.task_id);
-        if (blockedTask && blockedTask.assignee) {
-          fireEvent('dependency_met', { task_title: task.title, notify: blockedTask.assignee });
+
+    const resolvedDependencies = canonicalState.mutateDependencies((deps) => {
+      const resolved = [];
+      for (const dep of deps) {
+        if (dep.depends_on === taskId && !dep.resolved) {
+          dep.resolved = true;
+          dep.resolved_at = updatedTask.completed_at || new Date().toISOString();
+          dep.resolved_by = registeredName;
+          resolved.push(dep);
+          const blockedTask = getTasks().find(t => t.id === dep.task_id);
+          if (blockedTask && blockedTask.assignee) {
+            fireEvent('dependency_met', { task_title: updatedTask.title, notify: blockedTask.assignee });
+          }
         }
       }
-    }
-    writeJsonFile(DEPS_FILE, deps);
+      return resolved;
+    }, { branch: currentBranch });
 
-    // Task-channel auto-cleanup: archive task channel when task is done
-    if (task.channel) {
+    for (const dep of resolvedDependencies) {
+      canonicalState.appendCanonicalEvent({
+        type: 'dependency.resolved',
+        branchId: currentBranch,
+        actorAgent: registeredName,
+        sessionId: currentSessionId,
+        causationId: completion.task_event_id || completion.evidence_event_id || null,
+        correlationId: dep.id,
+        payload: {
+          dependency_id: dep.id,
+          task_id: dep.task_id,
+          depends_on: dep.depends_on,
+          resolved_at: dep.resolved_at,
+          resolved_by: registeredName,
+          resolved_by_task_id: updatedTask.id,
+          reason: 'dependency_target_completed',
+        },
+      });
+    }
+
+    if (updatedTask.channel) {
       const channels = getChannelsData();
-      if (channels[task.channel]) {
-        delete channels[task.channel];
+      if (channels[updatedTask.channel]) {
+        delete channels[updatedTask.channel];
         saveChannelsData(channels);
       }
     }
 
-    // Quality gate: auto-request review when task is completed
     const agents = getAgents();
     const aliveOthers = Object.keys(agents).filter(n => n !== registeredName && isPidAlive(agents[n].pid, agents[n].last_activity));
     if (aliveOthers.length > 0) {
-      broadcastSystemMessage(`[REVIEW NEEDED] ${registeredName} completed task "${task.title}". Team: please review the work and call submit_review() if applicable.`, registeredName);
+      broadcastSystemMessage(`[REVIEW NEEDED] ${registeredName} completed task "${updatedTask.title}". Team: please review the work and call submit_review() if applicable.`, registeredName);
+    }
+
+    return {
+      success: true,
+      task_id: updatedTask.id,
+      status: updatedTask.status,
+      title: updatedTask.title,
+      evidence_ref: completion.evidence_ref || null,
+    };
+  }
+
+  const nonTerminalUpdate = canonicalState.updateTaskStatus({
+    taskId,
+    status,
+    notes,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: taskId,
+    sourceTool: 'update_task',
+    assignee: status === 'in_progress' ? (task.assignee || registeredName) : task.assignee,
+    trackAttemptAgent: status === 'in_progress',
+    clearEscalatedAt: status !== 'blocked' && !(status === 'pending' && retryPolicy && retryPolicy.state === 'escalate'),
+    escalatedAt: status === 'pending' && retryPolicy && retryPolicy.state === 'escalate' && !task.escalated_at
+      ? new Date().toISOString()
+      : undefined,
+    policySignal: status === 'pending' && retryPolicy && retryPolicy.state === 'escalate'
+      ? buildPersistedPolicySignal('retry', retryPolicy)
+      : undefined,
+    clearPolicySignal: status === 'in_progress' || (status === 'pending' && (!retryPolicy || retryPolicy.state === 'continue')),
+  });
+  if (nonTerminalUpdate.error) return nonTerminalUpdate;
+
+  const updatedTask = getTasks().find((entry) => entry.id === taskId) || task;
+  touchActivity();
+
+  if (status === 'pending' && retryPolicy && retryPolicy.state === 'escalate' && !task.escalated_at) {
+    broadcastSystemMessage(
+      `[RETRY ESCALATION] Task "${updatedTask.title}" now has ${retryPolicy.attempt_count}/${retryPolicy.max_attempts} recorded retry attempts. ${retryPolicy.summary}`,
+      registeredName
+    );
+  }
+
+  // Auto-status: update agent's workspace status on task state changes
+  try {
+    if (status === 'in_progress') {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `Working on: ${updatedTask.title}`, _status_since: new Date().toISOString() }));
+    } else if (status === 'done') {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `Completed: ${updatedTask.title}`, _status_since: new Date().toISOString() }));
+    } else if (status === 'blocked') {
+      saveWorkspace(registeredName, Object.assign(getWorkspace(registeredName), { _status: `BLOCKED on: ${updatedTask.title}`, _status_since: new Date().toISOString() }));
+    }
+  } catch {}
+
+  // Task-channel auto-join: when claiming a task that has a channel, auto-join it
+  if (status === 'in_progress' && updatedTask.channel) {
+    const channels = getChannelsData();
+    if (channels[updatedTask.channel] && !channels[updatedTask.channel].members.includes(registeredName)) {
+      channels[updatedTask.channel].members.push(registeredName);
+      saveChannelsData(channels);
     }
   }
 
-  return { success: true, task_id: task.id, status: task.status, title: task.title };
+  return {
+    success: true,
+    task_id: updatedTask.id,
+    status: updatedTask.status,
+    title: updatedTask.title,
+    ...(retryPolicy ? { retry_policy: retryPolicy } : {}),
+  };
 }
 
 function toolListTasks(status = null, assignee = null) {
@@ -3293,6 +4644,13 @@ function toolReset() {
     for (const f of fs.readdirSync(WORKSPACES_DIR)) fs.unlinkSync(path.join(WORKSPACES_DIR, f));
     fs.rmdirSync(WORKSPACES_DIR);
   }
+  if (fs.existsSync(DATA_DIR)) {
+    for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!/^branch-[a-zA-Z0-9_-]+-workspaces$/.test(entry.name)) continue;
+      fs.rmSync(path.join(DATA_DIR, entry.name), { recursive: true, force: true });
+    }
+  }
   // Remove branch files
   if (fs.existsSync(DATA_DIR)) {
     for (const f of fs.readdirSync(DATA_DIR)) {
@@ -3311,12 +4669,12 @@ function toolReset() {
 
 // --- Phase 1: Profile tool ---
 
-function toolUpdateProfile(displayName, avatar, bio, role, appearance) {
+function toolUpdateProfile(displayName, avatar, bio, role, appearance, archetype, skills, contractMode) {
   if (!registeredName) return { error: 'You must call register() first' };
 
   const profiles = getProfiles();
   if (!profiles[registeredName]) {
-    profiles[registeredName] = { display_name: registeredName, avatar: getDefaultAvatar(registeredName), bio: '', role: '', created_at: new Date().toISOString() };
+    profiles[registeredName] = createDefaultProfileRecord(registeredName);
   }
   const p = profiles[registeredName];
   if (displayName !== undefined && displayName !== null) {
@@ -3358,6 +4716,23 @@ function toolUpdateProfile(displayName, avatar, bio, role, appearance) {
     }
     p.appearance = Object.assign(p.appearance || {}, cleaned);
   }
+  const contractPatch = sanitizeContractProfilePatch({
+    archetype,
+    skills,
+    contract_mode: contractMode,
+  });
+  if (!contractPatch.valid) {
+    return { error: contractPatch.errors.join('; ') };
+  }
+  if (Object.prototype.hasOwnProperty.call(contractPatch.normalized, 'archetype')) {
+    p.archetype = contractPatch.normalized.archetype || '';
+  }
+  if (Object.prototype.hasOwnProperty.call(contractPatch.normalized, 'skills')) {
+    p.skills = contractPatch.normalized.skills;
+  }
+  if (Object.prototype.hasOwnProperty.call(contractPatch.normalized, 'contract_mode')) {
+    p.contract_mode = contractPatch.normalized.contract_mode;
+  }
   p.updated_at = new Date().toISOString();
   saveProfiles(profiles);
   return { success: true, profile: p };
@@ -3376,7 +4751,7 @@ function toolWorkspaceWrite(key, content) {
   const ws = getWorkspace(registeredName);
   if (!ws[key] && Object.keys(ws).length >= 50) return { error: 'Maximum 50 keys per workspace' };
   ws[key] = { content, updated_at: new Date().toISOString() };
-  saveWorkspace(registeredName, ws);
+  saveWorkspace(registeredName, ws, { key, keys: [key] });
   touchActivity();
   return { success: true, key, size: content.length, total_keys: Object.keys(ws).length };
 }
@@ -3425,7 +4800,6 @@ function toolCreateWorkflow(name, steps, autonomous = false, parallel = false) {
   if (!Array.isArray(steps) || steps.length < 2 || steps.length > 30) return { error: 'steps must be array of 2-30 items' };
 
   const agents = getAgents();
-  const workflows = getWorkflows();
   const workflowId = 'wf_' + generateId();
 
   const parsedSteps = steps.map((s, i) => {
@@ -3479,10 +4853,14 @@ function toolCreateWorkflow(name, steps, autonomous = false, parallel = false) {
     updated_at: new Date().toISOString(),
   };
 
-  if (workflows.length >= 500) return { error: 'Workflow limit reached (max 500).' };
-  workflows.push(workflow);
-  ensureDataDir();
-  saveWorkflows(workflows);
+  const createdWorkflow = canonicalState.createWorkflow({
+    workflow,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: workflowId,
+  });
+  if (createdWorkflow.error) return createdWorkflow;
 
   // Auto-handoff to all in_progress steps' assignees
   const startedSteps = parsedSteps.filter(s => s.status === 'in_progress');
@@ -3492,8 +4870,7 @@ function toolCreateWorkflow(name, steps, autonomous = false, parallel = false) {
         (autonomous ? '\n\nThis is an AUTONOMOUS workflow. Call get_work() to enter the proactive work loop. Do NOT wait for approval.' : '');
       messageSeq++;
       const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: step.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
-      fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-      fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
+      appendBranchConversationMessage(msg);
     }
   }
   touchActivity();
@@ -3510,53 +4887,49 @@ function toolCreateWorkflow(name, steps, autonomous = false, parallel = false) {
   };
 }
 
-function toolAdvanceWorkflow(workflowId, notes) {
+function toolAdvanceWorkflow(workflowId, notes, evidence = null) {
   if (!registeredName) return { error: 'You must call register() first' };
 
-  const workflows = getWorkflows();
-  const wf = workflows.find(w => w.id === workflowId);
-  if (!wf) return { error: `Workflow not found: ${workflowId}` };
-  if (wf.status !== 'active') return { error: 'Workflow is not active' };
+  const existingWorkflow = getWorkflows().find((entry) => entry.id === workflowId);
+  if (!existingWorkflow) return { error: `Workflow not found: ${workflowId}` };
+  if (!workflowMatchesActiveBranch(existingWorkflow)) return { error: 'Workflow is not active on the current branch.' };
 
-  const currentStep = wf.steps.find(s => s.status === 'in_progress');
-  if (!currentStep) return { error: 'No step currently in progress' };
+  const commandId = `cmd_${generateId()}`;
+  const completion = canonicalState.advanceWorkflow({
+    workflowId,
+    notes: notes ? notes.substring(0, 500) : null,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    commandId,
+    correlationId: workflowId,
+    evidence,
+    sourceTool: 'advance_workflow',
+  });
+  if (completion.error) return completion;
 
-  currentStep.status = 'done';
-  currentStep.completed_at = new Date().toISOString();
-  if (notes) currentStep.notes = notes.substring(0, 500);
+  emitWorkflowHandoffMessages({
+    workflowId: completion.workflow_id,
+    workflowName: completion.workflow_name,
+    completedStepId: completion.completed_step,
+    nextSteps: completion.next_steps,
+    summary: evidence && evidence.summary ? evidence.summary : null,
+    confidence: evidence && typeof evidence.confidence === 'number' ? evidence.confidence : null,
+    evidenceRef: completion.evidence_ref || null,
+    commandId,
+    correlationId: workflowId,
+  });
 
-  // Find all ready steps (supports parallel via depends_on)
-  const nextSteps = findReadySteps(wf);
-  if (nextSteps.length > 0) {
-    const agents = getAgents();
-    for (const step of nextSteps) {
-      step.status = 'in_progress';
-      step.started_at = new Date().toISOString();
-      if (step.assignee && agents[step.assignee] && step.assignee !== registeredName && canSendTo(registeredName, step.assignee)) {
-        const handoffContent = `[Workflow "${wf.name}"] Step ${step.id} assigned to you: ${step.description}`;
-        messageSeq++;
-        const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: step.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
-        fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-        fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
-      }
-    }
-  } else if (wf.steps.every(s => s.status === 'done')) {
-    wf.status = 'completed';
-  }
-  wf.updated_at = new Date().toISOString();
-  saveWorkflows(workflows);
   touchActivity();
-
-  const doneCount = wf.steps.filter(s => s.status === 'done').length;
-  const pct = Math.round((doneCount / wf.steps.length) * 100);
 
   return {
     success: true,
-    workflow_id: wf.id,
-    completed_step: currentStep.id,
-    next_steps: nextSteps.length > 0 ? nextSteps.map(s => ({ id: s.id, description: s.description, assignee: s.assignee })) : null,
-    progress: `${doneCount}/${wf.steps.length} (${pct}%)`,
-    workflow_status: wf.status,
+    workflow_id: completion.workflow_id,
+    completed_step: completion.completed_step,
+    next_steps: completion.next_steps.length > 0 ? completion.next_steps : null,
+    progress: completion.progress,
+    workflow_status: completion.workflow_status,
+    evidence_ref: completion.evidence_ref || null,
   };
 }
 
@@ -3599,7 +4972,7 @@ function maybeRefreshContext(agentName) {
 
     const tasks = getTasks();
     const myTasks = tasks.filter(t => t.assignee === agentName && t.status !== 'done');
-    const decisions = readJsonFile(DECISIONS_FILE) || [];
+    const decisions = getDecisions();
     const recentDecisions = decisions.slice(-5);
 
     return {
@@ -3652,6 +5025,241 @@ function computeBackpressure() {
   };
 }
 
+function attachContractAdvisory(result, contract, target = {}, advisoryOverride = null) {
+  const advisory = advisoryOverride || analyzeContractFit(contract, target);
+  if (!advisory) return result;
+
+  const metadata = buildRuntimeContractMetadata(contract);
+  result.contract_advisory = Object.assign({
+    archetype: metadata.contract ? metadata.contract.archetype : null,
+    declared_archetype: metadata.archetype || null,
+    role: contract.role || '',
+    role_token: contract.role_token || null,
+    skills: metadata.skills,
+    effective_skills: metadata.contract ? metadata.contract.effective_skills : [],
+    contract_mode: metadata.contract_mode,
+  }, advisory);
+
+  const instructionField = typeof result.instruction === 'string'
+    ? 'instruction'
+    : (typeof result.instructions === 'string' ? 'instructions' : null);
+
+  if (instructionField && (advisory.status === 'mismatch' || advisory.status === 'partial')) {
+    result[instructionField] += `\n\nCONTRACT ADVISORY: ${advisory.summary}`;
+    if (advisory.migration_note) {
+      result[instructionField] += ` ${advisory.migration_note}`;
+    }
+  }
+
+  return result;
+}
+
+function attachCapabilityAdvisory(result, capabilityAdvisory) {
+  if (!capabilityAdvisory) return result;
+
+  const hasExplicitCapabilitySignal = (Array.isArray(capabilityAdvisory.required_capabilities) && capabilityAdvisory.required_capabilities.length > 0)
+    || (Array.isArray(capabilityAdvisory.preferred_capabilities) && capabilityAdvisory.preferred_capabilities.length > 0)
+    || capabilityAdvisory.status === 'mismatch'
+    || capabilityAdvisory.status === 'partial'
+    || capabilityAdvisory.status === 'blocked';
+  if (!hasExplicitCapabilitySignal) return result;
+
+  result.capability_advisory = capabilityAdvisory;
+
+  const instructionField = typeof result.instruction === 'string'
+    ? 'instruction'
+    : (typeof result.instructions === 'string' ? 'instructions' : null);
+  if (instructionField && (capabilityAdvisory.status === 'mismatch' || capabilityAdvisory.status === 'partial')) {
+    result[instructionField] += `\n\nCAPABILITY ADVISORY: ${capabilityAdvisory.summary}`;
+  }
+
+  return result;
+}
+
+function buildAutonomyDecisionContext(contract, skills = [], agents = null) {
+  const allAgents = agents || getAgents();
+  return resolveAgentDecisionContext({
+    agentName: registeredName,
+    branchId: currentBranch,
+    sessionSummary: getAuthoritativeSessionSummary(registeredName, currentBranch, currentSessionId),
+    contract,
+    agentRecord: allAgents[registeredName] || {},
+    availableSkills: Array.isArray(skills) ? skills : [],
+  });
+}
+
+function buildAutonomyPolicyContext(agentName = registeredName, branchName = currentBranch, sessionId = null, agents = null, profiles = null) {
+  const allAgents = agents || getAgents();
+  const allProfiles = profiles || getProfiles();
+  return resolveAgentDecisionContext({
+    agentName,
+    branchId: branchName,
+    sessionSummary: getAuthoritativeSessionSummary(agentName, branchName, sessionId),
+    contract: resolveAgentContract(allProfiles[agentName] || {}),
+    agentRecord: allAgents[agentName] || {},
+  });
+}
+
+function buildTaskPolicyTarget(task = {}) {
+  return {
+    work_type: 'task',
+    title: task.title || '',
+    description: task.description || '',
+    assigned: !!task.assignee,
+    required_capabilities: task.required_capabilities || null,
+    preferred_capabilities: task.preferred_capabilities || null,
+  };
+}
+
+function buildWorkflowStepPolicyTarget(step = {}, workflow = {}) {
+  return {
+    work_type: 'workflow_step',
+    title: step.description || '',
+    description: workflow.name || '',
+    assigned: !!step.assignee,
+    required_capabilities: step.required_capabilities || null,
+    preferred_capabilities: step.preferred_capabilities || null,
+  };
+}
+
+function buildPersistedPolicySignal(source, policy, extras = {}) {
+  if (!policy || typeof policy !== 'object') return null;
+  return {
+    source,
+    classification: policy.classification || null,
+    state: policy.state || null,
+    owner_state: policy.owner_state || null,
+    summary: policy.summary || null,
+    reasons: Array.isArray(policy.reasons) ? [...policy.reasons] : [],
+    session_id: policy.session_summary && policy.session_summary.session_id ? policy.session_summary.session_id : null,
+    session_state: policy.session_summary && policy.session_summary.state ? policy.session_summary.state : null,
+    session_stale: !!(policy.session_summary && policy.session_summary.stale),
+    contract_status: policy.contract_advisory && policy.contract_advisory.status ? policy.contract_advisory.status : null,
+    capability_status: policy.capability_advisory && policy.capability_advisory.status ? policy.capability_advisory.status : null,
+    attempt_count: Number.isFinite(policy.attempt_count) ? policy.attempt_count : null,
+    max_attempts: Number.isFinite(policy.max_attempts) ? policy.max_attempts : null,
+    blocked_minutes: Number.isFinite(policy.blocked_minutes) ? policy.blocked_minutes : null,
+    step_minutes: Number.isFinite(policy.step_minutes) ? policy.step_minutes : null,
+    dependency_evidence_count: Number.isFinite(policy.dependency_evidence_count) ? policy.dependency_evidence_count : null,
+    recent_evidence_count: Number.isFinite(policy.recent_evidence_count) ? policy.recent_evidence_count : null,
+    signaled_at: extras.at || new Date().toISOString(),
+    ...extras,
+  };
+}
+
+function resolveRetryPolicySubject(taskOrStep) {
+  const activeStep = registeredName ? findMyActiveWorkflowStep() : null;
+  if (activeStep && (activeStep.id === taskOrStep || activeStep.description === taskOrStep)) {
+    return {
+      kind: 'workflow_step',
+      target: buildWorkflowStepPolicyTarget(activeStep, { name: activeStep.workflow_name || '' }),
+    };
+  }
+
+  const activeTask = registeredName
+    ? getTasks().find((task) => task.assignee === registeredName && task.status !== 'done' && (task.id === taskOrStep || task.title === taskOrStep))
+    : null;
+  if (activeTask) {
+    return {
+      kind: 'task',
+      target: buildTaskPolicyTarget(activeTask),
+    };
+  }
+
+  return {
+    kind: 'freeform',
+    target: {
+      work_type: 'task',
+      title: taskOrStep || 'retry context',
+      description: taskOrStep || 'retry context',
+      assigned: true,
+    },
+  };
+}
+
+function summarizeWatchdogActionForHealth(action) {
+  if (!action || typeof action !== 'object') return null;
+  if (action.kind === 'nudge_idle' || action.kind === 'nudge_idle_hard') {
+    return {
+      type: action.kind,
+      agent: action.agentName,
+      idle_minutes: Math.round((action.idleMs || 0) / 60000),
+      classification: action.policy && action.policy.classification ? action.policy.classification : null,
+      summary: action.policy && action.policy.summary ? action.policy.summary : null,
+    };
+  }
+  if (action.kind === 'release_task_claim') {
+    return {
+      type: action.kind,
+      task_id: action.taskId,
+      title: action.taskTitle,
+      assignee: action.assignee,
+      classification: action.policy && action.policy.classification ? action.policy.classification : null,
+      summary: action.policy && action.policy.summary ? action.policy.summary : null,
+    };
+  }
+  if (action.kind === 'escalate_blocked_task') {
+    return {
+      type: action.kind,
+      task_id: action.taskId,
+      title: action.taskTitle,
+      assignee: action.assignee,
+      blocked_minutes: Math.round((action.blockedAgeMs || 0) / 60000),
+      classification: action.policy && action.policy.classification ? action.policy.classification : null,
+      summary: action.policy && action.policy.summary ? action.policy.summary : null,
+    };
+  }
+  if (action.kind === 'signal_stalled_step') {
+    return {
+      type: `${action.kind}:${action.signal}`,
+      workflow_id: action.workflowId,
+      workflow_name: action.workflowName,
+      step_id: action.stepId,
+      assignee: action.assignee,
+      step_minutes: Math.round((action.stepAgeMs || 0) / 60000),
+      classification: action.policy && action.policy.classification ? action.policy.classification : null,
+      summary: action.policy && action.policy.summary ? action.policy.summary : null,
+    };
+  }
+  return null;
+}
+
+function attachManagedTeamSurfaceSignals(result, options = {}) {
+  const surface = options.surface || 'team_listen';
+  const branchName = options.branchName || currentBranch;
+  const profiles = options.profiles || getProfiles();
+  const agentName = options.agentName || registeredName;
+  const contract = options.contract || resolveAgentContract(profiles[agentName] || {});
+  const contractContext = buildManagedTeamContractContext(contract, surface, options);
+
+  if (contractContext && contractContext.advisory) {
+    attachContractAdvisory(result, contract, contractContext.target, contractContext.advisory);
+    if (result.contract_advisory) {
+      result.contract_advisory.surface = surface;
+    }
+  }
+
+  if (options.includeContractViolation && contractContext && contractContext.contract_violation) {
+    result.contract_violation = contractContext.contract_violation;
+  }
+
+  if (options.includeHooks !== false) {
+    const coordinationHooks = readManagedTeamHookDigest(
+      canonicalState.readBranchHooks,
+      branchName,
+      {
+        limit: options.hookLimit,
+        topics: options.hookTopics,
+      }
+    );
+    if (coordinationHooks) {
+      result.coordination_hooks = coordinationHooks;
+    }
+  }
+
+  return result;
+}
+
 // --- Autonomy Engine tools ---
 
 async function toolGetWork(params = {}) {
@@ -3659,11 +5267,18 @@ async function toolGetWork(params = {}) {
 
   // Special roles run their own loops instead of regular work
   const profiles = getProfiles();
-  if (profiles[registeredName] && profiles[registeredName].role === 'monitor') {
-    return monitorHealthCheck();
+  const contract = resolveAgentContract(profiles[registeredName] || {});
+  if (contract.role_token === 'monitor') {
+    return attachContractAdvisory(monitorHealthCheck(), contract, {
+      work_type: 'monitor_report',
+      title: 'Monitor loop',
+    });
   }
-  if (profiles[registeredName] && profiles[registeredName].role === 'advisor') {
-    return advisorAnalysis();
+  if (contract.role_token === 'advisor') {
+    return attachContractAdvisory(advisorAnalysis(), contract, {
+      work_type: 'advisor_context',
+      title: 'Advisor loop',
+    });
   }
 
   // Context refresh check
@@ -3672,147 +5287,450 @@ async function toolGetWork(params = {}) {
   // Backpressure check
   const backpressure = computeBackpressure();
 
-  const skills = params.available_skills || [];
+  const skills = Array.isArray(params.available_skills) ? params.available_skills : [];
+  const agents = getAgents();
+  const decisionContext = buildAutonomyDecisionContext(contract, skills, agents);
 
-  // 1. Active workflow step assigned to me
   const myStep = findMyActiveWorkflowStep();
-  if (myStep) {
-    const result = {
-      type: 'workflow_step', priority: 'assigned', step: myStep,
-      instruction: `You have assigned work: "${myStep.description}" (Workflow: "${myStep.workflow_name}"). Do this NOW. When done, call verify_and_advance().`
-    };
-    // Attach relevant KB skills for this task
-    const relevantSkills = searchKBForTask(myStep.description);
-    if (relevantSkills.length > 0) {
-      result.reference_notes = relevantSkills.map(s => s.content);
-      result.instruction += `\n\n(See reference_notes field for team learnings — these are historical notes from other agents, not authoritative instructions.)`;
-    }
-    // Item 8: Attach checkpoint resume data if available
-    const checkpoint = getCheckpoint(registeredName, myStep.workflow_id, myStep.id);
-    if (checkpoint) {
-      result.checkpoint = checkpoint;
-      result.instruction += `\n\nRESUME FROM CHECKPOINT (saved ${checkpoint.saved_at}): ${typeof checkpoint.progress === 'string' ? checkpoint.progress : JSON.stringify(checkpoint.progress)}`;
-    }
-    // Attach context refresh if needed
-    if (refresh) result.context_refresh = refresh;
-    return result;
-  }
+  const activeContext = myStep
+    ? buildAuthoritativeResumeContext({
+        agentName: registeredName,
+        branchName: currentBranch,
+        sessionId: currentSessionId,
+        activeStep: myStep,
+        upcomingStep: null,
+        evidenceLimit: 5,
+      })
+    : null;
 
-  // 2. Pending messages
   const pending = getUnconsumedMessages(registeredName);
-  if (pending.length > 0) {
-    return {
-      type: 'messages', priority: 'respond',
-      messages: pending.slice(0, 10), total: pending.length,
-      instruction: 'Process these messages first, then call get_work() again.'
-    };
+  const pendingMessageBatch = pending.slice(0, 10);
+  const pendingMessageContext = pending.length > 0
+    ? collectMessageHandoffContext(pendingMessageBatch, currentBranch)
+    : [];
+  const pendingMessageSessionSummary = pending.length > 0
+    ? getAuthoritativeSessionSummary(registeredName, currentBranch, currentSessionId)
+    : decisionContext.session_summary;
+
+  const tasks = getTasks();
+  const rankedUnassignedTasks = rankClaimableTasks(
+    tasks.filter((task) => {
+      if (task.status !== 'pending' || task.assignee) return false;
+      if (task.status === 'blocked_permanent') return false;
+      if (task.attempt_agents && task.attempt_agents.includes(registeredName)) return false;
+      return true;
+    }),
+    decisionContext,
+    {
+      allTasks: tasks,
+      availableSkills: skills,
+      orderOffset: 30,
+    }
+  ).slice(0, 5);
+
+  const helpReqs = findHelpRequests().slice(0, 3);
+  const reviews = findPendingReviews().slice(0, 3);
+  const blocked = findBlockedTasks().slice(0, 3);
+  const stealable = findStealableWork();
+
+  let prelistenCandidates = [];
+
+  if (myStep) {
+    const activeResumeContext = {};
+    if (activeContext && activeContext.dependency_evidence.length > 0) activeResumeContext.dependency_evidence = activeContext.dependency_evidence;
+    if (activeContext && activeContext.recent_evidence.length > 0) activeResumeContext.recent_evidence = activeContext.recent_evidence;
+    prelistenCandidates.push({
+      id: `workflow_step_${myStep.workflow_id}_${myStep.id}`,
+      order: 10,
+      kind: 'workflow_step',
+      step: myStep,
+      resumeContext: activeContext,
+      target: {
+        work_type: 'workflow_step',
+        title: myStep.description,
+        description: myStep.workflow_name,
+        assigned: true,
+        assignment_priority: 'active',
+        required_capabilities: myStep.required_capabilities || null,
+        preferred_capabilities: myStep.preferred_capabilities || null,
+        session_summary: activeContext ? activeContext.session_summary : null,
+        resume_context: Object.keys(activeResumeContext).length > 0 ? activeResumeContext : null,
+      },
+    });
   }
 
-  // 3. Unassigned tasks matching skills
-  const unassigned = findUnassignedTasks(skills);
-  if (unassigned.length > 0) {
-    const best = unassigned[0];
-    // Wrap claim in file lock to prevent double-claiming
-    const claimed = withFileLock(TASKS_FILE, () => {
-      const freshTasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-      const task = freshTasks.find(t => t.id === best.id);
-      if (!task || task.assignee || task.status === 'in_progress') return false; // already claimed
-      task.assignee = registeredName;
-      task.status = 'in_progress';
-      task.updated_at = new Date().toISOString();
-      if (!task.attempt_agents) task.attempt_agents = [];
-      if (!task.attempt_agents.includes(registeredName)) task.attempt_agents.push(registeredName);
-      fs.writeFileSync(TASKS_FILE, JSON.stringify(freshTasks, null, 2));
-      return true;
+  if (pending.length > 0) {
+    prelistenCandidates.push({
+      id: `pending_messages_${pending.length}`,
+      order: 20,
+      kind: 'messages',
+      messages: pendingMessageBatch,
+      total: pending.length,
+      sessionSummary: pendingMessageSessionSummary,
+      messageContext: pendingMessageContext,
+      target: {
+        work_type: 'messages',
+        title: pendingMessageBatch[0] ? `${pendingMessageBatch[0].from || 'message'} handoff` : 'Pending messages',
+        description: `${pending.length} pending messages`,
+        session_summary: pendingMessageSessionSummary,
+        resume_context: pendingMessageContext.length > 0 ? { message_handoffs: pendingMessageContext } : null,
+      },
     });
-    if (claimed) {
-      const claimResult = {
-        type: 'claimed_task', priority: 'self_assigned', task: best,
-        instruction: `No one was working on "${best.title}". I've assigned it to you. Start working on it now.`
+  }
+
+  rankedUnassignedTasks.forEach((entry, index) => {
+    prelistenCandidates.push({
+      id: `claim_task_${entry.task.id || index}`,
+      order: 30 + index,
+      kind: 'claim_task',
+      taskEntry: entry,
+      target: entry.target,
+    });
+  });
+
+  helpReqs.forEach((request, index) => {
+    prelistenCandidates.push({
+      id: `help_${request.id || index}`,
+      order: 50 + index,
+      kind: 'help_teammate',
+      request,
+      target: {
+        work_type: 'help_teammate',
+        title: request.from || 'Teammate help request',
+        description: request.content,
+      },
+    });
+  });
+
+  reviews.forEach((review, index) => {
+    prelistenCandidates.push({
+      id: `review_${review.id || index}`,
+      order: 60 + index,
+      kind: 'review',
+      review,
+      target: {
+        work_type: 'review',
+        title: review.file,
+        description: review.description || '',
+      },
+    });
+  });
+
+  blocked.forEach((task, index) => {
+    prelistenCandidates.push({
+      id: `blocked_${task.id || index}`,
+      order: 70 + index,
+      kind: 'unblock',
+      task,
+      target: {
+        work_type: 'unblock',
+        title: task.title,
+        description: task.description || '',
+        required_capabilities: task.required_capabilities || null,
+        preferred_capabilities: task.preferred_capabilities || null,
+      },
+    });
+  });
+
+  if (stealable) {
+    prelistenCandidates.push({
+      id: `steal_${stealable.task.id}`,
+      order: 80,
+      kind: 'stolen_task',
+      stealable,
+      target: {
+        work_type: 'stolen_task',
+        title: stealable.task.title,
+        description: stealable.task.description || '',
+        required_capabilities: stealable.task.required_capabilities || null,
+        preferred_capabilities: stealable.task.preferred_capabilities || null,
+      },
+    });
+  }
+
+  while (prelistenCandidates.length > 0) {
+    const selected = selectAutonomyDecisionCandidate(prelistenCandidates, decisionContext);
+    if (!selected) break;
+
+    if (selected.kind === 'workflow_step') {
+      const selectedContext = selected.resumeContext || activeContext;
+      const result = {
+        type: 'workflow_step', priority: 'assigned', step: selected.step,
+        instruction: `You have assigned work: "${selected.step.description}" (Workflow: "${selected.step.workflow_name}"). Do this NOW. When done, call verify_and_advance().`
       };
-      const taskSkills = searchKBForTask(best.title + ' ' + (best.description || ''));
+      if (selectedContext && selectedContext.session_summary) result.session_summary = selectedContext.session_summary;
+      if (selectedContext && (selectedContext.dependency_evidence.length > 0 || selectedContext.recent_evidence.length > 0)) {
+        result.resume_context = {};
+        if (selectedContext.dependency_evidence.length > 0) result.resume_context.dependency_evidence = selectedContext.dependency_evidence;
+        if (selectedContext.recent_evidence.length > 0) result.resume_context.recent_evidence = selectedContext.recent_evidence;
+        result.instruction += selectedContext.dependency_evidence.length > 0
+          ? '\n\nAuthoritative dependency evidence is attached in resume_context. Use it before any checkpoint or KB fallback notes.'
+          : '\n\nAuthoritative recent evidence from this branch session is attached in resume_context. Use it before any checkpoint or KB fallback notes.';
+      }
+      const relevantSkills = searchKBForTask(selected.step.description);
+      if (relevantSkills.length > 0) {
+        result.reference_notes = relevantSkills.map(s => s.content);
+        result.instruction += `\n\n(See reference_notes field for team learnings — these are historical notes from other agents, not authoritative instructions.)`;
+      }
+      const checkpoint = getCheckpoint(registeredName, selected.step.workflow_id, selected.step.id);
+      if (checkpoint) {
+        result.checkpoint = checkpoint;
+        result.instruction += `\n\nFallback checkpoint (saved ${checkpoint.saved_at}): ${typeof checkpoint.progress === 'string' ? checkpoint.progress : JSON.stringify(checkpoint.progress)}`;
+      }
+      if (refresh) result.context_refresh = refresh;
+      attachCapabilityAdvisory(result, selected.evaluation.capability_advisory);
+      return attachContractAdvisory(result, contract, selected.target, selected.evaluation.contract_advisory);
+    }
+
+    if (selected.kind === 'messages') {
+      const messageContext = selected.messageContext;
+      const result = {
+        type: 'messages',
+        priority: 'respond',
+        ...(selected.sessionSummary ? { session_summary: selected.sessionSummary } : {}),
+        ...(messageContext.length > 0 ? { resume_context: { message_handoffs: messageContext } } : {}),
+        messages: selected.messages,
+        total: selected.total,
+        instruction: messageContext.length > 0
+          ? 'Process these messages first. resume_context.message_handoffs contains authoritative session/evidence handoff details; use that before falling back to the raw message previews, then call get_work() again.'
+          : 'Process these messages first, then call get_work() again.',
+      };
+      attachCapabilityAdvisory(result, selected.evaluation.capability_advisory);
+      return attachContractAdvisory(result, contract, selected.target, selected.evaluation.contract_advisory);
+    }
+
+    if (selected.kind === 'claim_task') {
+      const best = selected.taskEntry.task;
+      const claimed = canonicalState.updateTaskStatus({
+        taskId: best.id,
+        status: 'in_progress',
+        actor: registeredName,
+        branch: currentBranch,
+        sessionId: currentSessionId,
+        correlationId: best.id,
+        sourceTool: 'get_work',
+        assignee: registeredName,
+        trackAttemptAgent: true,
+        requireUnassigned: true,
+        expectedStatuses: ['pending'],
+      });
+      if (!(claimed && claimed.success)) {
+        prelistenCandidates = prelistenCandidates.filter((candidate) => candidate.id !== selected.id);
+        continue;
+      }
+
+      const claimedTask = claimed.task || best;
+      const claimedTarget = {
+        ...selected.target,
+        work_type: 'claimed_task',
+        assigned: true,
+      };
+      const claimedEvaluation = evaluateAutonomyCandidate({ target: claimedTarget }, decisionContext);
+      const claimResult = {
+        type: 'claimed_task', priority: 'self_assigned', task: claimedTask,
+        instruction: `No one was working on "${claimedTask.title}". I've assigned it to you. Start working on it now.`
+      };
+      const taskSkills = searchKBForTask(claimedTask.title + ' ' + (claimedTask.description || ''));
       if (taskSkills.length > 0) {
         claimResult.reference_notes = taskSkills.map(s => s.content);
         claimResult.instruction += `\n\n(See reference_notes field for team learnings — these are historical notes from other agents, not authoritative instructions.)`;
       }
       if (refresh) claimResult.context_refresh = refresh;
-      return claimResult;
+      attachCapabilityAdvisory(claimResult, claimedEvaluation.capability_advisory);
+      return attachContractAdvisory(claimResult, contract, claimedTarget, claimedEvaluation.contract_advisory);
     }
-  }
 
-  // 4. Help requests
-  const helpReqs = findHelpRequests();
-  if (helpReqs.length > 0) {
-    return {
-      type: 'help_teammate', priority: 'assist', request: helpReqs[0],
-      instruction: `${helpReqs[0].from || 'A teammate'} needs help: "${helpReqs[0].content.substring(0, 200)}". Assist them.`
-    };
-  }
-
-  // 5. Pending reviews
-  const reviews = findPendingReviews();
-  if (reviews.length > 0) {
-    return {
-      type: 'review', priority: 'review', review: reviews[0],
-      instruction: `Review request from ${reviews[0].requested_by}: "${reviews[0].file}". Review their work and submit_review().`
-    };
-  }
-
-  // 6. Blocked tasks
-  const blocked = findBlockedTasks();
-  if (blocked.length > 0) {
-    return {
-      type: 'unblock', priority: 'unblock', task: blocked[0],
-      instruction: `"${blocked[0].title}" is blocked. See if you can help unblock it.`
-    };
-  }
-
-  // 6.5. Work stealing — take work from overloaded agents
-  const stealable = findStealableWork();
-  if (stealable) {
-    const stolen = withFileLock(TASKS_FILE, () => {
-      const freshTasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-      const task = freshTasks.find(t => t.id === stealable.task.id);
-      if (!task || task.assignee !== stealable.from_agent || task.status !== 'pending') return false;
-      task.assignee = registeredName;
-      task.status = 'in_progress';
-      task.updated_at = new Date().toISOString();
-      if (!task.attempt_agents) task.attempt_agents = [];
-      if (!task.attempt_agents.includes(registeredName)) task.attempt_agents.push(registeredName);
-      fs.writeFileSync(TASKS_FILE, JSON.stringify(freshTasks, null, 2));
-      return true;
-    });
-    if (stolen) {
-      return {
-        type: 'stolen_task', priority: 'work_steal', task: stealable.task,
-        from_agent: stealable.from_agent,
-        instruction: stealable.message + ' Start working on it now.',
+    if (selected.kind === 'help_teammate') {
+      const result = {
+        type: 'help_teammate', priority: 'assist', request: selected.request,
+        instruction: `${selected.request.from || 'A teammate'} needs help: "${selected.request.content.substring(0, 200)}". Assist them.`
       };
+      attachCapabilityAdvisory(result, selected.evaluation.capability_advisory);
+      return attachContractAdvisory(result, contract, selected.target, selected.evaluation.contract_advisory);
     }
+
+    if (selected.kind === 'review') {
+      const result = {
+        type: 'review', priority: 'review', review: selected.review,
+        instruction: `Review request from ${selected.review.requested_by}: "${selected.review.file}". Review their work and submit_review().`
+      };
+      attachCapabilityAdvisory(result, selected.evaluation.capability_advisory);
+      return attachContractAdvisory(result, contract, selected.target, selected.evaluation.contract_advisory);
+    }
+
+    if (selected.kind === 'unblock') {
+      const result = {
+        type: 'unblock', priority: 'unblock', task: selected.task,
+        instruction: `"${selected.task.title}" is blocked. See if you can help unblock it.`
+      };
+      attachCapabilityAdvisory(result, selected.evaluation.capability_advisory);
+      return attachContractAdvisory(result, contract, selected.target, selected.evaluation.contract_advisory);
+    }
+
+    if (selected.kind === 'stolen_task') {
+      const stolen = canonicalState.updateTaskStatus({
+        taskId: selected.stealable.task.id,
+        status: 'in_progress',
+        actor: registeredName,
+        branch: currentBranch,
+        sessionId: currentSessionId,
+        correlationId: selected.stealable.task.id,
+        sourceTool: 'get_work',
+        assignee: registeredName,
+        trackAttemptAgent: true,
+        expectedAssignee: selected.stealable.from_agent,
+        expectedStatuses: ['pending'],
+      });
+      if (!(stolen && stolen.success)) {
+        prelistenCandidates = prelistenCandidates.filter((candidate) => candidate.id !== selected.id);
+        continue;
+      }
+
+      const stolenTask = stolen.task || selected.stealable.task;
+      const stolenTarget = {
+        ...selected.target,
+        work_type: 'claimed_task',
+        assigned: true,
+      };
+      const stolenEvaluation = evaluateAutonomyCandidate({ target: stolenTarget }, decisionContext);
+      const result = {
+        type: 'stolen_task', priority: 'work_steal', task: stolenTask,
+        from_agent: selected.stealable.from_agent,
+        instruction: selected.stealable.message + ' Start working on it now.',
+      };
+      attachCapabilityAdvisory(result, stolenEvaluation.capability_advisory);
+      return attachContractAdvisory(result, contract, stolenTarget, stolenEvaluation.contract_advisory);
+    }
+
+    prelistenCandidates = prelistenCandidates.filter((candidate) => candidate.id !== selected.id);
   }
 
-  // 7. Short listen (30s max, NOT infinite) — configurable via env for testing
   const listenTimeout = parseInt(process.env.AGENT_BRIDGE_LISTEN_TIMEOUT) || 30000;
   const newMsgs = await listenWithTimeout(listenTimeout);
-  if (newMsgs.length > 0) {
-    return {
-      type: 'messages', priority: 'respond',
-      messages: newMsgs.slice(0, 10), total: newMsgs.length,
-      instruction: 'New messages arrived. Process them, then call get_work() again.'
-    };
-  }
-
-  // 8. Upcoming steps to prep for
   const upcoming = findUpcomingStepsForMe();
-  if (upcoming) {
-    return {
-      type: 'prep_work', priority: 'proactive', step: upcoming,
-      instruction: `Your next workflow step "${upcoming.description}" is coming up (Workflow: "${upcoming.workflow_name}"). Prepare for it: read relevant files, understand the dependencies, plan your approach.`
-    };
+  const upcomingContext = upcoming
+    ? buildAuthoritativeResumeContext({
+        agentName: registeredName,
+        branchName: currentBranch,
+        sessionId: currentSessionId,
+        activeStep: null,
+        upcomingStep: upcoming,
+        evidenceLimit: 5,
+      })
+    : null;
+  const checkpointFallbacks = upcoming
+    ? listCheckpointFallbacks(registeredName, { workflowId: upcoming.workflow_id }).slice(0, 3)
+    : [];
+  const newMessageBatch = newMsgs.slice(0, 10);
+  const newMessageContext = newMsgs.length > 0
+    ? collectMessageHandoffContext(newMessageBatch, currentBranch)
+    : [];
+  const postlistenMessageSessionSummary = newMsgs.length > 0
+    ? getAuthoritativeSessionSummary(registeredName, currentBranch, currentSessionId)
+    : decisionContext.session_summary;
+
+  const postlistenCandidates = [];
+
+  if (newMsgs.length > 0) {
+    postlistenCandidates.push({
+      id: `new_messages_${newMsgs.length}`,
+      order: 10,
+      kind: 'messages_after_listen',
+      messages: newMessageBatch,
+      total: newMsgs.length,
+      sessionSummary: postlistenMessageSessionSummary,
+      messageContext: newMessageContext,
+      target: {
+        work_type: 'messages',
+        title: newMessageBatch[0] ? `${newMessageBatch[0].from || 'message'} handoff` : 'New messages',
+        description: `${newMsgs.length} newly arrived messages`,
+        session_summary: postlistenMessageSessionSummary,
+        resume_context: newMessageContext.length > 0 ? { message_handoffs: newMessageContext } : null,
+      },
+    });
   }
 
-  // 9. Truly idle — try role rebalancing before returning
-  rebalanceRoles(); // Item 5: check if workload requires role changes
+  if (upcoming) {
+    const upcomingResumeContext = {};
+    if (upcomingContext && upcomingContext.dependency_evidence.length > 0) upcomingResumeContext.dependency_evidence = upcomingContext.dependency_evidence;
+    if (upcomingContext && upcomingContext.recent_evidence.length > 0) upcomingResumeContext.recent_evidence = upcomingContext.recent_evidence;
+    postlistenCandidates.push({
+      id: `prep_work_${upcoming.workflow_id}_${upcoming.id}`,
+      order: 20,
+      kind: 'prep_work',
+      step: upcoming,
+      resumeContext: upcomingContext,
+      checkpointFallbacks,
+      target: {
+        work_type: 'prep_work',
+        title: upcoming.description,
+        description: upcoming.workflow_name,
+        assigned: true,
+        assignment_priority: 'assigned',
+        required_capabilities: upcoming.required_capabilities || null,
+        preferred_capabilities: upcoming.preferred_capabilities || null,
+        session_summary: upcomingContext ? upcomingContext.session_summary : null,
+        resume_context: Object.keys(upcomingResumeContext).length > 0 ? upcomingResumeContext : null,
+      },
+    });
+  }
+
+  postlistenCandidates.push({
+    id: 'idle',
+    order: 30,
+    kind: 'idle',
+    target: {
+      work_type: 'idle',
+      title: 'No current assignment',
+    },
+  });
+
+  const selectedPostlistenCandidate = selectAutonomyDecisionCandidate(postlistenCandidates, decisionContext);
+
+  if (selectedPostlistenCandidate && selectedPostlistenCandidate.kind === 'messages_after_listen') {
+    const messageContext = selectedPostlistenCandidate.messageContext;
+    const result = {
+      type: 'messages', priority: 'respond',
+      ...(selectedPostlistenCandidate.sessionSummary ? { session_summary: selectedPostlistenCandidate.sessionSummary } : {}),
+      ...(messageContext.length > 0 ? { resume_context: { message_handoffs: messageContext } } : {}),
+      messages: selectedPostlistenCandidate.messages, total: selectedPostlistenCandidate.total,
+      instruction: messageContext.length > 0
+        ? 'New messages arrived. resume_context.message_handoffs contains authoritative session/evidence handoff details; use that before falling back to the raw message previews, then call get_work() again.'
+        : 'New messages arrived. Process them, then call get_work() again.'
+    };
+    attachCapabilityAdvisory(result, selectedPostlistenCandidate.evaluation.capability_advisory);
+    return attachContractAdvisory(result, contract, selectedPostlistenCandidate.target, selectedPostlistenCandidate.evaluation.contract_advisory);
+  }
+
+  if (selectedPostlistenCandidate && selectedPostlistenCandidate.kind === 'prep_work') {
+    const result = {
+      type: 'prep_work', priority: 'proactive', step: selectedPostlistenCandidate.step,
+      instruction: `Your next workflow step "${selectedPostlistenCandidate.step.description}" is coming up (Workflow: "${selectedPostlistenCandidate.step.workflow_name}"). Prepare for it: read relevant files, understand the dependencies, plan your approach.`
+    };
+    if (selectedPostlistenCandidate.resumeContext && selectedPostlistenCandidate.resumeContext.session_summary) {
+      result.session_summary = selectedPostlistenCandidate.resumeContext.session_summary;
+    }
+    if (selectedPostlistenCandidate.resumeContext && (selectedPostlistenCandidate.resumeContext.dependency_evidence.length > 0 || selectedPostlistenCandidate.resumeContext.recent_evidence.length > 0)) {
+      result.resume_context = {};
+      if (selectedPostlistenCandidate.resumeContext.dependency_evidence.length > 0) {
+        result.resume_context.dependency_evidence = selectedPostlistenCandidate.resumeContext.dependency_evidence;
+      }
+      if (selectedPostlistenCandidate.resumeContext.recent_evidence.length > 0) {
+        result.resume_context.recent_evidence = selectedPostlistenCandidate.resumeContext.recent_evidence;
+      }
+      result.instruction += selectedPostlistenCandidate.resumeContext.dependency_evidence.length > 0
+        ? '\n\nAuthoritative dependency evidence is attached in resume_context so you can prep from completed upstream work before using fallback checkpoints.'
+        : '\n\nAuthoritative recent evidence from this branch session is attached in resume_context so you can prep from the latest verified work first.';
+    }
+    if (selectedPostlistenCandidate.checkpointFallbacks.length > 0) {
+      result.checkpoint_fallbacks = selectedPostlistenCandidate.checkpointFallbacks;
+      result.instruction += '\n\ncheckpoint_fallbacks contains older workspace WIP notes for this workflow if you need compatibility context.';
+    }
+    attachCapabilityAdvisory(result, selectedPostlistenCandidate.evaluation.capability_advisory);
+    return attachContractAdvisory(result, contract, selectedPostlistenCandidate.target, selectedPostlistenCandidate.evaluation.contract_advisory);
+  }
+
+  rebalanceRoles();
   touchActivity();
   const idleResult = {
     type: 'idle',
@@ -3820,14 +5738,17 @@ async function toolGetWork(params = {}) {
       ? 'No work available right now. Call listen() to wait for the manager to assign work or give you the floor.'
       : 'No work available right now. Call get_work() again in 30 seconds. Do NOT call listen_group() — use get_work() to stay in the proactive loop.'
   };
-  // Item 4: warn demoted agents
   const agentRep = getReputation();
   if (agentRep[registeredName] && agentRep[registeredName].demoted) {
     idleResult.agent_warning = `You have ${agentRep[registeredName].consecutive_rejections} consecutive rejections. Focus on smaller, well-tested changes. Your next approval will reset this.`;
   }
   if (refresh) idleResult.context_refresh = refresh;
   if (backpressure) idleResult.backpressure = backpressure;
-  return idleResult;
+  attachCapabilityAdvisory(idleResult, selectedPostlistenCandidate ? selectedPostlistenCandidate.evaluation.capability_advisory : null);
+  return attachContractAdvisory(idleResult, contract, {
+    work_type: 'idle',
+    title: 'No current assignment',
+  }, selectedPostlistenCandidate ? selectedPostlistenCandidate.evaluation.contract_advisory : null);
 }
 
 async function toolVerifyAndAdvance(params) {
@@ -3843,85 +5764,103 @@ async function toolVerifyAndAdvance(params) {
   const workflows = getWorkflows();
   const wf = workflows.find(w => w.id === workflow_id);
   if (!wf) return { error: `Workflow not found: ${workflow_id}` };
+  if (!workflowMatchesActiveBranch(wf)) return { error: 'Workflow is not active on the current branch.' };
   if (wf.status !== 'active') return { error: 'Workflow is not active' };
 
   const currentStep = wf.steps.find(s => s.assignee === registeredName && s.status === 'in_progress');
   if (!currentStep) return { error: 'No active step assigned to you in this workflow.' };
 
-  // Record verification on the step
-  currentStep.verification = {
-    summary, verification, files_changed: files_changed || [],
-    confidence, learnings: learnings || null,
-    verified_at: new Date().toISOString(), verified_by: registeredName,
-  };
-
   // Save learnings to KB
   if (learnings) {
-    const kb = getKB();
     const key = `skill_${registeredName}_${Date.now().toString(36)}`;
-    kb[key] = { content: learnings, updated_by: registeredName, updated_at: new Date().toISOString() };
-    if (Object.keys(kb).length <= 100) writeJsonFile(KB_FILE, kb);
+    canonicalState.writeKnowledgeBaseEntry({
+      key,
+      value: { content: learnings, updated_by: registeredName, updated_at: new Date().toISOString() },
+      actor: registeredName,
+      branch: currentBranch,
+      sessionId: currentSessionId,
+      correlationId: workflow_id,
+      maxEntries: 100,
+    });
   }
 
-  // Helper: advance to next steps and send handoffs
-  function advanceToNextSteps(flagged) {
-    const nextSteps = findReadySteps(wf);
-    if (nextSteps.length === 0 && wf.steps.every(s => s.status === 'done')) {
-      wf.status = 'completed';
-      wf.completed_at = new Date().toISOString();
-      wf.updated_at = new Date().toISOString();
-      saveWorkflows(workflows);
-      broadcastSystemMessage(`[WORKFLOW COMPLETE] "${wf.name}" finished${flagged ? ' (with flagged steps)' : ''}! All ${wf.steps.length} steps done.`);
-      const report = generateCompletionReport(wf);
-      const retrospective = logRetrospective(wf.id); // Item 9: analyze retry patterns
+  const evidence = {
+    summary,
+    verification,
+    files_changed: Array.isArray(files_changed) ? files_changed : [],
+    confidence,
+    learnings: learnings || null,
+  };
+
+  async function advanceWithEvidence(flagged) {
+    const commandId = `cmd_${generateId()}`;
+    const completion = canonicalState.advanceWorkflow({
+      workflowId: workflow_id,
+      actor: registeredName,
+      branch: currentBranch,
+      sessionId: currentSessionId,
+      commandId,
+      correlationId: workflow_id,
+      evidence,
+      expectedAssignee: registeredName,
+      flagged,
+      flagReason: flagged ? `Low confidence (${confidence}%). May need review later.` : null,
+      sourceTool: 'verify_and_advance',
+    });
+    if (completion.error) return completion;
+
+    clearCheckpoint(registeredName, workflow_id, currentStep.id);
+
+    emitWorkflowHandoffMessages({
+      workflowId: completion.workflow_id,
+      workflowName: completion.workflow_name,
+      completedStepId: completion.completed_step,
+      nextSteps: completion.next_steps,
+      summary,
+      flagged,
+      confidence,
+      evidenceRef: completion.evidence_ref || null,
+      commandId,
+      correlationId: workflow_id,
+    });
+
+    const updatedWorkflow = getWorkflows().find((entry) => entry.id === workflow_id) || wf;
+
+    if (completion.workflow_status === 'completed') {
+      broadcastSystemMessage(`[WORKFLOW COMPLETE] "${updatedWorkflow.name}" finished${flagged ? ' (with flagged steps)' : ''}! All ${updatedWorkflow.steps.length} steps done.`);
+      const report = generateCompletionReport(updatedWorkflow);
+      const retrospective = logRetrospective(updatedWorkflow.id);
       touchActivity();
-      return { status: flagged ? 'workflow_complete_flagged' : 'workflow_complete', workflow_id: wf.id, report, retrospective, message: `Workflow "${wf.name}" finished! Call get_work() for your next assignment.` };
+      return {
+        status: flagged ? 'workflow_complete_flagged' : 'workflow_complete',
+        workflow_id: updatedWorkflow.id,
+        evidence_ref: completion.evidence_ref || null,
+        report,
+        retrospective,
+        message: `Workflow "${updatedWorkflow.name}" finished! Call get_work() for your next assignment.`,
+      };
     }
 
-    const agents = getAgents();
-    for (const step of nextSteps) {
-      step.status = 'in_progress';
-      step.started_at = new Date().toISOString();
-      if (step.assignee && agents[step.assignee] && step.assignee !== registeredName) {
-        const handoffContent = `[Workflow "${wf.name}"] Your turn — Step ${step.id}: ${step.description}. Previous step completed by ${registeredName}${flagged ? ` (flagged: ${confidence}% confidence)` : ''}: ${summary}`;
-        messageSeq++;
-        const msg = { id: generateId(), seq: messageSeq, from: registeredName, to: step.assignee, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff' };
-        fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-        fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
-      }
-    }
-    wf.updated_at = new Date().toISOString();
-    saveWorkflows(workflows);
     touchActivity();
     return {
-      status: flagged ? 'advanced_with_flag' : 'advanced', workflow_id: wf.id,
-      completed_step: currentStep.id,
-      next_steps: nextSteps.map(s => ({ id: s.id, description: s.description, assignee: s.assignee })),
-      message: flagged ? 'Advanced but flagged for later review. Call get_work().' : 'Step complete. Next step(s) kicked off. Call get_work() for your next assignment.'
+      status: flagged ? 'advanced_with_flag' : 'advanced',
+      workflow_id: completion.workflow_id,
+      completed_step: completion.completed_step,
+      next_steps: completion.next_steps,
+      evidence_ref: completion.evidence_ref || null,
+      message: flagged ? 'Advanced but flagged for later review. Call get_work().' : 'Step complete. Next step(s) kicked off. Call get_work() for your next assignment.',
     };
   }
 
   if (confidence >= 70) {
-    // AUTO-ADVANCE
-    currentStep.status = 'done';
-    currentStep.completed_at = new Date().toISOString();
-    clearCheckpoint(registeredName, workflow_id, currentStep.id); // Item 8: clear checkpoint on completion
-    return advanceToNextSteps(false);
+    return advanceWithEvidence(false);
   }
 
   if (confidence >= 40) {
-    // ADVANCE BUT FLAG
-    currentStep.status = 'done';
-    currentStep.completed_at = new Date().toISOString();
-    currentStep.flagged = true;
-    currentStep.flag_reason = `Low confidence (${confidence}%). May need review later.`;
-    clearCheckpoint(registeredName, workflow_id, currentStep.id); // Item 8: clear checkpoint
-    return advanceToNextSteps(true);
+    return advanceWithEvidence(true);
   }
 
   // LOW CONFIDENCE — ask for help
-  wf.updated_at = new Date().toISOString();
-  saveWorkflows(workflows);
   broadcastSystemMessage(`[HELP NEEDED] ${registeredName} completed step "${currentStep.description}" but has low confidence (${confidence}%). Team: can someone review?`);
   touchActivity();
   return {
@@ -3940,6 +5879,15 @@ function toolRetryWithImprovement(params) {
   if (!new_approach) return { error: 'new_approach is required' };
 
   const attempt = params.attempt_number || 1;
+  const retrySubject = resolveRetryPolicySubject(task_or_step);
+  const retryPolicyContext = buildAutonomyPolicyContext(registeredName, currentBranch, currentSessionId);
+  const retryPolicy = classifyRetryPolicy({
+    target: retrySubject.target,
+    context: retryPolicyContext,
+    attemptCount: attempt,
+    ownerAlive: true,
+    idleMs: 0,
+  });
 
   const learning = {
     task: task_or_step, failure: what_failed,
@@ -3956,21 +5904,27 @@ function toolRetryWithImprovement(params) {
   saveWorkspace(registeredName, ws);
 
   // Store as KB skill for all agents to learn from
-  const kb = getKB();
   const key = `lesson_${registeredName}_${Date.now().toString(36)}`;
   const lessonContent = JSON.stringify({
     context: task_or_step,
     lesson: `Approach "${what_failed}" failed because: ${why_it_failed}. Better approach: ${new_approach}`,
     learned_by: registeredName,
   });
-  kb[key] = { content: lessonContent, updated_by: registeredName, updated_at: new Date().toISOString() };
-  if (Object.keys(kb).length <= 100) writeJsonFile(KB_FILE, kb);
+  canonicalState.writeKnowledgeBaseEntry({
+    key,
+    value: { content: lessonContent, updated_by: registeredName, updated_at: new Date().toISOString() },
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: task_or_step,
+    maxEntries: 100,
+  });
 
   trackReputation(registeredName, 'retry');
   touchActivity();
 
-  if (attempt >= 3) {
-    // Max retries — escalate with FULL context so next agent doesn't start blind
+  if (retryPolicy.state === 'blocked_permanent') {
+    // Max retries — escalate with FULL context so next agent doesn't start blind.
     const allAttempts = ws.retry_history.filter(r => r.task === task_or_step);
     const attemptSummary = allAttempts.map((a, i) =>
       `  Attempt ${a.attempt || i + 1} (${a.agent}): Tried "${a.new_approach || 'initial'}" → Failed: ${a.failure}. Root cause: ${a.root_cause}`
@@ -3983,24 +5937,33 @@ function toolRetryWithImprovement(params) {
       `[ESCALATION] ${registeredName} has tried "${task_or_step}" ${attempt} times and is still stuck.\n\n` +
       `FULL FAILURE CONTEXT (read this before attempting):\n${attemptSummary}\n\n` +
       `Last failure: ${what_failed}\n` +
-      `Root cause: ${why_it_failed}\n\n` +
+      `Root cause: ${why_it_failed}\n` +
+      `Policy: ${retryPolicy.summary}\n\n` +
       `Team: someone with DIFFERENT expertise should take over. DO NOT repeat the same approaches. Use suggest_task() or claim the task.`
     );
 
     // Store full context in KB so get_work can attach it
-    const kb2 = getKB();
     const escKey = `escalation_${Date.now().toString(36)}`;
-    kb2[escKey] = {
-      content: JSON.stringify({ task: task_or_step, attempts: allAttempts, escalated_by: registeredName }),
-      updated_by: registeredName, updated_at: new Date().toISOString(),
-    };
-    if (Object.keys(kb2).length <= 100) writeJsonFile(KB_FILE, kb2);
+    canonicalState.writeKnowledgeBaseEntry({
+      key: escKey,
+      value: {
+        content: JSON.stringify({ task: task_or_step, attempts: allAttempts, escalated_by: registeredName }),
+        updated_by: registeredName,
+        updated_at: new Date().toISOString(),
+      },
+      actor: registeredName,
+      branch: currentBranch,
+      sessionId: currentSessionId,
+      correlationId: task_or_step,
+      maxEntries: 100,
+    });
 
     return {
       status: 'escalated', attempt_number: attempt,
       message: 'Escalated to team with full failure context. Call get_work() to pick up other work while someone else handles this.',
       attempts: allAttempts,
       failure_context: attemptSummary,
+      retry_policy: retryPolicy,
     };
   }
 
@@ -4019,6 +5982,7 @@ function toolRetryWithImprovement(params) {
     status: 'retry_approved', attempt_number: attempt,
     message: `Retry ${attempt}/3 recorded. Proceed with your new approach: "${new_approach}". If this fails too, call retry_with_improvement() again.`,
     related_lessons: relatedLessons.length > 0 ? relatedLessons.slice(0, 3) : null,
+    retry_policy: retryPolicy,
   };
 }
 
@@ -4039,153 +6003,190 @@ function amIWatchdog() {
   return aliveNames.length > 0 && aliveNames[0] === registeredName;
 }
 
-function reassignWorkFrom(deadAgentName) {
-  const workflows = getWorkflows();
-  let reassignCount = 0;
-  const agents = getAgents();
-  const aliveNames = Object.entries(agents)
-    .filter(([name, a]) => name !== deadAgentName && isPidAlive(a.pid, a.last_activity))
-    .map(([name]) => name);
-
-  for (const wf of workflows) {
-    if (wf.status !== 'active') continue;
-    for (const step of wf.steps) {
-      if (step.assignee !== deadAgentName || step.status !== 'in_progress') continue;
-      // Find replacement — round-robin through alive agents
-      if (aliveNames.length > 0) {
-        const replacement = aliveNames[reassignCount % aliveNames.length];
-        step.assignee = replacement;
-        reassignCount++;
-        // Send handoff to replacement
-        const handoffContent = `[AUTO-REASSIGN] ${deadAgentName} went offline. Their step "${step.description}" has been reassigned to you.`;
-        messageSeq++;
-        const msg = { id: generateId(), seq: messageSeq, from: '__system__', to: replacement, content: handoffContent, timestamp: new Date().toISOString(), type: 'handoff', system: true };
-        fs.appendFileSync(getMessagesFile(currentBranch), JSON.stringify(msg) + '\n');
-        fs.appendFileSync(getHistoryFile(currentBranch), JSON.stringify(msg) + '\n');
-      }
-    }
-  }
-
-  // Also reassign tasks
-  const tasks = getTasks();
-  for (const task of tasks) {
-    if (task.assignee !== deadAgentName || task.status !== 'in_progress') continue;
-    task.assignee = null; // Unassign so get_work can claim it
-    task.status = 'pending';
-    task.updated_at = new Date().toISOString();
-    reassignCount++;
-  }
-  if (reassignCount > 0) {
-    saveWorkflows(workflows);
-    saveTasks(tasks);
-  }
-  return reassignCount;
-}
-
 function watchdogCheck() {
-  // Run in autonomous mode always, AND in group mode when agents are idle 5+ min
+  // Policy-bounded watchdog: classify stale work from canonical/session/evidence/provider/contract context,
+  // then emit nudges, releases, escalation signals, or owner-unavailable step recovery without broad silent reassignment.
   if (!isAutonomousMode() && !isGroupMode()) return;
   if (!amIWatchdog()) return;
 
   const agents = getAgents();
+  const profiles = getProfiles();
+  const tasks = getTasks();
+  const workflows = getWorkflows();
   const now = Date.now();
   let agentsChanged = false;
 
-  for (const [name, agent] of Object.entries(agents)) {
-    if (name === registeredName) continue;
-    if (!isPidAlive(agent.pid, agent.last_activity)) continue;
+  const watchdogActions = planWatchdogActions({
+    watchdogAgentName: registeredName,
+    branchId: currentBranch,
+    nowMs: now,
+    agents,
+    tasks,
+    workflows,
+    resolveContext: (agentName, branchId) => buildAutonomyPolicyContext(agentName, branchId, null, agents, profiles),
+    resolveStepResumeContext: (workflow, step, branchId, assignee) => buildAuthoritativeResumeContext({
+      agentName: assignee,
+      branchName: branchId,
+      sessionSummary: getAuthoritativeSessionSummary(assignee, branchId),
+      activeStep: {
+        ...step,
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+      },
+      upcomingStep: null,
+      evidenceLimit: 5,
+    }),
+    isAgentAlive: (agentName, agentRecord) => !!(agentRecord && isPidAlive(agentRecord.pid, agentRecord.last_activity)),
+  });
 
-    const idleTime = now - new Date(agent.last_activity).getTime();
-
-    // IDLE > 2 minutes: nudge
-    if (idleTime > 120000 && !agent.watchdog_nudged) {
-      sendSystemMessage(name,
-        `[WATCHDOG] You've been idle for ${Math.round(idleTime / 60000)} minutes. Call get_work() to find your next task. Never be idle.`
+  for (const action of watchdogActions) {
+    if (action.kind === 'nudge_idle' || action.kind === 'nudge_idle_hard') {
+      const agent = agents[action.agentName];
+      if (!agent) continue;
+      sendSystemMessage(
+        action.agentName,
+        action.kind === 'nudge_idle_hard'
+          ? `[WATCHDOG] You've been idle for ${Math.round((action.idleMs || 0) / 60000)} minutes. Call get_work() now and report explicit progress — ownership stays unchanged until a deliberate reassignment decision is made.`
+          : `[WATCHDOG] You've been idle for ${Math.round((action.idleMs || 0) / 60000)} minutes. Call get_work() to refresh your explicit assignment context.`
       );
-      trackReputation(name, 'watchdog_nudge');
-      agent.watchdog_nudged = now;
-      agentsChanged = true;
-    }
-
-    // IDLE > 5 minutes: stronger nudge
-    if (idleTime > 300000 && !agent.watchdog_hard_nudged) {
-      sendSystemMessage(name,
-        `[WATCHDOG] You've been idle for ${Math.round(idleTime / 60000)} minutes. Call get_work() NOW or your work will be reassigned.`
-      );
-      agent.watchdog_hard_nudged = now;
-      agentsChanged = true;
-    }
-
-    // IDLE > 10 minutes: reassign their work
-    if (idleTime > 600000 && !agent.watchdog_reassigned) {
-      const count = reassignWorkFrom(name);
-      broadcastSystemMessage(`[WATCHDOG] ${name} has been unresponsive for 10+ minutes. ${count} task(s) reassigned.`);
-      agent.watchdog_reassigned = now;
-      agentsChanged = true;
-    }
-  }
-
-  // Check for stuck workflow steps
-  const workflows = getWorkflows();
-  let workflowsChanged = false;
-  for (const wf of workflows) {
-    if (wf.status !== 'active') continue;
-    for (const step of wf.steps) {
-      if (step.status !== 'in_progress' || !step.started_at) continue;
-      const stepAge = now - new Date(step.started_at).getTime();
-
-      // Step > 15 minutes: ping assignee
-      if (stepAge > 900000 && !step.watchdog_pinged) {
-        if (step.assignee) {
-          sendSystemMessage(step.assignee,
-            `[WATCHDOG] Step "${step.description}" has been in progress for ${Math.round(stepAge / 60000)} minutes. Report status: are you stuck? Do you need help?`
-          );
-        }
-        step.watchdog_pinged = true;
-        workflowsChanged = true;
+      if (action.kind === 'nudge_idle') {
+        trackReputation(action.agentName, 'watchdog_nudge');
+        agent.watchdog_nudged = now;
+      } else {
+        agent.watchdog_hard_nudged = now;
       }
-
-      // Step > 30 minutes: escalate
-      if (stepAge > 1800000 && !step.watchdog_escalated) {
-        broadcastSystemMessage(
-          `[WATCHDOG ESCALATION] Step "${step.description}" (${step.assignee}) has been running for ${Math.round(stepAge / 60000)} minutes. ` +
-          `Team: someone check if ${step.assignee} needs help or if the step should be reassigned.`
-        );
-        step.watchdog_escalated = true;
-        workflowsChanged = true;
-      }
+      agentsChanged = true;
+      continue;
     }
-  }
 
-  // Dynamic team rebalancing: move idle workers from quiet teams to busy teams
-  try {
-    const channels = getChannelsData();
-    const teamChannels = Object.entries(channels).filter(([, c]) => c.auto_team);
-    if (teamChannels.length >= 2) {
-      const tasks = getTasks();
-      const teamLoad = teamChannels.map(([name, ch]) => {
-        const memberTasks = tasks.filter(t => t.status === 'pending' && ch.members && ch.members.includes(t.assignee));
-        const idleMembers = (ch.members || []).filter(m => {
-          const a = agents[m];
-          if (!a || !isPidAlive(a.pid, a.last_activity)) return false;
-          return (now - new Date(a.last_activity).getTime()) > 120000; // idle 2+ min
-        });
-        return { name, members: ch.members || [], pendingTasks: memberTasks.length, idleMembers };
+    if (action.kind === 'release_task_claim') {
+      const releasedAt = new Date().toISOString();
+      const released = canonicalState.updateTaskStatus({
+        taskId: action.taskId,
+        status: 'pending',
+        actor: registeredName,
+        branch: action.branchId || currentBranch,
+        sessionId: currentSessionId,
+        correlationId: action.taskId,
+        sourceTool: 'watchdog_policy',
+        assignee: null,
+        expectedAssignee: action.assignee || null,
+        expectedStatuses: ['in_progress'],
+        notes: action.policy.summary,
+        policySignal: buildPersistedPolicySignal('watchdog', action.policy, { at: releasedAt }),
       });
-      const busyTeam = teamLoad.find(t => t.pendingTasks >= 5);
-      const quietTeam = teamLoad.find(t => t.pendingTasks === 0 && t.idleMembers.length > 0);
-      if (busyTeam && quietTeam && quietTeam.idleMembers.length > 0) {
-        const worker = quietTeam.idleMembers[0];
-        // Move worker to busy team
-        const quietCh = channels[quietTeam.name];
-        const busyCh = channels[busyTeam.name];
-        if (quietCh.members) quietCh.members = quietCh.members.filter(m => m !== worker);
-        if (busyCh.members && !busyCh.members.includes(worker)) busyCh.members.push(worker);
-        saveChannelsData(channels);
-        sendSystemMessage(worker, `[REBALANCE] You've been moved from ${quietTeam.name} to ${busyTeam.name} — they have ${busyTeam.pendingTasks} pending tasks and need help.`);
+      if (!released.error) {
+        broadcastSystemMessage(
+          `[WATCHDOG] Released task "${action.taskTitle}" from ${action.assignee} back to pending. ${action.policy.summary}`,
+          registeredName
+        );
+      }
+      continue;
+    }
+
+    if (action.kind === 'escalate_blocked_task') {
+      const escalatedAt = new Date().toISOString();
+      const escalated = canonicalState.updateTaskStatus({
+        taskId: action.taskId,
+        status: 'blocked',
+        actor: registeredName,
+        branch: action.branchId || currentBranch,
+        sessionId: currentSessionId,
+        correlationId: action.taskId,
+        sourceTool: 'watchdog_policy',
+        assignee: action.assignee || null,
+        expectedStatuses: ['blocked'],
+        escalatedAt,
+        notes: action.policy.summary,
+        policySignal: buildPersistedPolicySignal('watchdog', action.policy, { at: escalatedAt }),
+      });
+      if (!escalated.error) {
+        broadcastSystemMessage(
+          `[ESCALATION] Task "${action.taskTitle}" (assigned to ${action.assignee || 'unassigned'}) needs help. ${action.policy.summary}`,
+          registeredName
+        );
+      }
+      continue;
+    }
+
+    if (action.kind === 'signal_stalled_step') {
+      const signaledAt = new Date().toISOString();
+      const signalField = action.signal === 'checkin' ? 'watchdog_pinged_at' : 'watchdog_escalated_at';
+      const signaled = canonicalState.setWorkflowStepPolicySignal({
+        workflowId: action.workflowId,
+        stepId: action.stepId,
+        expectedAssignee: action.assignee || null,
+        signalAtField: signalField,
+        policySignal: buildPersistedPolicySignal('watchdog', action.policy, {
+          at: signaledAt,
+          signal: action.signal,
+        }),
+      });
+      if (signaled.error) continue;
+
+      if (action.signal === 'escalate') {
+        const workflowRecord = workflows.find((entry) => entry.id === action.workflowId) || null;
+        const stepRecord = workflowRecord && Array.isArray(workflowRecord.steps)
+          ? workflowRecord.steps.find((entry) => entry.id === action.stepId) || null
+          : null;
+        const ownershipChange = planStalledStepOwnershipChange({
+          branchId: action.branchId || currentBranch,
+          currentAssignee: action.assignee || null,
+          watchdogAgentName: registeredName,
+          policy: action.policy,
+          target: buildWorkflowStepPolicyTarget(
+            stepRecord || { description: action.stepDescription },
+            workflowRecord || { name: action.workflowName }
+          ),
+          agents,
+          resolveContext: (agentName, branchId) => buildAutonomyPolicyContext(agentName, branchId, null, agents, profiles),
+          isAgentAlive: (agentName, agentRecord) => !!(agentRecord && isPidAlive(agentRecord.pid, agentRecord.last_activity)),
+        });
+
+        if (ownershipChange.allowed) {
+          const reassignedAt = new Date().toISOString();
+          const reassigned = canonicalState.reassignWorkflowStep({
+            workflowId: action.workflowId,
+            stepId: action.stepId,
+            newAssignee: ownershipChange.new_assignee,
+            actor: registeredName,
+            branch: action.branchId || currentBranch,
+            sessionId: currentSessionId,
+            correlationId: action.workflowId,
+            expectedAssignee: action.assignee || null,
+            clearPolicySignal: true,
+            clearSignalFields: ['watchdog_pinged_at', 'watchdog_escalated_at'],
+            restartStartedAt: reassignedAt,
+            at: reassignedAt,
+          });
+
+          if (reassigned && reassigned.success) {
+            sendSystemMessage(
+              ownershipChange.new_assignee,
+              `[WATCHDOG REASSIGNMENT] Step "${action.stepDescription}" has been reassigned to you from ${action.assignee || 'an unavailable owner'}. ${ownershipChange.summary}`
+            );
+            broadcastSystemMessage(
+              `[WATCHDOG OWNERSHIP CHANGE] Step "${action.stepDescription}" moved from ${action.assignee || 'unassigned'} to ${ownershipChange.new_assignee}. ${ownershipChange.summary}`,
+              registeredName
+            );
+            continue;
+          }
+        }
+      }
+
+      if (action.signal === 'checkin' && action.assignee) {
+        sendSystemMessage(
+          action.assignee,
+          `[WATCHDOG] Step "${action.stepDescription}" has been running for ${Math.round((action.stepAgeMs || 0) / 60000)} minutes. Report explicit status and blockers; watchdog is only surfacing a bounded check-in signal.`
+        );
+      } else {
+        broadcastSystemMessage(
+          `[WATCHDOG ESCALATION] Step "${action.stepDescription}" (${action.assignee || 'unassigned'}) needs attention. ${action.policy.summary}`,
+          registeredName
+        );
       }
     }
-  } catch {}
+  }
 
   // UE5 safety: detect stale UE5 locks (ue5-editor, ue5-compile)
   try {
@@ -4213,7 +6214,6 @@ function watchdogCheck() {
   } catch {}
 
   if (agentsChanged) saveAgents(agents);
-  if (workflowsChanged) saveWorkflows(workflows);
 }
 
 // --- Monitor Agent: system health check ---
@@ -4222,6 +6222,7 @@ function monitorHealthCheck() {
   if (!registeredName) return { error: 'You must call register() first' };
 
   const agents = getAgents();
+  const profiles = getProfiles();
   const now = Date.now();
   const aliveNames = Object.entries(agents)
     .filter(([, a]) => isPidAlive(a.pid, a.last_activity))
@@ -4252,9 +6253,23 @@ function monitorHealthCheck() {
   const tasks = getTasks();
   for (const task of tasks) {
     if (task.attempt_agents && task.attempt_agents.length >= 2 && task.status !== 'done' && task.status !== 'blocked_permanent') {
+      const ownerName = task.assignee || null;
+      const ownerRecord = ownerName ? agents[ownerName] : null;
+      const retryPolicy = classifyRetryPolicy({
+        target: buildTaskPolicyTarget(task),
+        context: ownerName
+          ? buildAutonomyPolicyContext(ownerName, (ownerRecord && ownerRecord.branch) || currentBranch, null, agents, profiles)
+          : {},
+        attemptCount: Array.isArray(task.attempt_agents) ? task.attempt_agents.length : 0,
+        ownerAlive: ownerName ? !!(ownerRecord && isPidAlive(ownerRecord.pid, ownerRecord.last_activity)) : true,
+        idleMs: ownerRecord && ownerRecord.last_activity
+          ? Math.max(0, now - new Date(ownerRecord.last_activity).getTime())
+          : 0,
+      });
       health.circular_escalations.push({
         task_id: task.id, title: task.title,
         agents_tried: task.attempt_agents, attempts: task.attempt_agents.length,
+        retry_policy: retryPolicy,
       });
     }
   }
@@ -4281,30 +6296,32 @@ function monitorHealthCheck() {
     }
   }
 
-  // 5. Auto-interventions
-  // Reassign circular escalations to fresh agents
-  for (const circ of health.circular_escalations) {
-    const freshAgents = aliveNames.filter(n => !circ.agents_tried.includes(n));
-    if (freshAgents.length > 0) {
-      const task = tasks.find(t => t.id === circ.task_id);
-      if (task && task.status === 'pending') {
-        task.assignee = freshAgents[0];
-        task.status = 'in_progress';
-        task.updated_at = new Date().toISOString();
-        health.interventions.push({ type: 'reassign_circular', task: circ.title, to: freshAgents[0] });
-      }
-    }
-  }
-
-  // Nudge idle agents
-  for (const idle of health.agents_idle) {
-    if (idle.idle_minutes >= 5) {
-      sendSystemMessage(idle.name, `[MONITOR] You've been idle for ${idle.idle_minutes} minutes. Call get_work() immediately.`);
-      health.interventions.push({ type: 'nudge_idle', agent: idle.name, idle_minutes: idle.idle_minutes });
-    }
-  }
-
-  if (health.interventions.length > 0) saveTasks(tasks);
+  // 5. Recommended watchdog-policy actions (report-only in this slice)
+  const watchdogActions = planWatchdogActions({
+    watchdogAgentName: registeredName,
+    branchId: currentBranch,
+    nowMs: now,
+    agents,
+    tasks,
+    workflows,
+    resolveContext: (agentName, branchId) => buildAutonomyPolicyContext(agentName, branchId, null, agents, profiles),
+    resolveStepResumeContext: (workflow, step, branchId, assignee) => buildAuthoritativeResumeContext({
+      agentName: assignee,
+      branchName: branchId,
+      sessionSummary: getAuthoritativeSessionSummary(assignee, branchId),
+      activeStep: {
+        ...step,
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+      },
+      upcomingStep: null,
+      evidenceLimit: 5,
+    }),
+    isAgentAlive: (agentName, agentRecord) => !!(agentRecord && isPidAlive(agentRecord.pid, agentRecord.last_activity)),
+  });
+  health.interventions = watchdogActions
+    .map((action) => summarizeWatchdogActionForHealth(action))
+    .filter(Boolean);
 
   // Store health log in workspace
   const ws = getWorkspace(registeredName);
@@ -4322,7 +6339,7 @@ function monitorHealthCheck() {
     type: 'health_report', priority: 'monitor',
     health,
     instruction: health.interventions.length > 0
-      ? `Performed ${health.interventions.length} intervention(s). Call monitorHealthCheck() again in 30 seconds.`
+      ? `Health report includes ${health.interventions.length} recommended watchdog policy signal(s). Send bounded nudges or escalation messages if appropriate, and keep any ownership move limited to the explicit policy-approved unavailable-owner recovery path.`
       : `System healthy. ${health.agents_total} agents, ${health.workflows_active} active workflows. Call monitorHealthCheck() again in 30 seconds.`,
   };
 }
@@ -4364,7 +6381,7 @@ function advisorAnalysis() {
     .map(([k, v]) => ({ key: k, content: v.content.substring(0, 200) }));
 
   // Decisions made
-  const decisions = (readJsonFile(DECISIONS_FILE) || []).slice(-5);
+  const decisions = getDecisions().slice(-5);
 
   touchActivity();
 
@@ -4456,9 +6473,14 @@ function generateCompletionReport(workflow) {
 
   // Store report in KB for dashboard retrieval
   const reportKey = `report_${workflow.id}`;
-  const kb2 = getKB();
-  kb2[reportKey] = { content: JSON.stringify(report), updated_by: '__system__', updated_at: new Date().toISOString() };
-  if (Object.keys(kb2).length <= 100) writeJsonFile(KB_FILE, kb2);
+  canonicalState.writeKnowledgeBaseEntry({
+    key: reportKey,
+    value: { content: JSON.stringify(report), updated_by: '__system__', updated_at: new Date().toISOString() },
+    actor: '__system__',
+    branch: currentBranch,
+    correlationId: workflow.id,
+    maxEntries: 100,
+  });
 
   return report;
 }
@@ -4513,7 +6535,7 @@ function autoAssignRoles() {
     // Only assign roles to agents that don't have one yet
     const unassigned = aliveNames.filter(n => !currentProfiles[n] || !currentProfiles[n].role);
     for (const name of unassigned) {
-      if (!currentProfiles[name]) currentProfiles[name] = { display_name: name, avatar: getDefaultAvatar(name), bio: '', role: '', created_at: new Date().toISOString() };
+      if (!currentProfiles[name]) currentProfiles[name] = createDefaultProfileRecord(name);
       currentProfiles[name].role = 'implementer';
       currentProfiles[name].role_description = 'You implement features and tasks assigned by the Lead. Report completed work to Quality Lead.';
       assignments[name] = { role: 'implementer', description: currentProfiles[name].role_description };
@@ -4563,7 +6585,7 @@ function autoAssignRoles() {
 
     // Update profile with role
     if (!profiles[agentName]) {
-      profiles[agentName] = { display_name: agentName, avatar: getDefaultAvatar(agentName), bio: '', role: '', created_at: new Date().toISOString() };
+      profiles[agentName] = createDefaultProfileRecord(agentName);
     }
     profiles[agentName].role = roleConfig.role;
     profiles[agentName].role_description = roleConfig.description;
@@ -4627,7 +6649,7 @@ function rebalanceRoles() {
   if (aliveNames.length < 3) return null; // Need 3+ agents for rebalancing
 
   // Count pending work by type
-  const reviews = readJsonFile(REVIEWS_FILE) || [];
+  const reviews = getReviews();
   const pendingReviews = reviews.filter(r => r.status === 'pending').length;
   const tasks = getTasks();
   const pendingTasks = tasks.filter(t => t.status === 'pending' && !t.assignee).length;
@@ -4707,12 +6729,18 @@ function logRetrospective(workflowId) {
 
   if (insights.length > 0) {
     const retroKey = `retrospective_${workflowId || Date.now().toString(36)}`;
-    kb[retroKey] = {
-      content: `RETROSPECTIVE INSIGHTS: ${insights.join(' | ')}`,
-      updated_by: 'system',
-      updated_at: new Date().toISOString(),
-    };
-    if (Object.keys(kb).length <= 200) writeJsonFile(KB_FILE, kb);
+    canonicalState.writeKnowledgeBaseEntry({
+      key: retroKey,
+      value: {
+        content: `RETROSPECTIVE INSIGHTS: ${insights.join(' | ')}`,
+        updated_by: 'system',
+        updated_at: new Date().toISOString(),
+      },
+      actor: 'system',
+      branch: currentBranch,
+      correlationId: workflowId || retroKey,
+      maxEntries: 200,
+    });
   }
 
   return insights.length > 0 ? insights : null;
@@ -4851,7 +6879,6 @@ function distributePrompt(content, fromAgent) {
   }
 
   // Fallback: create planning task for lead (generic/unrecognized prompts)
-  const tasks = getTasks();
   const planTask = {
     id: 'task_' + generateId(),
     title: `Plan and distribute: ${content.substring(0, 100)}`,
@@ -4863,8 +6890,14 @@ function distributePrompt(content, fromAgent) {
     updated_at: new Date().toISOString(),
     notes: [],
   };
-  tasks.push(planTask);
-  saveTasks(tasks);
+  const createdPlanTask = canonicalState.createTask({
+    task: planTask,
+    actor: fromAgent || registeredName || '__system__',
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: planTask.id,
+  });
+  if (createdPlanTask.error) return createdPlanTask;
 
   sendSystemMessage(lead,
     `[PROMPT DISTRIBUTED] New work request: "${content.substring(0, 200)}"\n\n` +
@@ -4925,6 +6958,9 @@ function toolStartPlan(params) {
 function toolForkConversation(fromMessageId, branchName) {
   if (!registeredName) return { error: 'You must call register() first' };
   sanitizeName(branchName);
+  const sourceBranch = currentBranch;
+
+  ensureBranchLocalP0State(sourceBranch);
 
   const branches = getBranches();
   if (Object.keys(branches).length >= 100) return { error: 'Branch limit reached (max 100).' };
@@ -4932,43 +6968,66 @@ function toolForkConversation(fromMessageId, branchName) {
 
   // Full read required when forking from a specific message (need index into full history).
   // When forking from end (no fromMessageId), use tailReadJsonl for performance.
-  const history = fromMessageId ? readJsonl(getHistoryFile(currentBranch)) : tailReadJsonl(getHistoryFile(currentBranch), 500);
+  const readFullHistory = !!fromMessageId;
+  const history = readFullHistory ? readJsonl(getHistoryFile(sourceBranch)) : tailReadJsonl(getHistoryFile(sourceBranch), 500);
   const forkIdx = fromMessageId ? history.findIndex(m => m.id === fromMessageId) : history.length - 1;
   if (forkIdx === -1) return { error: `Message ${fromMessageId} not found in current branch` };
 
   // Copy history up to fork point into new branch
   const forkedHistory = history.slice(0, forkIdx + 1);
+  const forkPoint = history[forkIdx] || null;
+  const forkTimestampMs = forkPoint ? new Date(forkPoint.timestamp || 0).getTime() : Date.now();
+  const sourceChannels = getChannelsData(sourceBranch);
+  const forkedChannelHistories = {};
+  const visibleMessageIds = new Set(forkedHistory.map((message) => message.id));
+
+  for (const channelName of Object.keys(sourceChannels)) {
+    if (channelName === 'general') continue;
+    const sourceChannelHistoryFile = getChannelHistoryFile(channelName, sourceBranch);
+    const channelHistory = readFullHistory ? readJsonl(sourceChannelHistoryFile) : tailReadJsonl(sourceChannelHistoryFile, 500);
+    const filteredHistory = filterMessagesUpToTimestamp(channelHistory, forkTimestampMs);
+    forkedChannelHistories[channelName] = filteredHistory;
+    for (const message of filteredHistory) {
+      if (message && message.id) visibleMessageIds.add(message.id);
+    }
+  }
+
   ensureDataDir();
   const newHistFile = getHistoryFile(branchName);
   const newMsgFile = getMessagesFile(branchName);
-  fs.writeFileSync(newHistFile, forkedHistory.map(m => JSON.stringify(m)).join('\n') + (forkedHistory.length ? '\n' : ''));
-  fs.writeFileSync(newMsgFile, ''); // empty messages for new branch
+  writeJsonlFileRaw(newHistFile, forkedHistory);
+  writeJsonlFileRaw(newMsgFile, []); // empty messages for new branch
+  copyBranchLocalP0StateForFork(sourceBranch, branchName, {
+    visibleMessageIds,
+    forkTimestampMs,
+    sourceChannels,
+    forkedChannelHistories,
+  });
+  copyBranchLocalWorkspaceStateForFork(sourceBranch, branchName);
 
   branches[branchName] = {
     created_at: new Date().toISOString(),
     created_by: registeredName,
-    forked_from: currentBranch,
-    fork_point: fromMessageId || (history[forkIdx] ? history[forkIdx].id : null),
+    forked_from: sourceBranch,
+    fork_point: fromMessageId || (forkPoint ? forkPoint.id : null),
     message_count: forkedHistory.length,
   };
   saveBranches(branches);
 
   // Switch this agent to the new branch
-  currentBranch = branchName;
-  lastReadOffset = 0;
-  try {
-    lockAgentsFile();
-    try {
-      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
-      if (agents[registeredName]) {
-        agents[registeredName].branch = branchName;
-        agents[registeredName].last_activity = new Date().toISOString();
-        saveAgents(agents);
-      }
-    } finally { unlockAgentsFile(); }
-  } catch {}
+  const sessionActivation = activateBranch(branchName, { reason: 'branch_activate' });
 
-  return { success: true, branch: branchName, forked_from: branches[branchName].forked_from, messages_copied: forkedHistory.length };
+  const result = { success: true, branch: branchName, forked_from: branches[branchName].forked_from, messages_copied: forkedHistory.length };
+  if (sessionActivation && sessionActivation.session) {
+    result.session = {
+      id: sessionActivation.session.session_id,
+      branch: sessionActivation.session.branch_id,
+      state: sessionActivation.session.state,
+      resumed: !!sessionActivation.resumed,
+    };
+  }
+
+  return result;
 }
 
 function toolSwitchBranch(branchName) {
@@ -4978,21 +7037,20 @@ function toolSwitchBranch(branchName) {
   const branches = getBranches();
   if (!branches[branchName]) return { error: `Branch "${branchName}" does not exist. Use list_branches to see available branches.` };
 
-  currentBranch = branchName;
-  lastReadOffset = 0;
-  try {
-    lockAgentsFile();
-    try {
-      const agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8'));
-      if (agents[registeredName]) {
-        agents[registeredName].branch = branchName;
-        agents[registeredName].last_activity = new Date().toISOString();
-        saveAgents(agents);
-      }
-    } finally { unlockAgentsFile(); }
-  } catch {}
+  ensureBranchLocalP0State(branchName);
+  const sessionActivation = activateBranch(branchName, { reason: 'branch_activate' });
 
-  return { success: true, branch: branchName, message: `Switched to branch "${branchName}". Read offset reset.` };
+  const result = { success: true, branch: branchName, message: `Switched to branch "${branchName}". Branch-local read, control, and channel state reloaded.` };
+  if (sessionActivation && sessionActivation.session) {
+    result.session = {
+      id: sessionActivation.session.session_id,
+      branch: sessionActivation.session.branch_id,
+      state: sessionActivation.session.state,
+      resumed: !!sessionActivation.resumed,
+    };
+  }
+
+  return result;
 }
 
 function toolListBranches() {
@@ -5013,7 +7071,7 @@ function toolListBranches() {
 // --- Tier 1: Briefing, File Locking, Decisions, Recovery ---
 
 // Helpers for new data files
-function readJsonFile(file) { if (!fs.existsSync(file)) return null; try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
+function readJsonFile(file) { return stateIo.readJsonFile(file, null); }
 // File-to-cache-key map: writeJsonFile auto-invalidates the right cache entry
 const _fileCacheKeys = {};
 _fileCacheKeys[DECISIONS_FILE] = 'decisions';
@@ -5027,62 +7085,52 @@ _fileCacheKeys[REPUTATION_FILE] = 'reputation';
 _fileCacheKeys[RULES_FILE] = 'rules';
 
 function writeJsonFile(file, data) {
-  ensureDataDir();
   const str = JSON.stringify(data);
   if (str && str.length > 0) {
-    fs.writeFileSync(file, str);
-    // Auto-invalidate cache for this file
     const cacheKey = _fileCacheKeys[file];
-    if (cacheKey) invalidateCache(cacheKey);
+    stateIo.writeJson(file, data, { cacheKey });
   }
 }
 
-function getDecisions() { return cachedRead('decisions', () => readJsonFile(DECISIONS_FILE) || [], 2000); }
-function getKB() { return cachedRead('kb', () => readJsonFile(KB_FILE) || {}, 2000); }
+function getDecisions(branch = currentBranch) { return cachedRead(`decisions:${branch}`, () => canonicalState.listDecisions({ branch }), 2000); }
+function getKB(branch = currentBranch) { return cachedRead(`kb:${branch}`, () => canonicalState.readKnowledgeBase({ branch }), 2000); }
 function getLocks() { return cachedRead('locks', () => readJsonFile(LOCKS_FILE) || {}, 2000); }
-function getProgressData() { return cachedRead('progress', () => readJsonFile(PROGRESS_FILE) || {}, 2000); }
-function getVotes() { return cachedRead('votes', () => readJsonFile(VOTES_FILE) || [], 2000); }
-function getReviews() { return cachedRead('reviews', () => readJsonFile(REVIEWS_FILE) || [], 2000); }
-function getDeps() { return cachedRead('deps', () => readJsonFile(DEPS_FILE) || [], 2000); }
-function getRules() { return cachedRead('rules', () => readJsonFile(RULES_FILE) || [], 2000); }
+function getProgressData(branch = currentBranch) { return cachedRead(`progress:${branch}`, () => canonicalState.readProgress({ branch }), 2000); }
+function getVotes(branch = currentBranch) { return cachedRead(`votes:${branch}`, () => canonicalState.listVotes({ branch }), 2000); }
+function getReviews(branch = currentBranch) { return cachedRead(`reviews:${branch}`, () => canonicalState.listReviews({ branch }), 2000); }
+function getDeps(branch = currentBranch) { return cachedRead(`deps:${branch}`, () => canonicalState.listDependencies({ branch }), 2000); }
+function getRules(branch = currentBranch) { return cachedRead(`rules:${branch}`, () => canonicalState.listRules({ branch }), 2000); }
 
 // --- Channel helpers ---
-const CHANNELS_FILE_PATH = path.join(DATA_DIR, 'channels.json');
-
-function getChannelsData() {
-  return cachedRead('channels', () => {
-    const data = readJsonFile(CHANNELS_FILE_PATH);
-    if (!data) return { general: { description: 'General channel — all agents', members: ['*'], created_by: 'system', created_at: new Date().toISOString() } };
-    return data;
+function getChannelsData(branch = currentBranch) {
+  return cachedRead(`channels:${branch}`, () => {
+    const data = readJsonFile(getChannelsFile(branch));
+    return normalizeChannelsData(data);
   }, 3000);
 }
 
-function saveChannelsData(channels) { withFileLock(CHANNELS_FILE_PATH, () => { writeJsonFile(CHANNELS_FILE_PATH, channels); invalidateCache('channels'); }); }
-
-function getChannelMessagesFile(channelName) {
-  if (!channelName || channelName === 'general') return getMessagesFile(currentBranch);
-  return path.join(DATA_DIR, 'channel-' + sanitizeName(channelName) + '-messages.jsonl');
+function saveChannelsData(channels, branch = currentBranch) {
+  const file = getChannelsFile(branch);
+  withFileLock(file, () => {
+    writeJsonFile(file, normalizeChannelsData(channels));
+    invalidateCache(`channels:${branch}`);
+  });
 }
 
-function getChannelHistoryFile(channelName) {
-  if (!channelName || channelName === 'general') return getHistoryFile(currentBranch);
-  return path.join(DATA_DIR, 'channel-' + sanitizeName(channelName) + '-history.jsonl');
-}
-
-function isChannelMember(channelName, agentName) {
-  const channels = getChannelsData();
+function isChannelMember(channelName, agentName, branch = currentBranch) {
+  const channels = getChannelsData(branch);
   if (!channels[channelName]) return false;
   return channels[channelName].members.includes('*') || channels[channelName].members.includes(agentName);
 }
 
-function getAgentChannels(agentName) {
-  const channels = getChannelsData();
+function getAgentChannels(agentName, branch = currentBranch) {
+  const channels = getChannelsData(branch);
   return Object.keys(channels).filter(ch => channels[ch].members.includes('*') || channels[ch].members.includes(agentName));
 }
 
 // Cleanup dead agents from channel membership (called from heartbeat)
 function cleanStaleChannelMembers() {
-  const channels = getChannelsData();
+  const channels = getChannelsData(currentBranch);
   const agents = getAgents();
   let changed = false;
   for (const [name, ch] of Object.entries(channels)) {
@@ -5091,7 +7139,7 @@ function cleanStaleChannelMembers() {
     ch.members = ch.members.filter(m => m === '*' || (agents[m] && isPidAlive(agents[m].pid, agents[m].last_activity)));
     if (ch.members.length !== before) changed = true;
   }
-  if (changed) saveChannelsData(channels);
+  if (changed) saveChannelsData(channels, currentBranch);
 }
 
 function toolJoinChannel(channelName, description, rateLimit) {
@@ -5162,30 +7210,6 @@ function toolListChannels() {
   return { channels: result, your_channels: getAgentChannels(registeredName) };
 }
 
-// Auto-escalation: notify team about tasks blocked for >5 minutes
-// Uses task.escalated_at field for cross-process dedup (file-based, not in-memory)
-function escalateBlockedTasks() {
-  try {
-    const tasks = getTasks();
-    const now = Date.now();
-    let changed = false;
-    for (const task of tasks) {
-      if (task.status !== 'blocked') continue;
-      if (task.escalated_at) continue; // already escalated (cross-process safe)
-      const blockedSince = new Date(task.updated_at).getTime();
-      if (now - blockedSince > 300000) { // 5 minutes
-        task.escalated_at = new Date().toISOString();
-        changed = true;
-        broadcastSystemMessage(
-          `[ESCALATION] Task "${task.title}" (assigned to ${task.assignee || 'unassigned'}) has been blocked for ${Math.round((now - blockedSince) / 60000)} minutes. Team: can anyone help unblock it?`,
-          registeredName
-        );
-      }
-    }
-    if (changed) saveTasks(tasks);
-  } catch {}
-}
-
 // Stand-up meetings: periodic team check-ins triggered by heartbeat
 let _lastStandupTime = 0;
 function triggerStandupIfDue() {
@@ -5233,28 +7257,44 @@ function snapshotDeadAgents(agents) {
   for (const [name, info] of Object.entries(agents)) {
     if (name === registeredName) continue; // skip self
     if (isPidAlive(info.pid, info.last_activity)) continue; // skip alive
+    const agentBranch = info.branch || 'main';
     const recoveryFile = path.join(DATA_DIR, `recovery-${name}.json`);
+    let interruptedSession = null;
+
+    try {
+      interruptedSession = sessionsState.transitionLatestSessionForAgent({
+        agentName: name,
+        branchName: agentBranch,
+        state: 'interrupted',
+        reason: 'dead_agent_snapshot',
+        recoverySnapshotFile: path.basename(recoveryFile),
+      }).session;
+    } catch {}
+
     if (fs.existsSync(recoveryFile)) continue; // already snapshotted
     try {
       const allTasks = getTasks();
       const tasks = allTasks.filter(t => t.assignee === name && (t.status === 'in_progress' || t.status === 'pending'));
       const locks = getLocks();
       const lockedFiles = Object.entries(locks).filter(([, l]) => l.agent === name).map(([f]) => f);
-      const channels = getAgentChannels(name);
-      const workspace = getWorkspace(name);
+      const channels = getAgentChannels(name, agentBranch);
+      const workspace = getWorkspace(name, agentBranch);
       // Scale fix: tail-read last 50 messages instead of entire history
-      const history = tailReadJsonl(getHistoryFile(currentBranch), 50);
+      const history = tailReadJsonl(getHistoryFile(agentBranch), 50);
       const lastSent = history.filter(m => m.from === name).slice(-5).map(m => ({ to: m.to, content: m.content.substring(0, 200), timestamp: m.timestamp }));
       // Agent memory: decisions made, tasks completed, KB keys written
-      const decisions = readJsonFile(DECISIONS_FILE) || [];
+      const decisions = getDecisions(agentBranch);
       const myDecisions = decisions.filter(d => d.decided_by === name).slice(-10).map(d => ({ decision: d.decision, reasoning: (d.reasoning || '').substring(0, 150), decided_at: d.decided_at }));
       const completedTasks = allTasks.filter(t => t.assignee === name && t.status === 'done').slice(-10).map(t => ({ id: t.id, title: t.title }));
-      const kb = readJsonFile(KB_FILE) || {};
+      const kb = getKB(agentBranch);
       const kbKeysWritten = Object.keys(kb).filter(k => kb[k] && kb[k].updated_by === name);
       // Only snapshot if there's meaningful state to recover
-      if (tasks.length > 0 || lockedFiles.length > 0 || Object.keys(workspace).length > 0 || myDecisions.length > 0 || completedTasks.length > 0) {
+      if (tasks.length > 0 || lockedFiles.length > 0 || Object.keys(workspace).length > 0 || myDecisions.length > 0 || completedTasks.length > 0 || interruptedSession) {
         writeJsonFile(recoveryFile, {
           agent: name,
+          branch: agentBranch,
+          session_id: interruptedSession ? interruptedSession.session_id : null,
+          session_state: interruptedSession ? interruptedSession.state : null,
           died_at: new Date().toISOString(),
           active_tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, description: (t.description || '').substring(0, 300) })),
           locked_files: lockedFiles,
@@ -5396,6 +7436,13 @@ function toolGetBriefing() {
   const history = tailReadJsonl(getHistoryFile(currentBranch), 30);
   const locks = getLocks();
   const config = getConfig();
+  const briefingContext = buildAuthoritativeResumeContext({
+    agentName: registeredName,
+    branchName: currentBranch,
+    sessionId: currentSessionId,
+    evidenceLimit: 5,
+  });
+  const checkpointFallbacks = listCheckpointFallbacks(registeredName).slice(0, 5);
 
   // Agent roster
   const roster = {};
@@ -5431,10 +7478,27 @@ function toolGetBriefing() {
   // Session memory: lightweight — only task counts from task system, no history scan
   const myActiveTasks = tasks.filter(t => t.status !== 'done' && t.assignee === registeredName);
   const myCompletedCount = tasks.filter(t => t.status === 'done' && t.assignee === registeredName).length;
+  const resumeContext = {};
+  if (briefingContext.active_step) resumeContext.active_step = briefingContext.active_step;
+  if (briefingContext.upcoming_step) resumeContext.upcoming_step = briefingContext.upcoming_step;
+  if (briefingContext.dependency_evidence.length > 0) resumeContext.dependency_evidence = briefingContext.dependency_evidence;
+  if (briefingContext.recent_evidence.length > 0) resumeContext.recent_evidence = briefingContext.recent_evidence;
 
-  return {
+  let hint = 'You are now briefed. Check active tasks and start contributing.';
+  if (briefingContext.active_step) {
+    hint = `Session ${briefingContext.session_summary ? briefingContext.session_summary.session_id : currentSessionId || 'unknown'} has an active workflow step assigned to you. Resume that work first.`;
+  } else if (myActiveTasks.length > 0) {
+    hint = `You have ${myActiveTasks.length} active task(s). Continue working.`;
+  }
+  if (checkpointFallbacks.length > 0) {
+    hint += ' Checkpoint fallbacks are attached if you need older WIP notes.';
+  }
+
+  const result = {
     briefing: true,
     conversation_mode: config.conversation_mode || 'direct',
+    ...(briefingContext.session_summary ? { session_summary: briefingContext.session_summary } : {}),
+    ...(Object.keys(resumeContext).length > 0 ? { resume_context: resumeContext } : {}),
     agents: roster,
     your_name: registeredName,
     recent_messages: recentMsgs,
@@ -5443,12 +7507,38 @@ function toolGetBriefing() {
     knowledge_base_keys: Object.keys(kb),
     locked_files: lockedFiles,
     progress,
+    ...(checkpointFallbacks.length > 0 ? { checkpoint_fallbacks: checkpointFallbacks } : {}),
     your_tasks: myActiveTasks.map(t => ({ id: t.id, title: t.title, status: t.status })),
     your_completed: myCompletedCount,
-    hint: myActiveTasks.length > 0
-      ? `You have ${myActiveTasks.length} active task(s). Continue working.`
-      : 'You are now briefed. Check active tasks and start contributing.',
+    hint,
   };
+
+  if (config.conversation_mode === 'managed') {
+    const managed = getManagedConfig();
+    result.managed_context = {
+      manager: managed.manager,
+      phase: managed.phase,
+      floor: managed.floor,
+      turn_current: managed.turn_current,
+      you_are_manager: managed.manager === registeredName,
+      you_have_floor: managed.turn_current === registeredName,
+    };
+  }
+
+  if (config.conversation_mode === 'managed' || config.conversation_mode === 'group') {
+    const briefingSurface = config.conversation_mode === 'managed' && result.managed_context && result.managed_context.you_are_manager
+      ? 'manager_briefing'
+      : (config.conversation_mode === 'managed' ? 'participant_briefing' : 'team_briefing');
+    return attachManagedTeamSurfaceSignals(result, {
+      surface: briefingSurface,
+      agentName: registeredName,
+      branchName: currentBranch,
+      includeContractViolation: !!(result.managed_context && result.managed_context.you_are_manager),
+      hookLimit: 5,
+    });
+  }
+
+  return result;
 }
 
 function toolLockFile(filePath) {
@@ -5502,7 +7592,6 @@ function toolLogDecision(decision, reasoning, topic) {
   if (!registeredName) return { error: 'You must call register() first' };
   if (typeof decision !== 'string' || decision.length < 1 || decision.length > 500) return { error: 'Decision must be 1-500 chars' };
 
-  const decisions = getDecisions();
   const entry = {
     id: 'dec_' + generateId(),
     decision,
@@ -5511,9 +7600,15 @@ function toolLogDecision(decision, reasoning, topic) {
     decided_by: registeredName,
     decided_at: new Date().toISOString(),
   };
-  decisions.push(entry);
-  if (decisions.length > 200) decisions.splice(0, decisions.length - 200); // cap
-  writeJsonFile(DECISIONS_FILE, decisions);
+  const logged = canonicalState.logDecision({
+    entry,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: entry.id,
+    maxEntries: 200,
+  });
+  if (logged.error) return logged;
   touchActivity();
   return { success: true, decision_id: entry.id, message: 'Decision logged. Other agents can see it via get_decisions() or get_briefing().' };
 }
@@ -5532,12 +7627,18 @@ function toolKBWrite(key, content) {
   if (!/^[a-zA-Z0-9_\-\.]+$/.test(key)) return { error: 'Key must be alphanumeric/underscore/hyphen/dot' };
   if (typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > 102400) return { error: 'Content exceeds 100KB' };
 
-  const kb = getKB();
-  kb[key] = { content, updated_by: registeredName, updated_at: new Date().toISOString() };
-  if (Object.keys(kb).length > 100) return { error: 'Knowledge base full (max 100 keys)' };
-  writeJsonFile(KB_FILE, kb);
+  const written = canonicalState.writeKnowledgeBaseEntry({
+    key,
+    value: { content, updated_by: registeredName, updated_at: new Date().toISOString() },
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: key,
+    maxEntries: 100,
+  });
+  if (written.error) return { error: written.error };
   touchActivity();
-  return { success: true, key, size: content.length, total_keys: Object.keys(kb).length };
+  return { success: true, key, size: content.length, total_keys: written.total_keys };
 }
 
 function toolKBRead(key) {
@@ -5567,14 +7668,20 @@ function toolUpdateProgress(feature, percent, notes) {
   if (typeof feature !== 'string' || feature.length < 1 || feature.length > 100) return { error: 'Feature name must be 1-100 chars' };
   if (typeof percent !== 'number' || percent < 0 || percent > 100) return { error: 'Percent must be 0-100' };
 
-  const progress = getProgressData();
-  progress[feature] = {
-    percent,
-    notes: (notes || '').substring(0, 500),
-    updated_by: registeredName,
-    updated_at: new Date().toISOString(),
-  };
-  writeJsonFile(PROGRESS_FILE, progress);
+  const updated = canonicalState.updateProgressRecord({
+    feature,
+    value: {
+      percent,
+      notes: (notes || '').substring(0, 500),
+      updated_by: registeredName,
+      updated_at: new Date().toISOString(),
+    },
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: feature,
+  });
+  if (updated.error) return updated;
   touchActivity();
   return { success: true, feature, percent, message: `Progress updated: ${feature} is ${percent}% complete.` };
 }
@@ -5595,8 +7702,6 @@ function toolCallVote(question, options) {
   if (typeof question !== 'string' || question.length < 1 || question.length > 200) return { error: 'Question must be 1-200 chars' };
   if (!Array.isArray(options) || options.length < 2 || options.length > 10) return { error: 'Need 2-10 options' };
 
-  const votes = getVotes();
-  if (votes.length >= 500) return { error: 'Vote limit reached (max 500).' };
   const vote = {
     id: 'vote_' + generateId(),
     question,
@@ -5606,8 +7711,15 @@ function toolCallVote(question, options) {
     created_by: registeredName,
     created_at: new Date().toISOString(),
   };
-  votes.push(vote);
-  writeJsonFile(VOTES_FILE, votes);
+  const created = canonicalState.createVote({
+    vote,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: vote.id,
+    maxEntries: 500,
+  });
+  if (created.error) return created;
 
   // Notify all agents
   broadcastSystemMessage(`[VOTE] ${registeredName} started a vote: "${question}" — Options: ${vote.options.join(', ')}. Call cast_vote("${vote.id}", "your_choice") to vote.`, registeredName);
@@ -5618,32 +7730,28 @@ function toolCallVote(question, options) {
 function toolCastVote(voteId, choice) {
   if (!registeredName) return { error: 'You must call register() first' };
 
-  const votes = getVotes();
-  const vote = votes.find(v => v.id === voteId);
-  if (!vote) return { error: `Vote not found: ${voteId}` };
-  if (vote.status !== 'open') return { error: 'Vote is already closed.' };
-  if (!vote.options.includes(choice)) return { error: `Invalid choice. Options: ${vote.options.join(', ')}` };
-
-  vote.votes[registeredName] = { choice, voted_at: new Date().toISOString() };
-
-  // Check if all online agents have voted
   const agents = getAgents();
   const onlineAgents = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
-  const allVoted = onlineAgents.every(n => vote.votes[n]);
+  const cast = canonicalState.castVote({
+    voteId,
+    voter: registeredName,
+    choice,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: voteId,
+    onlineAgents,
+  });
+  if (cast.error) return cast;
 
-  if (allVoted) {
-    vote.status = 'closed';
-    vote.closed_at = new Date().toISOString();
-    // Count results
-    const results = {};
-    for (const opt of vote.options) results[opt] = 0;
-    for (const v of Object.values(vote.votes)) results[v.choice]++;
-    vote.results = results;
-    const winner = Object.entries(results).sort((a, b) => b[1] - a[1])[0];
-    broadcastSystemMessage(`[VOTE RESULT] "${vote.question}" — Winner: ${winner[0]} (${winner[1]} votes). Full results: ${JSON.stringify(results)}`);
+  const vote = cast.vote || {};
+  if (vote.status === 'closed' && vote.results) {
+    const winner = Object.entries(vote.results).sort((a, b) => b[1] - a[1])[0];
+    if (winner) {
+      broadcastSystemMessage(`[VOTE RESULT] "${vote.question}" — Winner: ${winner[0]} (${winner[1]} votes). Full results: ${JSON.stringify(vote.results)}`);
+    }
   }
 
-  writeJsonFile(VOTES_FILE, votes);
   touchActivity();
   return { success: true, vote_id: voteId, your_vote: choice, status: vote.status, votes_cast: Object.keys(vote.votes).length, agents_online: onlineAgents.length };
 }
@@ -5662,8 +7770,6 @@ function toolRequestReview(filePath, description) {
   if (!registeredName) return { error: 'You must call register() first' };
   if (typeof filePath !== 'string' || filePath.length < 1) return { error: 'File path required' };
 
-  const reviews = getReviews();
-  if (reviews.length >= 500) return { error: 'Review limit reached (max 500).' };
   const review = {
     id: 'rev_' + generateId(),
     file: filePath.replace(/\\/g, '/'),
@@ -5674,8 +7780,28 @@ function toolRequestReview(filePath, description) {
     reviewer: null,
     feedback: null,
   };
-  reviews.push(review);
-  writeJsonFile(REVIEWS_FILE, reviews);
+  const reviewWrite = canonicalState.mutateReviews((reviews) => {
+    if (reviews.length >= 500) return { error: 'Review limit reached (max 500).' };
+    reviews.push(review);
+    return { success: true, review };
+  }, { branch: currentBranch });
+  if (reviewWrite && reviewWrite.error) return reviewWrite;
+
+  canonicalState.appendCanonicalEvent({
+    type: 'review.requested',
+    branchId: currentBranch,
+    actorAgent: registeredName,
+    sessionId: currentSessionId,
+    correlationId: review.id,
+    payload: {
+      review_id: review.id,
+      file: review.file,
+      description: review.description,
+      requested_by: review.requested_by,
+      requested_at: review.requested_at,
+      status: review.status,
+    },
+  });
 
   // Notify all other agents
   broadcastSystemMessage(`[REVIEW] ${registeredName} requests review of "${review.file}": ${review.description || 'No description'}. Call submit_review("${review.id}", "approved"/"changes_requested", "your feedback") to review.`, registeredName);
@@ -5689,20 +7815,33 @@ function toolSubmitReview(reviewId, status, feedback) {
   const validStatuses = ['approved', 'changes_requested'];
   if (!validStatuses.includes(status)) return { error: `Status must be: ${validStatuses.join(' or ')}` };
 
-  const reviews = getReviews();
-  const review = reviews.find(r => r.id === reviewId);
-  if (!review) return { error: `Review not found: ${reviewId}` };
-  if (review.requested_by === registeredName) return { error: 'Cannot review your own code.' };
+  const reviewUpdate = canonicalState.mutateReviews((reviews) => {
+    const review = reviews.find(r => r.id === reviewId);
+    if (!review) return { error: `Review not found: ${reviewId}` };
+    if (review.requested_by === registeredName) return { error: 'Cannot review your own code.' };
 
-  review.status = status;
-  review.reviewer = registeredName;
-  review.feedback = (feedback || '').substring(0, 2000);
-  review.reviewed_at = new Date().toISOString();
+    review.status = status;
+    review.reviewer = registeredName;
+    review.feedback = (feedback || '').substring(0, 2000);
+    review.reviewed_at = new Date().toISOString();
+
+    if (status === 'changes_requested') {
+      review.review_round = (review.review_round || 0) + 1;
+      if (review.review_round > 2) {
+        review.status = 'approved';
+        review.auto_approved = true;
+        review.auto_approve_reason = `Auto-approved after ${review.review_round} review rounds (max 2 rounds exceeded).`;
+      }
+    }
+
+    return { success: true, review };
+  }, { branch: currentBranch });
+  if (reviewUpdate && reviewUpdate.error) return reviewUpdate;
+
+  const review = reviewUpdate.review;
 
   // Review → retry loop: track review rounds, auto-route feedback, auto-approve after 2 rounds
   if (status === 'changes_requested') {
-    review.review_round = (review.review_round || 0) + 1;
-
     // Item 4: Agent circuit breaker — track consecutive rejections in reputation
     const rep = getReputation();
     if (!rep[review.requested_by]) rep[review.requested_by] = { tasks_completed: 0, reviews_done: 0, messages_sent: 0, consecutive_rejections: 0, first_seen: new Date().toISOString(), last_active: new Date().toISOString(), strengths: [], task_times: [], response_times: [] };
@@ -5748,14 +7887,28 @@ function toolSubmitReview(reviewId, status, feedback) {
   }
 
   // Auto-approve check: if this is a re-submission and auto_approve_next is set
-  if (status === 'changes_requested' && review.review_round > 2) {
-    review.status = 'approved';
-    review.auto_approved = true;
-    review.auto_approve_reason = `Auto-approved after ${review.review_round} review rounds (max 2 rounds exceeded).`;
+  if (status === 'changes_requested' && review.auto_approved) {
     sendSystemMessage(review.requested_by, `[REVIEW] "${review.file}" auto-approved after ${review.review_round} review rounds. Flagged for later human review.`);
   }
 
-  writeJsonFile(REVIEWS_FILE, reviews);
+  canonicalState.appendCanonicalEvent({
+    type: 'review.submitted',
+    branchId: currentBranch,
+    actorAgent: registeredName,
+    sessionId: currentSessionId,
+    correlationId: review.id,
+    payload: {
+      review_id: review.id,
+      file: review.file,
+      requested_by: review.requested_by,
+      reviewer: review.reviewer,
+      status: review.status,
+      feedback: review.feedback,
+      review_round: review.review_round || 0,
+      auto_approved: !!review.auto_approved,
+      reviewed_at: review.reviewed_at || null,
+    },
+  });
   touchActivity();
 
   const result = { success: true, review_id: reviewId, status: review.status, message: `Review submitted: ${review.status}` };
@@ -5773,17 +7926,57 @@ function toolDeclareDependency(taskId, dependsOnTaskId) {
   if (!task) return { error: `Task not found: ${taskId}` };
   if (!depTask) return { error: `Dependency task not found: ${dependsOnTaskId}` };
 
-  const deps = getDeps();
-  if (deps.length >= 1000) return { error: 'Dependency limit reached (max 1000).' };
-  deps.push({
+  const dependency = {
     id: 'dep_' + generateId(),
     task_id: taskId,
     depends_on: dependsOnTaskId,
     declared_by: registeredName,
     declared_at: new Date().toISOString(),
     resolved: depTask.status === 'done',
+    resolved_at: depTask.status === 'done' ? new Date().toISOString() : null,
+    resolved_by: depTask.status === 'done' ? registeredName : null,
+  };
+  const dependencyWrite = canonicalState.mutateDependencies((deps) => {
+    if (deps.length >= 1000) return { error: 'Dependency limit reached (max 1000).' };
+    deps.push(dependency);
+    return { success: true, dependency };
+  }, { branch: currentBranch });
+  if (dependencyWrite && dependencyWrite.error) return dependencyWrite;
+
+  const declaredEvent = canonicalState.appendCanonicalEvent({
+    type: 'dependency.declared',
+    branchId: currentBranch,
+    actorAgent: registeredName,
+    sessionId: currentSessionId,
+    correlationId: dependency.id,
+    payload: {
+      dependency_id: dependency.id,
+      task_id: dependency.task_id,
+      depends_on: dependency.depends_on,
+      declared_by: dependency.declared_by,
+      declared_at: dependency.declared_at,
+      resolved: dependency.resolved,
+    },
   });
-  writeJsonFile(DEPS_FILE, deps);
+  if (dependency.resolved) {
+    canonicalState.appendCanonicalEvent({
+      type: 'dependency.resolved',
+      branchId: currentBranch,
+      actorAgent: registeredName,
+      sessionId: currentSessionId,
+      causationId: declaredEvent.event_id,
+      correlationId: dependency.id,
+      payload: {
+        dependency_id: dependency.id,
+        task_id: dependency.task_id,
+        depends_on: dependency.depends_on,
+        resolved_at: dependency.resolved_at,
+        resolved_by: dependency.resolved_by,
+        resolved_by_task_id: depTask.id,
+        reason: 'dependency_already_satisfied',
+      },
+    });
+  }
   touchActivity();
 
   if (depTask.status === 'done') {
@@ -5816,7 +8009,9 @@ function toolCheckDependencies(taskId) {
 
 // --- Conversation Compression ---
 
-function getCompressed() { return readJsonFile(COMPRESSED_FILE) || { segments: [], last_compressed_at: null }; }
+function getCompressed(branch = currentBranch) {
+  return readJsonFile(getCompressedFile(branch)) || { segments: [], last_compressed_at: null };
+}
 
 // Compress old messages into summary segments
 // Keeps last 20 verbatim, groups older messages into topic summaries
@@ -5829,7 +8024,7 @@ function autoCompress() {
   const history = readJsonl(histFile);
   if (history.length <= 50) return; // only compress when conversation is long
 
-  const compressed = getCompressed();
+  const compressed = getCompressed(currentBranch);
   const cutoff = history.length - 20; // keep last 20 verbatim
   const toCompress = history.slice(compressed.segments.length > 0 ? compressed.segments.reduce((s, seg) => s + seg.message_count, 0) : 0, cutoff);
   if (toCompress.length < 10) return; // not enough new messages to compress
@@ -5860,13 +8055,13 @@ function autoCompress() {
   if (compressed.segments.length > 100) compressed.segments = compressed.segments.slice(-100);
   compressed.last_compressed_at = new Date().toISOString();
   compressed.total_original_messages = history.length;
-  writeJsonFile(COMPRESSED_FILE, compressed);
+  writeJsonFile(getCompressedFile(currentBranch), compressed);
 }
 
 function toolGetCompressedHistory() {
   if (!registeredName) return { error: 'You must call register() first' };
 
-  const compressed = getCompressed();
+  const compressed = getCompressed(currentBranch);
   const recent = tailReadJsonl(getHistoryFile(currentBranch), 20);
 
   return {
@@ -5988,36 +8183,58 @@ function toolSuggestTask() {
 
   const rep = getReputation();
   const myRep = rep[registeredName];
+  const profiles = getProfiles();
+  const contract = resolveAgentContract(profiles[registeredName] || {});
   const tasks = getTasks();
+  const reviews = getReviews();
+  const pendingReviews = reviews.filter(r => r.status === 'pending' && r.requested_by !== registeredName);
   const pendingTasks = tasks.filter(t => t.status === 'pending' && !t.assignee);
   const unassignedTasks = tasks.filter(t => t.status === 'pending');
 
   if (pendingTasks.length === 0 && unassignedTasks.length === 0) {
-    // Check reviews
-    const reviews = getReviews();
-    const pendingReviews = reviews.filter(r => r.status === 'pending' && r.requested_by !== registeredName);
     if (pendingReviews.length > 0) {
-      return { suggestion: 'review', review_id: pendingReviews[0].id, file: pendingReviews[0].file, message: `No pending tasks, but there's a code review waiting: "${pendingReviews[0].file}". Call submit_review() to review it.` };
+      return attachContractAdvisory({ suggestion: 'review', review_id: pendingReviews[0].id, file: pendingReviews[0].file, message: `No pending tasks, but there's a code review waiting: "${pendingReviews[0].file}". Call submit_review() to review it.` }, contract, {
+        work_type: 'review',
+        title: pendingReviews[0].file,
+        description: pendingReviews[0].description || '',
+      });
     }
     // Check deps
     const deps = getDeps();
     const unresolved = deps.filter(d => !d.resolved);
     if (unresolved.length > 0) {
-      return { suggestion: 'unblock', message: `No tasks available, but ${unresolved.length} task(s) are blocked by dependencies. Check if you can help resolve them.` };
+      return attachContractAdvisory({ suggestion: 'unblock', message: `No tasks available, but ${unresolved.length} task(s) are blocked by dependencies. Check if you can help resolve them.` }, contract, {
+        work_type: 'unblock',
+        title: 'Blocked dependency work',
+        description: `${unresolved.length} unresolved dependency records`,
+      });
     }
-    return { suggestion: 'none', message: 'No pending tasks, reviews, or blocked items. Ask the team what needs doing next.' };
+    return attachContractAdvisory({ suggestion: 'none', message: 'No pending tasks, reviews, or blocked items. Ask the team what needs doing next.' }, contract, {
+      work_type: 'idle',
+      title: 'No pending work',
+    });
   }
 
   // Check current workload — don't suggest new tasks if already overloaded
   const myActiveTasks = tasks.filter(t => t.assignee === registeredName && t.status === 'in_progress');
   if (myActiveTasks.length >= 3) {
-    return { suggestion: 'finish_first', your_active_tasks: myActiveTasks.map(t => ({ id: t.id, title: t.title })), message: `You already have ${myActiveTasks.length} tasks in progress. Finish one before taking more.` };
+    return attachContractAdvisory({ suggestion: 'finish_first', your_active_tasks: myActiveTasks.map(t => ({ id: t.id, title: t.title })), message: `You already have ${myActiveTasks.length} tasks in progress. Finish one before taking more.` }, contract, {
+      work_type: 'task',
+      title: myActiveTasks[0] ? myActiveTasks[0].title : 'Active task load',
+      description: `${myActiveTasks.length} tasks already in progress`,
+      assigned: true,
+    });
   }
 
   // Suggest based on reputation strengths
   if (myRep && myRep.strengths.includes('reviewer')) {
-    const reviews = getReviews().filter(r => r.status === 'pending' && r.requested_by !== registeredName);
-    if (reviews.length > 0) return { suggestion: 'review', review_id: reviews[0].id, file: reviews[0].file, message: `Based on your strengths (reviewer), review "${reviews[0].file}".` };
+    if (pendingReviews.length > 0) {
+      return attachContractAdvisory({ suggestion: 'review', review_id: pendingReviews[0].id, file: pendingReviews[0].file, message: `Based on your strengths (reviewer), review "${pendingReviews[0].file}".` }, contract, {
+        work_type: 'review',
+        title: pendingReviews[0].file,
+        description: pendingReviews[0].description || '',
+      });
+    }
   }
 
   // Smart matching: score tasks by keyword overlap with agent's completed task history
@@ -6042,17 +8259,25 @@ function toolSuggestTask() {
   // Check for blocked tasks that might be unblockable
   const blockedTasks = tasks.filter(t => t.status === 'blocked');
   if (blockedTasks.length > 0 && pendingTasks.length === 0) {
-    return { suggestion: 'unblock_task', task: { id: blockedTasks[0].id, title: blockedTasks[0].title }, message: `No pending tasks, but "${blockedTasks[0].title}" is blocked. Can you help unblock it?` };
+    return attachContractAdvisory({ suggestion: 'unblock_task', task: { id: blockedTasks[0].id, title: blockedTasks[0].title }, message: `No pending tasks, but "${blockedTasks[0].title}" is blocked. Can you help unblock it?` }, contract, {
+      work_type: 'unblock',
+      title: blockedTasks[0].title,
+      description: blockedTasks[0].description || '',
+    });
   }
 
-  return {
+  return attachContractAdvisory({
     suggestion: 'task',
     task_id: suggested.id,
     title: suggested.title,
     description: suggested.description,
     message: `Suggested: "${suggested.title}". Call update_task("${suggested.id}", "in_progress") to claim it.`,
     ...(myKeywords.size > 0 && { match_reason: 'Based on your completed task history' }),
-  };
+  }, contract, {
+    work_type: 'task',
+    title: suggested.title,
+    description: suggested.description || '',
+  });
 }
 
 // --- Rules system: project-level rules visible in dashboard and injected into agent guides ---
@@ -6063,7 +8288,6 @@ function toolAddRule(text, category = 'custom') {
   const validCategories = ['safety', 'workflow', 'code-style', 'communication', 'custom'];
   if (!validCategories.includes(category)) return { error: `Category must be one of: ${validCategories.join(', ')}` };
 
-  const rules = getRules();
   const rule = {
     id: 'rule_' + generateId(),
     text: text.trim(),
@@ -6072,8 +8296,14 @@ function toolAddRule(text, category = 'custom') {
     created_at: new Date().toISOString(),
     active: true,
   };
-  rules.push(rule);
-  writeJsonFile(RULES_FILE, rules);
+  const created = canonicalState.addRule({
+    rule,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: rule.id,
+  });
+  if (created.error) return created;
   return { success: true, rule_id: rule.id, message: `Rule added: "${text.substring(0, 80)}". All agents will see this in their guide.` };
 }
 
@@ -6092,23 +8322,29 @@ function toolListRules() {
 function toolRemoveRule(ruleId) {
   if (!registeredName) return { error: 'You must call register() first' };
   if (!ruleId) return { error: 'rule_id is required' };
-  const rules = getRules();
-  const idx = rules.findIndex(r => r.id === ruleId);
-  if (idx === -1) return { error: `Rule not found: ${ruleId}` };
-  const removed = rules.splice(idx, 1)[0];
-  writeJsonFile(RULES_FILE, rules);
-  return { success: true, removed: removed.text.substring(0, 80), message: 'Rule removed.' };
+  const removed = canonicalState.removeRule({
+    ruleId,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: ruleId,
+  });
+  if (removed.error) return removed;
+  return { success: true, removed: removed.rule && removed.rule.text ? removed.rule.text.substring(0, 80) : '', message: 'Rule removed.' };
 }
 
 function toolToggleRule(ruleId) {
   if (!registeredName) return { error: 'You must call register() first' };
   if (!ruleId) return { error: 'rule_id is required' };
-  const rules = getRules();
-  const rule = rules.find(r => r.id === ruleId);
-  if (!rule) return { error: `Rule not found: ${ruleId}` };
-  rule.active = !rule.active;
-  writeJsonFile(RULES_FILE, rules);
-  return { success: true, rule_id: ruleId, active: rule.active, message: `Rule ${rule.active ? 'activated' : 'deactivated'}.` };
+  const toggled = canonicalState.toggleRule({
+    ruleId,
+    actor: registeredName,
+    branch: currentBranch,
+    sessionId: currentSessionId,
+    correlationId: ruleId,
+  });
+  if (toggled.error) return toggled;
+  return { success: true, rule_id: ruleId, active: toggled.rule.active, message: `Rule ${toggled.rule.active ? 'activated' : 'deactivated'}.` };
 }
 
 // --- MCP Server setup ---
@@ -6231,6 +8467,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'assistant',
+        description: 'Assistant mode — personal assistant listen loop. Only receives messages from Dashboard (the owner). Returns message with safety context. Full personality files (Soul, Identity, Memory, Skills, Tools, SafetyRules) included on first call and every 15th message (context_refreshed: true). In between, only SafetyRules are sent to save tokens — your earlier context still applies. Use this instead of listen() when registered as an Assistant agent.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
         name: 'check_messages',
         description: 'Non-blocking PEEK at your inbox — shows message previews but does NOT consume them. Use listen() to actually receive and process messages. Do NOT call this in a loop — it wastes tokens returning the same messages repeatedly. Use listen() instead which blocks efficiently and consumes messages.',
         inputSchema: {
@@ -6336,6 +8580,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             task_id: { type: 'string', description: 'Task ID to update' },
             status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'blocked'], description: 'New status' },
             notes: { type: 'string', description: 'Optional progress note' },
+            evidence: COMPLETION_EVIDENCE_INPUT_SCHEMA,
           },
           required: ['task_id', 'status'],
         },
@@ -6388,7 +8633,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // --- Phase 1: Profiles ---
       {
         name: 'update_profile',
-        description: 'Update your agent profile (display name, avatar, bio, role, appearance). Profile data is shown in the dashboard and virtual office.',
+        description: 'Update your agent profile (display name, avatar, bio, role, appearance, and optional advisory contract metadata). Profile data is shown in the dashboard and virtual office.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -6396,6 +8641,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             avatar: { type: 'string', description: 'Avatar URL or data URI (max 64KB)' },
             bio: { type: 'string', description: 'Short bio (max 200 chars)' },
             role: { type: 'string', description: 'Role/title (max 30 chars, e.g. "Architect", "Reviewer")' },
+            archetype: { type: 'string', enum: ['generalist', 'coordinator', 'implementer', 'reviewer', 'advisor', 'monitor'], description: 'Optional advisory contract archetype' },
+            skills: { type: 'array', items: { type: 'string' }, description: 'Optional advisory contract skills list' },
+            contract_mode: { type: 'string', enum: ['advisory', 'strict'], description: 'Contract mode for advisory guidance (default: advisory)' },
             appearance: {
               type: 'object',
               description: 'Character appearance for virtual office visualization',
@@ -6479,12 +8727,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'advance_workflow',
-        description: 'Mark the current step as done and start the next step. Auto-sends a handoff message to the next assignee.',
+        description: 'Mark the current step as done with structured evidence and start the next step. Auto-sends a handoff message to the next assignee.',
         inputSchema: {
           type: 'object',
           properties: {
             workflow_id: { type: 'string', description: 'Workflow ID' },
             notes: { type: 'string', description: 'Optional completion notes (max 500 chars)' },
+            evidence: COMPLETION_EVIDENCE_INPUT_SCHEMA,
           },
           required: ['workflow_id'],
         },
@@ -6861,6 +9110,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'listen_codex':
         result = await toolListenCodex(args?.from);
         break;
+      case 'assistant':
+        result = await toolAssistant();
+        break;
       case 'check_messages':
         result = toolCheckMessages(args?.from);
         break;
@@ -6874,7 +9126,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolCreateTask(args.title, args?.description, args?.assignee);
         break;
       case 'update_task':
-        result = toolUpdateTask(args.task_id, args.status, args?.notes);
+        result = toolUpdateTask(args.task_id, args.status, args?.notes, args?.evidence);
         break;
       case 'list_tasks':
         result = toolListTasks(args?.status, args?.assignee);
@@ -6895,7 +9147,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolReset();
         break;
       case 'update_profile':
-        result = toolUpdateProfile(args?.display_name, args?.avatar, args?.bio, args?.role, args?.appearance);
+        result = toolUpdateProfile(args?.display_name, args?.avatar, args?.bio, args?.role, args?.appearance, args?.archetype, args?.skills, args?.contract_mode);
         break;
       case 'workspace_write':
         result = toolWorkspaceWrite(args.key, args.content);
@@ -6910,7 +9162,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = toolCreateWorkflow(args.name, args.steps, args?.autonomous, args?.parallel);
         break;
       case 'advance_workflow':
-        result = toolAdvanceWorkflow(args.workflow_id, args?.notes);
+        result = toolAdvanceWorkflow(args.workflow_id, args?.notes, args?.evidence);
         break;
       case 'workflow_status':
         result = toolWorkflowStatus(args?.workflow_id);
@@ -7160,14 +9412,17 @@ process.on('exit', () => {
       const allTasks = getTasks();
       const activeTasks = allTasks.filter(t => t.assignee === registeredName && (t.status === 'in_progress' || t.status === 'pending'));
       const completedTasks = allTasks.filter(t => t.assignee === registeredName && t.status === 'done').slice(-10).map(t => ({ id: t.id, title: t.title }));
-      const decisions = readJsonFile(DECISIONS_FILE) || [];
+      const decisions = getDecisions(currentBranch);
       const myDecisions = decisions.filter(d => d.decided_by === registeredName).slice(-10).map(d => ({ decision: d.decision, reasoning: (d.reasoning || '').substring(0, 150), decided_at: d.decided_at }));
-      const kb = readJsonFile(KB_FILE) || {};
+      const kb = getKB(currentBranch);
       const kbKeysWritten = Object.keys(kb).filter(k => kb[k] && kb[k].updated_by === registeredName);
       const recentHistory = tailReadJsonl(getHistoryFile(currentBranch), 50);
       const lastSent = recentHistory.filter(m => m.from === registeredName).slice(-5).map(m => ({ to: m.to, content: m.content.substring(0, 200), timestamp: m.timestamp }));
       fs.writeFileSync(recoveryFile, JSON.stringify({
         agent: registeredName,
+        branch: currentBranch,
+        session_id: currentSessionId,
+        session_state: 'completed',
         died_at: new Date().toISOString(),
         graceful: true,
         active_tasks: activeTasks.map(t => ({ id: t.id, title: t.title, status: t.status, description: (t.description || '').substring(0, 300) })),
@@ -7179,10 +9434,44 @@ process.on('exit', () => {
       }));
     } catch {}
     try {
+      if (currentSessionId) {
+        sessionsState.transitionSession({
+          sessionId: currentSessionId,
+          branchName: currentBranch,
+          state: 'completed',
+          reason: 'graceful_exit',
+          recoverySnapshotFile: `recovery-${registeredName}.json`,
+        });
+        currentSessionId = null;
+      }
+    } catch {}
+    try {
       const agents = getAgents();
       if (agents[registeredName]) {
+        const removedAgent = agents[registeredName];
         delete agents[registeredName];
         saveAgents(agents);
+        canonicalState.appendCanonicalEvent({
+          type: 'agent.unregistered',
+          actorAgent: registeredName,
+          correlationId: registeredName,
+          payload: {
+            agent_name: registeredName,
+            agent: {
+              name: registeredName,
+              provider: removedAgent.provider || null,
+              branch: removedAgent.branch || currentBranch,
+              status: removedAgent.status || null,
+              pid: removedAgent.pid || null,
+              registered_at: removedAgent.timestamp || removedAgent.started_at || null,
+              started_at: removedAgent.started_at || removedAgent.timestamp || null,
+              last_activity: removedAgent.last_activity || null,
+              listening_since: removedAgent.listening_since || null,
+              last_listened_at: removedAgent.last_listened_at || null,
+            },
+            reason: 'graceful_exit',
+          },
+        });
       }
     } catch {}
   }
