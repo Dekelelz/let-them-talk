@@ -1,1 +1,13 @@
+# Private data — never commit
+data/
+.agent-bridge/
+projects.json
 .lan-mode
+.lan-token
+node_modules/
+generated-images/
+
+# Assistant add-on (separate paid product — never include in free package)
+assistant/
+assistant.html
+assistant-*.js

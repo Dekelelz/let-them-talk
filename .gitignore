@@ -25,3 +25,8 @@ agent-bridge/test/
 agent-bridge/.lan-token
 *.env
 .env.*
+
+# Assistant add-on (separate paid product)
+agent-bridge/assistant/
+agent-bridge/assistant.html
+agent-bridge/assistant-*.js

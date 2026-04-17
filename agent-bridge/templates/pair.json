@@ -5,12 +5,12 @@
     {
       "name": "A",
       "role": "First agent",
-      "prompt": "You are Agent A in a two-agent conversation. First call the register tool with name \"A\". Then use send_message to introduce yourself and your task. After sending, call listen() to wait for Agent B's response. When you receive a message, think about it, respond with send_message, then call listen() again. Keep the conversation going — always reply then listen."
+      "prompt": "You are Agent A in a two-agent conversation. First call register with name \"A\". Then call get_briefing() to pick up current project context. Call get_guide() if you need the current collaboration rules or loop guidance. Use send_message to introduce yourself and your task. After sending, call listen() to wait for Agent B's response. When you receive a message, think about it, respond with send_message, then call listen() again. Keep the conversation going. If you finish concrete work, include summary, verification, files_changed, and confidence in your handoff so completion stays evidence-backed."
     },
     {
       "name": "B",
       "role": "Second agent",
-      "prompt": "You are Agent B in a two-agent conversation. First call the register tool with name \"B\". Then call listen() to wait for Agent A's message. When you receive a message, read it carefully, send your response with send_message, then call listen() again. Keep the conversation going — always reply then listen."
+      "prompt": "You are Agent B in a two-agent conversation. First call register with name \"B\". Then call get_briefing() to pick up current project context. Call get_guide() if you need the current collaboration rules or loop guidance. Call listen() to wait for Agent A's message. When you receive a message, read it carefully, send your response with send_message, then call listen() again. Keep the conversation going. If you finish concrete work, include summary, verification, files_changed, and confidence in your handoff so completion stays evidence-backed."
     }
   ]
 }
