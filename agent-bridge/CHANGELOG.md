@@ -1,5 +1,7 @@
 # Changelog
 
+> Current runtime and operator truth lives in `README.md`, `../USAGE.md`, `../CLAUDE.md`, and `../docs/architecture/`. This package-local changelog is historical and currently stops at 5.1.0 even though `package.json` is newer. Use the runtime docs and `package.json` for current behavior and version truth.
+
 ## [5.1.0] - 2026-03-19
 
 ### Major — True Autonomy Engine + Team Intelligence + Scale to 100

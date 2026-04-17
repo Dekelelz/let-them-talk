@@ -1,96 +1,99 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
-## What This Is
+## What this is
 
-**Let Them Talk** — an MCP server + web dashboard that lets multiple AI CLI terminals (Claude Code, Gemini CLI, Codex CLI) communicate with each other. Each terminal spawns its own server process via stdio; all processes read/write to a shared `.agent-bridge/` directory on disk.
+Let Them Talk is a local MCP broker and operator dashboard for multi-agent collaboration. Claude Code, Gemini CLI, Codex CLI, and API-backed agents share one project runtime through `.agent-bridge/`.
+
+## Source of truth docs
+
+- `docs/architecture/runtime-contract.md`
+- `docs/architecture/branch-semantics.md`
+- `docs/architecture/canonical-event-schema.md`
+- `docs/architecture/markdown-workspace.md`
+- `docs/architecture/runtime-migration-hardening.md`
+
+Use those architecture docs and `agent-bridge/package.json` as the current truth source for runtime behavior and grouped verification coverage.
 
 ## Commands
 
 ```bash
-# Install in any project (auto-detects CLI type)
+# Install in any project
 npx let-them-talk init
-npx let-them-talk init --all     # Configure for all CLIs
-npx let-them-talk init --template team  # Init with team template
+npx let-them-talk init --claude
+npx let-them-talk init --gemini
+npx let-them-talk init --codex
+npx let-them-talk init --all
+npx let-them-talk init --ollama
+npx let-them-talk init --template <name>
 
-# Launch the web dashboard
+# After init, prefer the local launcher
+node .agent-bridge/launch.js
+node .agent-bridge/launch.js --lan
+node .agent-bridge/launch.js status
+node .agent-bridge/launch.js msg <agent> <text>
+node .agent-bridge/launch.js reset
+
+# Packaged helpers
 npx let-them-talk dashboard
-
-# List available agent templates
+npx let-them-talk status
 npx let-them-talk templates
+npx let-them-talk uninstall
+npx let-them-talk help
 
-# Plugin management
-npx let-them-talk plugin list/add/remove/enable/disable
+# Run MCP server directly
+npm --prefix agent-bridge start
 
-# Reset conversation data
-npx let-them-talk reset
+# Markdown workspace export
+npm --prefix agent-bridge run export:markdown-workspace
 
-# Run MCP server directly (normally launched automatically by CLI)
-npm start
+# Verification
+npm test
+npm --prefix agent-bridge run verify
+npm --prefix agent-bridge run verify:contracts
+npm --prefix agent-bridge run verify:replay
+npm --prefix agent-bridge run verify:invariants
+npm --prefix agent-bridge run verify:smoke
 ```
 
-No tests, linter, or build step. Raw Node.js (CommonJS).
+## Runtime shape
 
-## Architecture
+- `agent-bridge/server.js` remains the broker and MCP entrypoint.
+- `agent-bridge/dashboard.js` is the operator dashboard and export API surface.
+- `agent-bridge/state/canonical.js` is the canonical read and write facade used by server, dashboard, CLI, and API-agent paths.
+- `agent-bridge/runtime-descriptor.js` defines the explicit runtime descriptor surface: `runtime_type`, `provider_id`, `model_id`, and `capabilities`.
 
-**Core files:**
-- `server.js` — MCP server (27 tools + plugins, StdioServerTransport, heartbeat system)
-- `dashboard.js` — HTTP server for web dashboard (multi-project, message injection, SSE real-time, tasks/workflows/workspaces API)
-- `dashboard.html` — Single-page frontend (markdown rendering, agent monitoring, profiles, workspaces, workflows, responsive)
-- `cli.js` — CLI entry point with multi-CLI auto-detection
+Current runtime rules:
 
-**Multiple MCP server processes, one shared filesystem:**
-- Each CLI terminal spawns its own `server.js` process
-- In-memory state: `registeredName`, `lastReadOffset`, `heartbeatInterval`, `messageSeq`
-- Shared disk state in `.agent-bridge/`:
-  - `messages.jsonl` / `history.jsonl` — messages and conversation history (append-only)
-  - `agents.json` — agent registration, heartbeats, PID tracking
-  - `acks.json` — message acknowledgments
-  - `tasks.json` — task management
-  - `consumed-{agent}.json` — per-agent read tracking
-  - `profiles.json` — agent profiles (display_name, avatar, bio, role)
-  - `workspaces/{agent}.json` — per-agent key-value workspace storage
-  - `workflows.json` — multi-step workflow pipelines
-  - `branches.json` — branch metadata
-  - `branch-{name}-messages.jsonl` / `branch-{name}-history.jsonl` — per-branch message files
-  - `plugins.json` — plugin registry
-  - `plugins/*.js` — plugin code files
-- Dashboard reads the same directory for real-time monitoring via SSE
+- canonical runtime data lives under `.agent-bridge/runtime/`
+- legacy `.json` and `.jsonl` files in `.agent-bridge/` remain compatibility projections during migration
+- the runtime contract treats branches as full-context namespaces, not message-only forks. In the shipped runtime today, branch-local guarantees already cover messages and history, delivery and read state, conversation control and non-general channels, sessions, evidence, tasks and workflows, and workspaces
+- branch-local guarantees now also cover the governance surfaces that used to remain compatibility-shared during migration: decisions, KB, reviews, dependencies, votes, rules, and progress
+- branch switches replace the whole migrated branch-local collaboration view at once
+- sessions are branch-scoped, resumable on the same branch, and switched or forked with historical context but not cloned live execution
+- completion is only authoritative when evidence is recorded, including `recorded_at` and `recorded_by_session`
+- `.agent-bridge-markdown/` is a generated export surface only, never a runtime input
+- compatibility-shared or main-only markdown surfaces are emitted only for `main` or omitted, never copied into non-main branch folders
 
-**Data directory resolution (server.js + dashboard.js):**
-1. `$AGENT_BRIDGE_DATA_DIR` / `$AGENT_BRIDGE_DATA` env var
-2. `{cwd}/.agent-bridge/` (project-local, default)
-3. Legacy fallback: `{__dirname}/data/`
+Current capability tokens are:
 
-**27 MCP tools + plugins:**
-- **Core messaging:** register, list_agents, send_message, broadcast, wait_for_reply, listen, check_messages, ack_message, get_history, get_summary, handoff, share_file, reset
-- **Task management:** create_task, update_task, list_tasks
-- **Profiles:** update_profile
-- **Workspaces:** workspace_write, workspace_read, workspace_list
-- **Workflows:** create_workflow, advance_workflow, workflow_status
-- **Branching:** fork_conversation, switch_branch, list_branches
-- **Plugins:** dynamically registered as `plugin_{name}` tools
+- `chat`
+- `vision`
+- `image_generation`
+- `video_generation`
+- `texture_generation`
 
-## Key Design Decisions
+Legacy `provider`, `provider_color`, and `bot_capability` fields remain compatibility projections over the explicit descriptor.
 
-- **Append-only writes** for messages/history (no file locking)
-- **Per-agent consumed tracking** — each agent writes only its own consumed file
-- **PID-based stale detection** + process exit cleanup for instant status
-- **Heartbeat** — 10s interval updates `last_activity`, `.unref()` prevents zombie processes
-- **Flexible agent names** — any alphanumeric (1-20 chars), validated by `sanitizeName()`
-- **Auto-routing** — `to` optional with 2 agents, required with 3+
-- **Threading** — `reply_to` auto-computes `thread_id`
-- **Acknowledgments** — `ack_message` in `acks.json`, shown in history
-- **Multi-CLI** — init auto-detects Claude Code, Gemini CLI, Codex CLI
-- **Multi-project dashboard** — monitor multiple project folders from one dashboard
-- **SSE real-time** — `fs.watch()` on data dir pushes updates via Server-Sent Events
-- **Auto-compact** — messages.jsonl compacted when exceeding 500 lines
-- **Auto-archive** — conversations archived before reset
-- **Context hints** — warns agents when conversation exceeds 50 messages
-- **Task management** — structured task creation, assignment, and tracking between agents
-- **Profiles** — separate `profiles.json` to avoid heartbeat write conflicts with `agents.json`
-- **Workspaces** — per-agent files (`workspaces/{agent}.json`) to avoid write conflicts, read-anyone/write-own permission model
-- **Workflows** — step statuses: pending/in_progress/done, auto-handoff on advance
-- **Branching** — `main` branch uses existing files for backward compatibility, branch-aware file resolution via `getMessagesFile(branch)`/`getHistoryFile(branch)`
-- **Plugins** — sandboxed execution context with 30s timeout, tools appear as `plugin_{name}` in MCP
+## Verification
+
+Verification is script-driven and deterministic.
+
+- `npm test` at the repo root delegates to `agent-bridge`
+- `verify:contracts` checks the runtime contract, canonical event schema, branch semantics, and markdown workspace contract
+- `verify:replay` checks healthy and clean replay plus expected-failure negative replay scenarios
+- `verify:invariants` checks authority routing, dashboard control plane behavior, performance and indexing, provider capabilities, API-agent parity, dashboard semantic-gap coverage, migration hardening, branch isolation, session lifecycle, evidence-backed completion, session-aware context, autonomy v2, advisory contracts, managed-team integration, lifecycle hooks, and markdown workspace export and safety
+- `verify:smoke` runs a representative subset, including the dashboard semantic-gap check
+
+There is no lint or build step. Coverage is still partial. The verification surface does not claim a full provider or runtime matrix, and it does not include browser automation.

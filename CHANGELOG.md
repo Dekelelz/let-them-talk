@@ -1,5 +1,7 @@
 # Changelog
 
+> Current runtime and operator truth lives in `README.md`, `USAGE.md`, `CLAUDE.md`, and `docs/architecture/`. Older entries describe release-time behavior and can lag later runtime-contract hardening work.
+
 ## [5.3.0] - 2026-03-20
 
 ### Listen System Overhaul — Zero Token Waste
@@ -113,12 +115,12 @@ Built by a 4-agent team (Backend, Protocol, Tester, Coordinator) + Advisor agent
 - **Plan execution view** — progress bar, step cards, confidence, controls (pause/stop/skip/reassign)
 - **Monitor health panel** — agent health grid, intervention log, system metrics
 - **`npx let-them-talk run "prompt" --agents N`** — one-command autonomous execution
-- **npm test** wires v5 test suite (158+ tests on every run)
+- **npm test** wires repository verification at the top level
 - Updated conversation templates (autonomous format with depends_on)
 
 ### Stats
 - server.js: 6,200+ lines, 62+ tools
-- 175+ automated tests, 0 fail
+- Verification uses grouped package commands instead of a counted test matrix
 - 5 conversation templates (autonomous format)
 - Built in ~2 hours by autonomous agent team
 

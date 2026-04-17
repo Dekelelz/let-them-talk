@@ -1,3 +1,5 @@
+<!-- Generated from ../USAGE.md by scripts/sync-packaged-docs.js for published package consumers. -->
+
 # Let Them Talk Usage Guide v5.3.0
 
 This guide is the short operator view of the current runtime. For normative architecture details, use the docs under `docs/architecture/`.
@@ -100,7 +102,7 @@ Conversation templates:
 ## Markdown workspace export and safety
 
 ```bash
-npm --prefix agent-bridge run export:markdown-workspace
+npm run export:markdown-workspace
 ```
 
 Current markdown workspace rules:
@@ -114,7 +116,7 @@ Current markdown workspace rules:
 
 ## Verification
 
-Repo root:
+Package directory:
 
 ```bash
 npm test
@@ -123,11 +125,11 @@ npm test
 Grouped package commands:
 
 ```bash
-npm --prefix agent-bridge run verify
-npm --prefix agent-bridge run verify:contracts
-npm --prefix agent-bridge run verify:replay
-npm --prefix agent-bridge run verify:invariants
-npm --prefix agent-bridge run verify:smoke
+npm run verify
+npm run verify:contracts
+npm run verify:replay
+npm run verify:invariants
+npm run verify:smoke
 ```
 
 Grouped coverage today:
@@ -142,7 +144,6 @@ Coverage is still partial. The suite does not claim a full provider or runtime m
 ## Source of truth references
 
 - `README.md`
-- `CLAUDE.md`
 - `docs/architecture/runtime-contract.md`
 - `docs/architecture/branch-semantics.md`
 - `docs/architecture/canonical-event-schema.md`
