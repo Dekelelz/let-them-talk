@@ -321,6 +321,7 @@
     cursor: pointer;
     max-width: 80px;
   }
+  .agent-filter-bar select option { background: #1e2028; color: #e0e0e0; }
 
   /* ===== ROLE GROUP ===== */
   .role-group {
@@ -1144,6 +1145,7 @@
   }
 
   .input-target select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .input-target select option { background: #1e2028; color: #e0e0e0; }
 
   .input-msg {
     flex: 1;
@@ -1276,6 +1278,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
   }
 
   .search-input {
@@ -1294,6 +1297,12 @@
   .search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
   .search-input::placeholder { color: var(--text-muted); }
 
+  .search-input.omnibox-active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
   .compact-toggle {
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -1307,6 +1316,52 @@
   }
   .compact-toggle:hover { background: var(--surface-3); color: var(--text); }
   .compact-toggle.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+  .workspace-layout-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+
+  .workspace-layout-select,
+  .workspace-layout-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 4px 8px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .workspace-layout-select {
+    min-width: 150px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .workspace-layout-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
+  .workspace-layout-btn {
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .workspace-layout-btn:hover {
+    background: var(--surface-3);
+    color: var(--text);
+    border-color: var(--border-light);
+  }
+
+  .workspace-layout-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
   /* Compact mode styles */
   .messages-area.compact-mode { gap: 0; padding: 8px 12px; }
@@ -1324,6 +1379,129 @@
     font-size: 11px;
     color: var(--text-muted);
     white-space: nowrap;
+  }
+
+  .omnibox-panel {
+    display: none;
+    flex: 1 0 100%;
+    background: var(--surface-2);
+    background-image: var(--gradient-surface);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+  }
+
+  .omnibox-panel.open {
+    display: block;
+  }
+
+  .omnibox-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .omnibox-header strong {
+    color: var(--accent);
+    font-size: 10px;
+  }
+
+  .omnibox-hint {
+    color: var(--text-dim);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 11px;
+  }
+
+  .omnibox-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .omnibox-item {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .omnibox-item:last-child {
+    border-bottom: none;
+  }
+
+  .omnibox-item:hover,
+  .omnibox-item.active {
+    background: var(--accent-dim);
+    border-color: var(--accent-glow);
+  }
+
+  .omnibox-item-kind {
+    flex-shrink: 0;
+    min-width: 68px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+
+  .omnibox-item-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .omnibox-item-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .omnibox-item-sub {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .omnibox-item-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-dim);
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 8px;
+  }
+
+  .omnibox-empty {
+    padding: 16px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
   }
 
   /* ===== EMPTY STATE ONBOARDING ===== */
@@ -1848,6 +2026,7 @@
 
   @media (max-width: 768px) {
     .kanban { grid-template-columns: 1fr; }
+    .graph-surface-wrap { height: 560px; }
   }
 
   /* ===== REPLAY MODE ===== */
@@ -2261,6 +2440,10 @@
 
     /* View tabs */
     .view-tab { padding: 7px 12px; font-size: 11px; }
+
+    .graph-area { padding: 12px; }
+    .graph-shell { padding: 12px; }
+    .graph-surface-wrap { height: 460px; }
   }
 
   /* ===== MOBILE: VERY SMALL PHONE (360px) ===== */
@@ -2365,6 +2548,268 @@
     color: var(--text);
   }
 
+  .profile-popup-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .profile-popup-actions .btn {
+    flex: 1;
+    margin-top: 0 !important;
+  }
+
+  .agent-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 320;
+  }
+
+  .agent-drawer-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .agent-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(420px, 100vw);
+    background: var(--surface);
+    background-image: var(--gradient-surface);
+    border-left: 1px solid var(--border-light);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+    z-index: 321;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .agent-drawer.open {
+    transform: translateX(0);
+  }
+
+  .agent-drawer-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 20px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .agent-drawer-header-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .agent-drawer-avatar,
+  .agent-drawer-avatar-img {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    flex-shrink: 0;
+  }
+
+  .agent-drawer-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 18px;
+    font-weight: 800;
+  }
+
+  .agent-drawer-avatar-img {
+    object-fit: cover;
+  }
+
+  .agent-drawer-title-wrap {
+    min-width: 0;
+  }
+
+  .agent-drawer-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .agent-drawer-subtitle {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .agent-drawer-close {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    transition: all 0.15s ease;
+  }
+
+  .agent-drawer-close:hover {
+    color: var(--text);
+    border-color: var(--border-light);
+    background: var(--surface-3);
+  }
+
+  .agent-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 20px 24px;
+  }
+
+  .agent-drawer-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .agent-detail-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+
+  .agent-detail-pill strong {
+    color: var(--text);
+  }
+
+  .agent-detail-note {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+
+  .agent-detail-note-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+
+  .agent-detail-note-value {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .agent-drawer-section {
+    margin-bottom: 18px;
+  }
+
+  .agent-drawer-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+  }
+
+  .agent-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .agent-detail-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    min-width: 0;
+  }
+
+  .agent-detail-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+
+  .agent-detail-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.45;
+    word-break: break-word;
+  }
+
+  .agent-detail-value.muted {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+  }
+
+  .agent-detail-empty {
+    color: var(--text-muted);
+  }
+
+  .agent-drawer-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+
+  .agent-drawer-actions .btn {
+    flex: 1 1 140px;
+  }
+
+  @media (max-width: 768px) {
+    .agent-drawer {
+      width: 100vw;
+    }
+
+    .agent-detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .profile-popup-actions {
+      flex-direction: column;
+    }
+  }
+
   /* ===== v3.0: WORKSPACES TAB ===== */
   .workspaces-area {
     flex: 1;
@@ -2458,6 +2903,91 @@
   }
 
   .workflows-area.visible { display: block; }
+
+  .graph-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: none;
+  }
+
+  .graph-area.visible { display: block; }
+
+  .graph-shell {
+    background: var(--surface);
+    background-image: var(--gradient-surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .graph-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+
+  .graph-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .graph-subtitle {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    max-width: 760px;
+  }
+
+  .graph-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .graph-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+
+  .graph-pill strong {
+    color: var(--text);
+    font-size: 11px;
+  }
+
+  .graph-surface-wrap {
+    height: 680px;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background:
+      radial-gradient(circle at top left, var(--accent-dim), transparent 42%),
+      radial-gradient(circle at bottom right, var(--purple-dim), transparent 36%),
+      var(--bg);
+  }
+
+  .graph-surface {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
 
   .plan-area {
     flex: 1;
@@ -2683,6 +3213,107 @@
   .stats-area.visible { display: block; }
 
   /* ===== DOCS VIEW ===== */
+  /* ===== SERVICES VIEW ===== */
+  .services-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: none;
+  }
+  .services-area.visible { display: block; }
+  .services-container { max-width: 900px; margin: 0 auto; }
+  .services-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .services-header h2 { font-size: 20px; font-weight: 700; color: var(--text); margin: 0; }
+  .services-form {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .services-form label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .services-form input, .services-form select {
+    width: 100%;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 12px;
+    box-sizing: border-box;
+  }
+  .services-form select option {
+    background: #1e2028;
+    color: #e0e0e0;
+  }
+  .services-form .form-row { display: flex; gap: 12px; }
+  .services-form .form-row > div { flex: 1; }
+  .services-form button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .services-form button:hover { opacity: 0.85; }
+  .services-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .service-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    position: relative;
+  }
+  .service-card .sc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .service-card .sc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .service-card .sc-name { font-weight: 600; font-size: 14px; color: var(--text); }
+  .service-card .sc-provider { font-size: 10px; padding: 2px 6px; border-radius: 4px; color: #fff; font-weight: 600; text-transform: uppercase; }
+  .service-card .sc-stats { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; line-height: 1.6; }
+  .service-card .sc-controls { display: flex; gap: 6px; }
+  .service-card .sc-controls button {
+    flex: 1;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface-1);
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .service-card .sc-controls button:hover { background: var(--surface-2); color: var(--text); }
+  .service-card .sc-controls .sc-start { border-color: #22c55e44; color: #4ade80; }
+  .service-card .sc-controls .sc-stop { border-color: #ef444444; color: #f87171; }
+  .service-card .sc-controls .sc-delete { border-color: #ef444444; color: #f87171; }
+  .media-browser { margin-top: 16px; }
+  .media-browser h3 { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .media-item {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .media-item:hover { border-color: var(--accent); }
+  .media-item img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+  .media-item .mi-info { padding: 6px 8px; font-size: 10px; color: var(--text-dim); }
+  .media-item .mi-prompt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .media-lightbox {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9); z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .media-lightbox img { max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; }
+  .media-lightbox .lb-info { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: #aaa; font-size: 12px; text-align: center; max-width: 600px; }
+
   .docs-area {
     flex: 1;
     overflow-y: auto;
@@ -3741,6 +4372,7 @@
             <option value="quality">Quality</option>
             <option value="monitor">Monitor</option>
             <option value="advisor">Advisor</option>
+            <option value="api-agent">API Agent</option>
           </select>
           <select id="agent-status-filter" onchange="filterAgents()">
             <option value="">Status</option>
@@ -3803,10 +4435,12 @@
       <div class="view-tab" id="tab-tasks" onclick="switchView('tasks')">Tasks</div>
       <div class="view-tab" id="tab-workspaces" onclick="switchView('workspaces')">Workspaces</div>
       <div class="view-tab" id="tab-workflows" onclick="switchView('workflows')">Workflows</div>
+      <div class="view-tab" id="tab-graph" onclick="switchView('graph')">Graph</div>
       <div class="view-tab" id="tab-plan" onclick="switchView('plan')">Plan</div>
       <div class="view-tab" id="tab-launch" onclick="switchView('launch')">Launch</div>
       <div class="view-tab" id="tab-rules" onclick="switchView('rules')">Rules</div>
       <div class="view-tab" id="tab-stats" onclick="switchView('stats')">Stats</div>
+      <div class="view-tab" id="tab-services" onclick="switchView('services')">Services</div>
       <div class="view-tab" id="tab-docs" onclick="switchView('docs')">Docs</div>
     </div>
     <div class="branch-tabs" id="branch-tabs"></div>
@@ -3819,6 +4453,14 @@
       <select id="conversation-select" onchange="loadConversation()" title="Load saved conversation" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted)"><option value="">Current</option></select>
       <button onclick="newConversation()" title="Archive current and start fresh" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--text-muted);white-space:nowrap;transition:all 0.2s">New Conversation</button>
       <button onclick="clearMessages()" title="Clear all messages for this project" style="background:#4a2020;border:1px solid #6a3030;border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:#ff6b6b;white-space:nowrap;transition:all 0.2s">Clear Messages</button>
+      <div class="workspace-layout-controls">
+        <select id="dashboard-workspace-select" class="workspace-layout-select" onchange="onDashboardWorkspaceSelection()" title="Saved dashboard layouts">
+          <option value="">Current layout</option>
+        </select>
+        <button id="dashboard-workspace-save" class="workspace-layout-btn" onclick="saveNamedDashboardWorkspace()" title="Save the current dashboard layout as a named workspace">Save As</button>
+        <button id="dashboard-workspace-load" class="workspace-layout-btn" onclick="loadNamedDashboardWorkspace()" title="Restore the selected dashboard layout" disabled>Load</button>
+      </div>
+      <div class="omnibox-panel" id="omnibox-panel" aria-hidden="true"></div>
     </div>
     <div class="channel-filter-bar" id="channel-filter-bar" style="display:none"></div>
     <div class="pinned-section" id="pinned-section">
@@ -3829,6 +4471,7 @@
     <div class="tasks-area" id="tasks-area"></div>
     <div class="workspaces-area" id="workspaces-area"></div>
     <div class="workflows-area" id="workflows-area"></div>
+    <div class="graph-area" id="graph-area"></div>
     <div class="plan-area" id="plan-area"></div>
     <div class="plan-area" id="monitor-panel" style="display:none"></div>
     <div class="office-area" id="office-area">
@@ -3860,6 +4503,7 @@
     <div class="launch-area" id="launch-area"></div>
     <div class="rules-area" id="rules-area"></div>
     <div class="stats-area" id="stats-area"></div>
+    <div class="services-area" id="services-area"></div>
     <div class="docs-area" id="docs-area"><div id="docs-content"></div></div>
     <button class="scroll-bottom" id="scroll-bottom" onclick="scrollToBottom()">&#x2193;<span class="new-count" id="new-msg-count" style="display:none">0</span></button>
     <div class="typing-bar" id="typing-bar"></div>
@@ -3874,8 +4518,23 @@
       </div>
       <div class="input-msg">
         <label>Message</label>
-        <textarea id="inject-content" placeholder="Type a message to inject..." rows="1"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doInject();}"></textarea>
+        <div style="position:relative;display:flex;align-items:flex-end;gap:6px;">
+          <textarea id="inject-content" placeholder="Type a message to inject..." rows="1"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doInject();}" style="flex:1"></textarea>
+          <input type="file" id="inject-file" accept="image/*" style="display:none" onchange="onFileSelected(this)">
+          <button onclick="document.getElementById('inject-file').click()" title="Attach image" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-dim);cursor:pointer;padding:6px 8px;font-size:14px;line-height:1;flex-shrink:0;">&#128247;</button>
+        </div>
+        <div id="inject-file-preview" style="display:none;margin-top:6px;position:relative;">
+          <img id="inject-file-thumb" style="max-height:80px;max-width:200px;border-radius:6px;border:1px solid var(--border);">
+          <button onclick="clearAttachment()" style="position:absolute;top:-6px;right:-6px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:18px;height:18px;cursor:pointer;font-size:11px;line-height:18px;padding:0;">X</button>
+          <div id="inject-file-name" style="font-size:9px;color:var(--text-dim);margin-top:2px;"></div>
+        </div>
+        <div id="assistant-private-row" style="display:none;align-items:center;gap:6px;margin-top:6px;font-size:10px;color:var(--text-muted);">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="assistant-private-optin" style="accent-color:var(--accent)">
+            Send privately to Assistant only
+          </label>
+        </div>
       </div>
       <button class="send-btn" onclick="doInject()" id="inject-btn" disabled>Send</button>
     </div>
@@ -3895,8 +4554,27 @@
   <div id="pp-role"></div>
   <div class="profile-popup-bio" id="pp-bio"></div>
   <div class="profile-popup-stats" id="pp-stats"></div>
-  <button class="btn btn-primary" style="width:100%;margin-top:10px" id="pp-edit-btn" onclick="openProfileEditor()">Edit Profile</button>
+  <div class="profile-popup-actions">
+    <button class="btn" id="pp-details-btn" onclick="openAgentMetadataDrawerFromPopup()">Details</button>
+    <button class="btn btn-primary" id="pp-edit-btn" onclick="openProfileEditor()">Edit Profile</button>
+  </div>
 </div>
+
+<div class="agent-drawer-backdrop" id="agent-drawer-backdrop" onclick="closeAgentMetadataDrawer()"></div>
+<aside class="agent-drawer" id="agent-drawer" aria-hidden="true">
+  <div class="agent-drawer-header">
+    <div class="agent-drawer-header-main">
+      <div class="agent-drawer-avatar" id="agent-drawer-avatar">?</div>
+      <img class="agent-drawer-avatar-img" id="agent-drawer-avatar-img" src="data:," style="display:none">
+      <div class="agent-drawer-title-wrap">
+        <div class="agent-drawer-title" id="agent-drawer-title">Agent details</div>
+        <div class="agent-drawer-subtitle" id="agent-drawer-subtitle"></div>
+      </div>
+    </div>
+    <button class="agent-drawer-close" type="button" onclick="closeAgentMetadataDrawer()">&times;</button>
+  </div>
+  <div class="agent-drawer-body" id="agent-drawer-body"></div>
+</aside>
 
 <!-- Character Designer Panel -->
 <div class="char-designer-backdrop" id="cd-backdrop" onclick="closeProfileEditor()"></div>
@@ -4292,9 +4970,432 @@ function lttFetch(url, opts) {
   return fetch(url, opts);
 }
 
+var DASHBOARD_WORKSPACE_STATE_KEY = 'ltt-dashboard-workspace-state';
+var DASHBOARD_WORKSPACE_STATE_VERSION = 1;
+
+function cloneJsonValue(value, fallback) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function clonePlainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return cloneJsonValue(value, {});
+}
+
+function cleanString(value, fallback) {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function buildDefaultDashboardLayoutSnapshot() {
+  return {
+    view: 'office',
+    theme: 'dark',
+    compactMode: false,
+    project: '',
+    branch: 'main',
+    pinnedExpanded: true,
+    agentFilters: {
+      search: '',
+      role: '',
+      status: '',
+    },
+    collapsedRoleGroups: {},
+  };
+}
+
+function buildDefaultDashboardWorkspaceState() {
+  return {
+    version: DASHBOARD_WORKSPACE_STATE_VERSION,
+    liveWorkspace: {
+      name: 'Current browser layout',
+      snapshot: buildDefaultDashboardLayoutSnapshot(),
+      updatedAt: new Date().toISOString(),
+    },
+    savedWorkspaces: [],
+    selectedWorkspaceId: '',
+    preferences: {
+      notificationsEnabled: false,
+      bookmarks: {},
+      pins: {},
+      reactions: {},
+    },
+  };
+}
+
+function normalizeDashboardLayoutSnapshot(rawSnapshot) {
+  var defaults = buildDefaultDashboardLayoutSnapshot();
+  var snapshot = rawSnapshot && typeof rawSnapshot === 'object' ? rawSnapshot : {};
+  var agentFilters = snapshot.agentFilters && typeof snapshot.agentFilters === 'object' ? snapshot.agentFilters : {};
+  var collapsedRoleGroups = snapshot.collapsedRoleGroups && typeof snapshot.collapsedRoleGroups === 'object' ? snapshot.collapsedRoleGroups : {};
+  var allowedViews = {
+    office: true,
+    messages: true,
+    tasks: true,
+    workspaces: true,
+    workflows: true,
+    graph: true,
+    plan: true,
+    launch: true,
+    rules: true,
+    stats: true,
+    services: true,
+    docs: true,
+  };
+  var normalizedCollapsedGroups = {};
+  for (var key in collapsedRoleGroups) {
+    if (!Object.prototype.hasOwnProperty.call(collapsedRoleGroups, key)) continue;
+    normalizedCollapsedGroups[key] = !!collapsedRoleGroups[key];
+  }
+  return {
+    view: allowedViews[snapshot.view] ? snapshot.view : defaults.view,
+    theme: snapshot.theme === 'light' ? 'light' : defaults.theme,
+    compactMode: !!snapshot.compactMode,
+    project: cleanString(snapshot.project, defaults.project),
+    branch: cleanString(snapshot.branch, defaults.branch) || defaults.branch,
+    pinnedExpanded: snapshot.pinnedExpanded !== false,
+    agentFilters: {
+      search: cleanString(agentFilters.search, defaults.agentFilters.search),
+      role: cleanString(agentFilters.role, defaults.agentFilters.role),
+      status: cleanString(agentFilters.status, defaults.agentFilters.status),
+    },
+    collapsedRoleGroups: normalizedCollapsedGroups,
+  };
+}
+
+function createDashboardWorkspaceId(name) {
+  var base = (name || 'workspace').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
+  return base + '-' + String(Date.now());
+}
+
+function normalizeSavedDashboardWorkspace(entry, index) {
+  var workspace = entry && typeof entry === 'object' ? entry : {};
+  var workspaceName = cleanString(workspace.name, '').trim() || ('Workspace ' + (index + 1));
+  return {
+    id: cleanString(workspace.id, '').trim() || createDashboardWorkspaceId(workspaceName),
+    name: workspaceName,
+    snapshot: normalizeDashboardLayoutSnapshot(workspace.snapshot),
+    updatedAt: cleanString(workspace.updatedAt, new Date().toISOString()),
+  };
+}
+
+function readLegacyDashboardMap(key) {
+  try {
+    var raw = localStorage.getItem(key);
+    if (!raw) return {};
+    var parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function migrateLegacyDashboardWorkspaceState() {
+  var state = buildDefaultDashboardWorkspaceState();
+  try {
+    var legacyTheme = localStorage.getItem('ltt-theme');
+    if (legacyTheme === 'light' || legacyTheme === 'dark') state.liveWorkspace.snapshot.theme = legacyTheme;
+    state.liveWorkspace.snapshot.compactMode = localStorage.getItem('compactMode') === 'true';
+    state.liveWorkspace.snapshot.project = localStorage.getItem('ltt_last_project') || '';
+    state.preferences.notificationsEnabled = localStorage.getItem('ltt-notif') === 'true';
+    state.preferences.bookmarks = readLegacyDashboardMap('ltt-bookmarks');
+    state.preferences.pins = readLegacyDashboardMap('ltt-pins');
+    state.preferences.reactions = readLegacyDashboardMap('ltt-reactions');
+  } catch (e) {}
+  return state;
+}
+
+function normalizeDashboardWorkspaceState(rawState) {
+  var defaults = buildDefaultDashboardWorkspaceState();
+  var state = rawState && typeof rawState === 'object' ? rawState : {};
+  var liveWorkspace = state.liveWorkspace && typeof state.liveWorkspace === 'object' ? state.liveWorkspace : {};
+  var preferences = state.preferences && typeof state.preferences === 'object' ? state.preferences : {};
+  var savedRaw = Array.isArray(state.savedWorkspaces) ? state.savedWorkspaces : [];
+  var normalizedSavedWorkspaces = [];
+  var seenIds = {};
+  for (var i = 0; i < savedRaw.length; i++) {
+    var normalizedWorkspace = normalizeSavedDashboardWorkspace(savedRaw[i], i);
+    while (seenIds[normalizedWorkspace.id]) {
+      normalizedWorkspace.id = createDashboardWorkspaceId(normalizedWorkspace.name);
+    }
+    seenIds[normalizedWorkspace.id] = true;
+    normalizedSavedWorkspaces.push(normalizedWorkspace);
+  }
+  var selectedWorkspaceId = cleanString(state.selectedWorkspaceId, '');
+  if (selectedWorkspaceId && !seenIds[selectedWorkspaceId]) selectedWorkspaceId = '';
+  return {
+    version: DASHBOARD_WORKSPACE_STATE_VERSION,
+    liveWorkspace: {
+      name: cleanString(liveWorkspace.name, defaults.liveWorkspace.name),
+      snapshot: normalizeDashboardLayoutSnapshot(liveWorkspace.snapshot),
+      updatedAt: cleanString(liveWorkspace.updatedAt, defaults.liveWorkspace.updatedAt),
+    },
+    savedWorkspaces: normalizedSavedWorkspaces,
+    selectedWorkspaceId: selectedWorkspaceId,
+    preferences: {
+      notificationsEnabled: !!preferences.notificationsEnabled,
+      bookmarks: clonePlainObject(preferences.bookmarks),
+      pins: clonePlainObject(preferences.pins),
+      reactions: clonePlainObject(preferences.reactions),
+    },
+  };
+}
+
+function loadDashboardWorkspaceState() {
+  try {
+    var raw = localStorage.getItem(DASHBOARD_WORKSPACE_STATE_KEY);
+    if (!raw) return normalizeDashboardWorkspaceState(migrateLegacyDashboardWorkspaceState());
+    return normalizeDashboardWorkspaceState(JSON.parse(raw));
+  } catch (e) {
+    return normalizeDashboardWorkspaceState(migrateLegacyDashboardWorkspaceState());
+  }
+}
+
+function saveDashboardWorkspaceState() {
+  try {
+    localStorage.setItem(DASHBOARD_WORKSPACE_STATE_KEY, JSON.stringify(dashboardWorkspaceState));
+  } catch (e) {}
+}
+
+var dashboardWorkspaceState = loadDashboardWorkspaceState();
+
+function getActiveDashboardBranchName() {
+  return activeBranch && activeBranch !== 'main' ? activeBranch : 'main';
+}
+
+function captureCurrentDashboardLayoutSnapshot() {
+  return normalizeDashboardLayoutSnapshot({
+    view: activeView,
+    theme: currentTheme,
+    compactMode: compactMode,
+    project: activeProject || '',
+    branch: getActiveDashboardBranchName(),
+    pinnedExpanded: pinnedExpanded,
+    agentFilters: {
+      search: agentFilterSearch || '',
+      role: agentFilterRole || '',
+      status: agentFilterStatus || '',
+    },
+    collapsedRoleGroups: clonePlainObject(collapsedRoleGroups),
+  });
+}
+
+function syncDashboardWorkspacePreferences() {
+  dashboardWorkspaceState.preferences.notificationsEnabled = !!notifEnabled;
+  dashboardWorkspaceState.preferences.bookmarks = clonePlainObject(bookmarks);
+  dashboardWorkspaceState.preferences.pins = clonePlainObject(pins);
+  dashboardWorkspaceState.preferences.reactions = clonePlainObject(reactions);
+}
+
+function persistLiveDashboardLayout() {
+  dashboardWorkspaceState.liveWorkspace.snapshot = captureCurrentDashboardLayoutSnapshot();
+  dashboardWorkspaceState.liveWorkspace.updatedAt = new Date().toISOString();
+  saveDashboardWorkspaceState();
+  refreshDashboardWorkspaceControls();
+}
+
+function persistDashboardPreferences() {
+  syncDashboardWorkspacePreferences();
+  saveDashboardWorkspaceState();
+}
+
+function findSavedDashboardWorkspaceById(workspaceId) {
+  if (!workspaceId) return null;
+  for (var i = 0; i < dashboardWorkspaceState.savedWorkspaces.length; i++) {
+    if (dashboardWorkspaceState.savedWorkspaces[i].id === workspaceId) return dashboardWorkspaceState.savedWorkspaces[i];
+  }
+  return null;
+}
+
+function applyAgentFilterInputs() {
+  var searchEl = document.getElementById('agent-search');
+  var roleEl = document.getElementById('agent-role-filter');
+  var statusEl = document.getElementById('agent-status-filter');
+  if (searchEl) searchEl.value = agentFilterSearch || '';
+  if (roleEl) roleEl.value = agentFilterRole || '';
+  if (statusEl) statusEl.value = agentFilterStatus || '';
+}
+
+function syncProjectSelectionUI() {
+  var sidebarSel = document.getElementById('project-select');
+  var mobileSel = document.getElementById('mobile-project-select');
+  var removeBtn = document.getElementById('remove-project-btn');
+  var indicator = document.getElementById('mobile-project-name');
+  var activeLabel = '';
+
+  if (sidebarSel) {
+    sidebarSel.value = activeProject || '';
+    if (sidebarSel.value !== (activeProject || '')) activeProject = sidebarSel.value || '';
+    if (sidebarSel.selectedIndex >= 0 && sidebarSel.options[sidebarSel.selectedIndex]) {
+      activeLabel = sidebarSel.options[sidebarSel.selectedIndex].textContent;
+    }
+  }
+
+  if (mobileSel) mobileSel.value = activeProject || '';
+  if (removeBtn) removeBtn.style.display = activeProject ? '' : 'none';
+
+  if (indicator) {
+    indicator.textContent = activeProject ? activeLabel : '';
+    indicator.style.display = activeProject ? '' : 'none';
+  }
+}
+
+function applyPinnedSectionState() {
+  var list = document.getElementById('pinned-list');
+  var toggle = document.getElementById('pinned-toggle');
+  if (list) list.style.display = pinnedExpanded ? '' : 'none';
+  if (toggle) toggle.textContent = pinnedExpanded ? 'Hide' : 'Show';
+}
+
+function refreshDashboardWorkspaceControls() {
+  var select = document.getElementById('dashboard-workspace-select');
+  var loadBtn = document.getElementById('dashboard-workspace-load');
+  if (!select) return;
+
+  var options = ['<option value="">Current layout</option>'];
+  for (var i = 0; i < dashboardWorkspaceState.savedWorkspaces.length; i++) {
+    var workspace = dashboardWorkspaceState.savedWorkspaces[i];
+    options.push('<option value="' + escapeHtml(workspace.id) + '">' + escapeHtml(workspace.name) + '</option>');
+  }
+  select.innerHTML = options.join('');
+  select.value = dashboardWorkspaceState.selectedWorkspaceId || '';
+  if (loadBtn) loadBtn.disabled = !dashboardWorkspaceState.selectedWorkspaceId;
+}
+
+function onDashboardWorkspaceSelection() {
+  var select = document.getElementById('dashboard-workspace-select');
+  dashboardWorkspaceState.selectedWorkspaceId = select ? select.value : '';
+  persistLiveDashboardLayout();
+}
+
+function buildSuggestedDashboardWorkspaceName() {
+  var projectName = activeProject ? activeProject.split(/[/\\]/).pop() : 'dashboard';
+  var viewName = activeView === 'office' ? '3d-hub' : activeView;
+  return (projectName + ' ' + viewName).replace(/\s+/g, ' ').trim();
+}
+
+function saveNamedDashboardWorkspace() {
+  var selectedWorkspace = findSavedDashboardWorkspaceById(dashboardWorkspaceState.selectedWorkspaceId);
+  var suggestedName = selectedWorkspace ? selectedWorkspace.name : buildSuggestedDashboardWorkspaceName();
+  var providedName = window.prompt('Save current dashboard layout as:', suggestedName);
+  if (providedName === null) return;
+
+  var workspaceName = providedName.trim();
+  if (!workspaceName) {
+    showToast('Workspace name cannot be empty.');
+    return;
+  }
+
+  var normalizedName = workspaceName.toLowerCase();
+  var snapshot = captureCurrentDashboardLayoutSnapshot();
+  var overwriteWorkspace = null;
+  for (var i = 0; i < dashboardWorkspaceState.savedWorkspaces.length; i++) {
+    var existingWorkspace = dashboardWorkspaceState.savedWorkspaces[i];
+    if (existingWorkspace.name.toLowerCase() !== normalizedName) continue;
+    overwriteWorkspace = existingWorkspace;
+    break;
+  }
+
+  if (overwriteWorkspace && (!selectedWorkspace || overwriteWorkspace.id !== selectedWorkspace.id)) {
+    if (!confirm('Overwrite the saved workspace "' + overwriteWorkspace.name + '"?')) return;
+  }
+
+  var targetId = '';
+  if (overwriteWorkspace) targetId = overwriteWorkspace.id;
+  else if (selectedWorkspace && selectedWorkspace.name.toLowerCase() === normalizedName) targetId = selectedWorkspace.id;
+  else targetId = createDashboardWorkspaceId(workspaceName);
+
+  var savedWorkspace = normalizeSavedDashboardWorkspace({
+    id: targetId,
+    name: workspaceName,
+    snapshot: snapshot,
+    updatedAt: new Date().toISOString(),
+  }, dashboardWorkspaceState.savedWorkspaces.length);
+
+  var didUpdate = false;
+  var nextSavedWorkspaces = [];
+  for (var j = 0; j < dashboardWorkspaceState.savedWorkspaces.length; j++) {
+    var candidate = dashboardWorkspaceState.savedWorkspaces[j];
+    if (candidate.id === savedWorkspace.id) {
+      nextSavedWorkspaces.push(savedWorkspace);
+      didUpdate = true;
+      continue;
+    }
+    nextSavedWorkspaces.push(candidate);
+  }
+  if (!didUpdate) nextSavedWorkspaces.push(savedWorkspace);
+
+  dashboardWorkspaceState.savedWorkspaces = nextSavedWorkspaces;
+  dashboardWorkspaceState.selectedWorkspaceId = savedWorkspace.id;
+  dashboardWorkspaceState.liveWorkspace.snapshot = snapshot;
+  dashboardWorkspaceState.liveWorkspace.updatedAt = new Date().toISOString();
+  saveDashboardWorkspaceState();
+  refreshDashboardWorkspaceControls();
+  showToast((didUpdate ? 'Updated' : 'Saved') + ' workspace "' + savedWorkspace.name + '"');
+}
+
+function applyDashboardLayoutSnapshot(rawSnapshot, options) {
+  var opts = options || {};
+  var snapshot = normalizeDashboardLayoutSnapshot(rawSnapshot);
+
+  activeProject = snapshot.project || '';
+  activeBranch = snapshot.branch || 'main';
+  agentFilterSearch = snapshot.agentFilters.search;
+  agentFilterRole = snapshot.agentFilters.role;
+  agentFilterStatus = snapshot.agentFilters.status;
+  collapsedRoleGroups = clonePlainObject(snapshot.collapsedRoleGroups);
+  pinnedExpanded = snapshot.pinnedExpanded !== false;
+
+  applyTheme(snapshot.theme, { skipPersist: true });
+  applyCompactMode(snapshot.compactMode);
+  applyAgentFilterInputs();
+  applyPinnedSectionState();
+  syncProjectSelectionUI();
+
+  if (Object.prototype.hasOwnProperty.call(opts, 'selectedWorkspaceId')) {
+    dashboardWorkspaceState.selectedWorkspaceId = opts.selectedWorkspaceId || '';
+  }
+
+  if (cachedAgents && Object.keys(cachedAgents).length) renderAgents(cachedAgents);
+  renderPinnedMessages();
+  switchView(snapshot.view, { skipPersist: true });
+
+  dashboardWorkspaceState.liveWorkspace.snapshot = captureCurrentDashboardLayoutSnapshot();
+  dashboardWorkspaceState.liveWorkspace.updatedAt = new Date().toISOString();
+
+  lastMessageCount = 0;
+  lastRenderedIds = [];
+  refreshDashboardWorkspaceControls();
+
+  if (!opts.skipPersist) saveDashboardWorkspaceState();
+  if (!opts.skipDataRefresh) {
+    loadConversationList();
+    poll();
+  }
+}
+
+function loadNamedDashboardWorkspace() {
+  var selectedWorkspace = findSavedDashboardWorkspaceById(dashboardWorkspaceState.selectedWorkspaceId);
+  if (!selectedWorkspace) {
+    dashboardWorkspaceState.selectedWorkspaceId = '';
+    saveDashboardWorkspaceState();
+    refreshDashboardWorkspaceControls();
+    showToast('Select a saved workspace first.');
+    return;
+  }
+
+  applyDashboardLayoutSnapshot(selectedWorkspace.snapshot, {
+    selectedWorkspaceId: selectedWorkspace.id,
+  });
+  showToast('Loaded workspace "' + selectedWorkspace.name + '"');
+}
+
 var activeThread = null;
 var activeChannel = null; // null = all channels
-var activeProject = ''; // empty = default/local
+var activeProject = dashboardWorkspaceState.liveWorkspace.snapshot.project || ''; // empty = default/local
 var cachedHistory = [];
 var cachedAgents = {};
 var msgPage = 0;  // 0 = latest (default poll), 1+ = paginated older messages
@@ -4533,21 +5634,23 @@ function getProviderBadge(provider) {
   return '<span style="color:' + c + ';font-size:9px;font-weight:600;margin-right:4px">' + escapeHtml(provider) + '</span>';
 }
 
-var agentFilterSearch = '';
-var agentFilterRole = '';
-var agentFilterStatus = '';
-var collapsedRoleGroups = {};
+var agentFilterSearch = dashboardWorkspaceState.liveWorkspace.snapshot.agentFilters.search || '';
+var agentFilterRole = dashboardWorkspaceState.liveWorkspace.snapshot.agentFilters.role || '';
+var agentFilterStatus = dashboardWorkspaceState.liveWorkspace.snapshot.agentFilters.status || '';
+var collapsedRoleGroups = clonePlainObject(dashboardWorkspaceState.liveWorkspace.snapshot.collapsedRoleGroups);
 
 function filterAgents() {
   agentFilterSearch = (document.getElementById('agent-search').value || '').toLowerCase();
   agentFilterRole = document.getElementById('agent-role-filter').value;
   agentFilterStatus = document.getElementById('agent-status-filter').value;
   renderAgents(cachedAgents);
+  persistLiveDashboardLayout();
 }
 
 function toggleRoleGroup(role) {
   collapsedRoleGroups[role] = !collapsedRoleGroups[role];
   renderAgents(cachedAgents);
+  persistLiveDashboardLayout();
 }
 
 function renderAgents(agents) {
@@ -4564,6 +5667,8 @@ function renderAgents(agents) {
     var fname = keys[f];
     var finfo = agents[fname];
     var fstate = finfo.status || (finfo.alive ? 'active' : 'dead');
+    // Hide API agents unless they are actively running (user clicked Start)
+    if (finfo.is_api_agent && fstate !== 'active') continue;
     if (agentFilterSearch && fname.toLowerCase().indexOf(agentFilterSearch) === -1 &&
         (!finfo.display_name || finfo.display_name.toLowerCase().indexOf(agentFilterSearch) === -1)) continue;
     if (agentFilterRole && finfo.role !== agentFilterRole) continue;
@@ -4577,9 +5682,9 @@ function renderAgents(agents) {
   }
 
   // Group by role
-  var ROLE_ORDER = ['lead', 'backend', 'frontend', 'quality', 'monitor', 'advisor', ''];
-  var ROLE_LABELS = { lead: 'Lead', backend: 'Backend', frontend: 'Frontend', quality: 'Quality', monitor: 'Monitor', advisor: 'Advisor', '': 'Unassigned' };
-  var ROLE_COLORS = { lead: 'var(--accent)', backend: '#f59e0b', frontend: '#8b5cf6', quality: 'var(--green)', monitor: 'var(--red,#ef4444)', advisor: 'var(--purple,#a855f7)', '': 'var(--text-muted)' };
+  var ROLE_ORDER = ['lead', 'backend', 'frontend', 'quality', 'monitor', 'advisor', 'api-agent', ''];
+  var ROLE_LABELS = { lead: 'Lead', backend: 'Backend', frontend: 'Frontend', quality: 'Quality', monitor: 'Monitor', advisor: 'Advisor', 'api-agent': 'API Agents', '': 'Unassigned' };
+  var ROLE_COLORS = { lead: 'var(--accent)', backend: '#f59e0b', frontend: '#8b5cf6', quality: 'var(--green)', monitor: 'var(--red,#ef4444)', advisor: 'var(--purple,#a855f7)', 'api-agent': '#0ea5e9', '': 'var(--text-muted)' };
   var roleGroups = {};
   for (var g = 0; g < filtered.length; g++) {
     var gname = filtered[g];
@@ -4649,7 +5754,10 @@ function renderAgents(agents) {
       : '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>';
     var displayName = info.display_name || name;
     var roleHtml = '';
-    if (info.role) {
+    if (info.is_api_agent) {
+      var botColor = info.provider_color || '#0ea5e9';
+      roleHtml = '<span class="role-badge" style="background:' + botColor + '22;color:' + botColor + '">BOT</span>';
+    } else if (info.role) {
       var roleBg = info.role === 'quality' ? 'background:rgba(34,197,94,0.15);color:var(--green)' :
         info.role === 'monitor' ? 'background:rgba(239,68,68,0.15);color:var(--red,#ef4444)' :
         info.role === 'advisor' ? 'background:rgba(168,85,247,0.15);color:var(--purple,#a855f7)' :
@@ -4720,8 +5828,127 @@ function renderAgents(agents) {
     alertEl.style.display = 'none';
   }
 
-  // Update inject target dropdown
-  updateInjectTargets(keys);
+  // Update inject target dropdown from the visible, live branch-local agent set
+  updateInjectTargets(getEligibleInjectTargets(filtered, agents));
+}
+
+function getServiceAgentEntries() {
+  var branchName = getActiveDashboardBranchName();
+  var keys = Object.keys(cachedAgents || {}).sort();
+  var entries = [];
+  for (var i = 0; i < keys.length; i++) {
+    var name = keys[i];
+    var info = cachedAgents[name] || {};
+    if (!info.is_api_agent) continue;
+    var agentBranch = cleanString(info.branch, 'main') || 'main';
+    if (agentBranch !== branchName) continue;
+    entries.push({ name: name, info: info });
+  }
+  return entries;
+}
+
+function renderServices() {
+  var el = document.getElementById('services-area');
+  if (!el) return;
+
+  var branchName = getActiveDashboardBranchName();
+  var projectLabel = activeProject ? activeProject.split(/[/\\]/).pop() : 'default project';
+  var entries = getServiceAgentEntries();
+  var activeCount = 0;
+  var sleepingCount = 0;
+  var offlineCount = 0;
+
+  for (var i = 0; i < entries.length; i++) {
+    var state = entries[i].info.status || (entries[i].info.alive ? 'active' : 'dead');
+    if (state === 'active') activeCount++;
+    else if (state === 'sleeping') sleepingCount++;
+    else offlineCount++;
+  }
+
+  var html = '<div style="padding:20px">' +
+    '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px">' +
+      '<div>' +
+        '<div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Services</div>' +
+        '<div style="font-size:12px;color:var(--text-dim)">API-backed agents for <strong style="color:var(--text)">' + escapeHtml(projectLabel) + '</strong> on branch <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:11px;color:var(--orange)">' + escapeHtml(branchName) + '</code>.</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<span class="agent-detail-pill">Services <strong>' + entries.length + '</strong></span>' +
+        '<span class="agent-detail-pill">Active <strong>' + activeCount + '</strong></span>' +
+        '<span class="agent-detail-pill">Sleeping <strong>' + sleepingCount + '</strong></span>' +
+        '<span class="agent-detail-pill">Offline <strong>' + offlineCount + '</strong></span>' +
+      '</div>' +
+    '</div>';
+
+  if (!entries.length) {
+    html += '<div class="tasks-empty" style="padding:48px 24px">No API service agents are registered for this branch yet.<br><span style="display:block;margin-top:8px;font-size:11px">Use Launch to start one in the current project or switch branches to inspect another runtime slice.</span><button class="btn" type="button" style="margin-top:16px" onclick="switchView(\'launch\')">Open Launch</button></div>';
+    html += '</div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">';
+  for (var j = 0; j < entries.length; j++) {
+    var name = entries[j].name;
+    var info = entries[j].info;
+    var color = info.provider_color || getColor(name);
+    var state = info.status || (info.alive ? 'active' : 'dead');
+    var stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+    var displayName = info.display_name || name;
+    var capabilities = Array.isArray(info.capabilities) ? info.capabilities : [];
+    var runtimeLabel = info.runtime_type || 'api-agent';
+    var modelLabel = info.model_id || info.provider_id || info.provider || 'unknown';
+    var lastSeenLabel = info.last_activity ? timeAgo(info.last_activity) : 'No heartbeat';
+    var capHtml = '';
+    if (capabilities.length) {
+      for (var c = 0; c < capabilities.length; c++) {
+        capHtml += '<span class="agent-detail-pill">' + escapeHtml(capabilities[c].replace(/_/g, ' ')) + '</span>';
+      }
+    } else {
+      capHtml = '<span class="agent-detail-pill">No capabilities declared</span>';
+    }
+
+    html += '<div class="agent-card' + (state !== 'active' ? ' ' + state : '') + '">';
+    html +=   '<div class="agent-top" style="cursor:pointer" onclick="openAgentMetadataDrawer(\'' + name + '\')">';
+    if (info.avatar) {
+      html +=   '<img class="agent-avatar-img" src="' + escapeHtml(info.avatar) + '" alt="' + escapeHtml(name) + '" onerror="this.style.display=\'none\'">';
+    } else {
+      html +=   '<div class="agent-avatar" style="background:' + color + '">' + initial(name) + '</div>';
+    }
+    html +=     '<div class="agent-info">' +
+                  '<div class="agent-name" style="color:' + color + '">' + escapeHtml(displayName) + ' <span class="agent-badge ' + state + '">' + escapeHtml(stateLabel) + '</span></div>' +
+                  '<div class="agent-meta"><span>' + getProviderBadge(info.provider) + escapeHtml(runtimeLabel) + '</span><span style="margin-left:8px">' + escapeHtml(modelLabel) + '</span></div>' +
+                '</div>' +
+              '</div>';
+    html +=   '<div class="agent-activity"><span class="agent-activity-icon ' + state + '"></span>' + escapeHtml(lastSeenLabel) + '</div>';
+    if (info.current_status) {
+      html += '<div class="agent-status-intent" title="' + escapeHtml(info.current_status) + '">' + escapeHtml(info.current_status) + '</div>';
+    }
+    html +=   '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">' + capHtml + '</div>';
+    html +=   '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    if (state === 'active') {
+      html += '<button class="btn btn-primary" type="button" onclick="focusInjectForAgent(\'' + name + '\')">Message</button>';
+    } else {
+      html += '<button class="btn" type="button" onclick="switchView(\'launch\')">Open Launch</button>';
+    }
+    html +=     '<button class="btn" type="button" onclick="openAgentMetadataDrawer(\'' + name + '\')">Details</button>' +
+              '</div>' +
+            '</div>';
+  }
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+function fetchApiAgents() {
+  return lttFetch(scopedApiUrl('/api/agents', null, { includeBranch: false })).then(function(r) {
+    return r.json();
+  }).then(function(data) {
+    cachedAgents = data && typeof data === 'object' ? data : {};
+    renderServices();
+    refreshAgentMetadataDrawer();
+  }).catch(function(e) {
+    console.error('Fetch API agents failed:', e);
+    renderServices();
+  });
 }
 
 function sendNudge(agentName) {
@@ -4753,9 +5980,7 @@ function removeAgent(agentName) {
 // ==================== RESPAWN AGENT ====================
 
 function respawnAgent(agentName) {
-  var pq = projectParam();
-  var sep = pq ? '&' : '?';
-  lttFetch('/api/agents/' + encodeURIComponent(agentName) + '/respawn-prompt' + pq, {
+  lttFetch(scopedApiUrl('/api/agents/' + encodeURIComponent(agentName) + '/respawn-prompt'), {
     method: 'GET'
   }).then(function(r) {
     if (!r.ok) throw new Error('API returned ' + r.status);
@@ -4831,61 +6056,183 @@ function copyRespawnPrompt() {
 
 var lastAgentKeys = '';
 
+function getEligibleInjectTargets(agentNames, agents) {
+  var branchName = (typeof getActiveDashboardBranchName === 'function' ? getActiveDashboardBranchName() : (activeBranch || 'main')) || 'main';
+  var eligible = [];
+  for (var i = 0; i < agentNames.length; i++) {
+    var name = agentNames[i];
+    var info = agents[name] || {};
+    var state = info.status || (info.alive ? 'active' : 'dead');
+    var agentBranch = info.branch || 'main';
+    if (agentBranch !== branchName) continue;
+    if (state === 'dead') continue;
+    eligible.push(name);
+  }
+  return eligible;
+}
+
 function updateInjectTargets(keys) {
-  var joined = keys.join(',');
+  var sel = document.getElementById('inject-target');
+  if (!sel) return;
+
+  var normalizedKeys = [];
+  var seen = {};
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (!key || seen[key]) continue;
+    seen[key] = true;
+    normalizedKeys.push(key);
+  }
+
+  var joined = normalizedKeys.join(',');
   if (joined === lastAgentKeys) return;
   lastAgentKeys = joined;
 
-  var sel = document.getElementById('inject-target');
   var current = sel.value;
   sel.innerHTML = '<option value="">Select agent...</option>';
-  for (var i = 0; i < keys.length; i++) {
+  for (var i = 0; i < normalizedKeys.length; i++) {
     var opt = document.createElement('option');
-    opt.value = keys[i];
-    opt.textContent = keys[i];
+    opt.value = normalizedKeys[i];
+    opt.textContent = normalizedKeys[i];
     sel.appendChild(opt);
   }
   // Broadcast option
-  if (keys.length > 1) {
+  if (normalizedKeys.length > 1) {
     var allOpt = document.createElement('option');
     allOpt.value = '__all__';
     allOpt.textContent = 'All agents';
     sel.appendChild(allOpt);
   }
 
-  if (current) sel.value = current;
+  if (current === '__all__' && normalizedKeys.length > 1) sel.value = '__all__';
+  else if (normalizedKeys.indexOf(current) !== -1) sel.value = current;
+  else sel.value = '';
   updateSendBtn();
 }
+
+function buildDashboardQuery(extraParams, options) {
+  var opts = options || {};
+  var params = new URLSearchParams();
+  var includeProject = opts.includeProject !== false;
+  var includeBranch = opts.includeBranch !== false;
+  var branch = Object.prototype.hasOwnProperty.call(opts, 'branch') ? opts.branch : activeBranch;
+
+  if (includeProject && activeProject) params.set('project', activeProject);
+  if (includeBranch && branch && branch !== 'main') params.set('branch', branch);
+  if (opts.includeToken && _lttToken) params.set('token', _lttToken);
+
+  if (extraParams) {
+    for (var key in extraParams) {
+      if (!Object.prototype.hasOwnProperty.call(extraParams, key)) continue;
+      var value = extraParams[key];
+      if (value === undefined || value === null || value === '') continue;
+      params.set(key, String(value));
+    }
+  }
+
+  var query = params.toString();
+  return query ? '?' + query : '';
+}
+
+function scopedApiUrl(path, extraParams, options) {
+  return path + buildDashboardQuery(extraParams, options);
+}
+
+window.scopedApiUrl = scopedApiUrl;
 
 function updateSendBtn() {
   var target = document.getElementById('inject-target').value;
   var content = document.getElementById('inject-content').value.trim();
-  document.getElementById('inject-btn').disabled = !target || !content;
+  updateAssistantPrivateVisibility();
+  document.getElementById('inject-btn').disabled = !target || (!content && !_attachedFile);
 }
 
 document.getElementById('inject-target').addEventListener('change', updateSendBtn);
 document.getElementById('inject-content').addEventListener('input', updateSendBtn);
 
 function projectParam() {
-  return activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
+  return buildDashboardQuery(null, { includeBranch: false });
+}
+
+function isMainBranchSelected() {
+  return !activeBranch || activeBranch === 'main';
+}
+
+function mainBranchOnlyViewHtml(surface) {
+  return '<div class="tasks-empty">' + surface + ' only supports the <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--orange)">main</code> branch while canonical storage is still globally scoped.</div>';
+}
+
+function renderMainBranchOnlyView(elementId, surface) {
+  var el = document.getElementById(elementId);
+  if (el) el.innerHTML = mainBranchOnlyViewHtml(surface);
+}
+
+function updateAssistantPrivateVisibility() {
+  var row = document.getElementById('assistant-private-row');
+  var checkbox = document.getElementById('assistant-private-optin');
+  var isAssistantTarget = document.getElementById('inject-target').value === 'Assistant';
+  if (!row || !checkbox) return;
+  row.style.display = isAssistantTarget ? 'flex' : 'none';
+  if (!isAssistantTarget) checkbox.checked = false;
+}
+
+// ==================== FILE ATTACHMENT ====================
+var _attachedFile = null; // { name, mimeType, base64 }
+
+function onFileSelected(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  if (file.size > 10 * 1024 * 1024) { alert('File too large (max 10MB)'); input.value = ''; return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+    var base64 = dataUrl.split(',')[1];
+    _attachedFile = { name: file.name, mimeType: file.type, base64: base64 };
+    document.getElementById('inject-file-preview').style.display = 'block';
+    document.getElementById('inject-file-thumb').src = dataUrl;
+    document.getElementById('inject-file-name').textContent = file.name + ' (' + Math.round(file.size / 1024) + 'KB)';
+    updateSendBtn();
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearAttachment() {
+  _attachedFile = null;
+  document.getElementById('inject-file').value = '';
+  document.getElementById('inject-file-preview').style.display = 'none';
+  updateSendBtn();
 }
 
 function doInject() {
   var target = document.getElementById('inject-target').value;
   var content = document.getElementById('inject-content').value.trim();
-  if (!target || !content) return;
+  if (!target || (!content && !_attachedFile)) return;
 
-  // Lock project context at send time — prevents race if user switches project mid-type
-  var lockedProject = activeProject;
-  var pq = lockedProject ? '?project=' + encodeURIComponent(lockedProject) : '';
-  var body = JSON.stringify({ to: target, content: content });
-  lttFetch('/api/inject' + pq, {
+  // If no text but has image, default prompt
+  if (!content && _attachedFile) content = 'Analyze this image';
+
+  var payload = { to: target, content: content };
+  if (target === 'Assistant') {
+    payload.assistant_private = !!document.getElementById('assistant-private-optin').checked;
+  }
+
+  // Include attachment if present
+  if (_attachedFile) {
+    payload.attachments = [{
+      name: _attachedFile.name,
+      mimeType: _attachedFile.mimeType,
+      base64: _attachedFile.base64,
+    }];
+  }
+
+  lttFetch(scopedApiUrl('/api/inject'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: body
+    body: JSON.stringify(payload)
   }).then(function(r) { return r.json(); }).then(function(res) {
     if (res.success) {
       document.getElementById('inject-content').value = '';
+      clearAttachment();
       updateSendBtn();
       poll();
     }
@@ -5120,6 +6467,18 @@ function renderMessages(messages) {
       lastFrom = m.from;
       lastTo = m.to;
     } else {
+      // Build attachment thumbnails if present
+      var attachHtml = '';
+      if (m.attachments && m.attachments.length > 0) {
+        attachHtml = '<div style="margin:6px 0;display:flex;gap:6px;flex-wrap:wrap;">';
+        for (var ati = 0; ati < m.attachments.length; ati++) {
+          var att = m.attachments[ati];
+          if (att.base64 && att.mimeType && att.mimeType.indexOf('image') === 0) {
+            attachHtml += '<img src="data:' + att.mimeType + ';base64,' + att.base64 + '" style="max-height:120px;max-width:200px;border-radius:6px;border:1px solid var(--border);cursor:pointer;" onclick="window.open(this.src)" title="' + escapeHtml(att.name || 'image') + '">';
+          }
+        }
+        attachHtml += '</div>';
+      }
       html += '<div class="message' + newClass + groupClass + '">' +
         buildMsgActions(m.id) +
         msgAvatarHtml +
@@ -5131,6 +6490,7 @@ function renderMessages(messages) {
             '<span class="msg-time" title="' + formatTime(m.timestamp) + '">' + relativeTime(m.timestamp) + '</span>' +
             '<div class="msg-badges">' + badges + '</div>' +
           '</div>' +
+          attachHtml +
           '<div class="msg-content">' + renderMarkdown(m.content) + '</div>' +
           buildReactionsHtml(m.id) +
           buildReadReceipts(m.id) +
@@ -5220,11 +6580,9 @@ function loadMoreMessages() {
   if (msgLoadingMore) return;
   msgLoadingMore = true;
   renderMessages(cachedHistory); // Re-render to show loading state
-  var pp = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
-  var bp = activeBranch && activeBranch !== 'main' ? '&branch=' + encodeURIComponent(activeBranch) : '';
   // Calculate next page: we want older messages
   var nextPage = Math.max(1, msgTotalPages - Math.floor(cachedHistory.length / 50));
-  lttFetch('/api/history?page=' + nextPage + '&limit=50' + pp + bp).then(function(r) {
+  lttFetch(scopedApiUrl('/api/history', { page: nextPage, limit: 50 })).then(function(r) {
     return r.json();
   }).then(function(data) {
     msgLoadingMore = false;
@@ -5334,38 +6692,53 @@ function scrollToBottom() {
 
 // ==================== COMPACT MODE ====================
 
-var compactMode = localStorage.getItem('compactMode') === 'true';
+var compactMode = !!dashboardWorkspaceState.liveWorkspace.snapshot.compactMode;
 
-function initCompactMode() {
+function applyCompactMode(enabled) {
+  compactMode = !!enabled;
   var area = document.getElementById('messages');
   var btn = document.getElementById('compact-toggle');
-  if (compactMode) {
-    area.classList.add('compact-mode');
-    btn.classList.add('active');
-  }
+  if (area) area.classList.toggle('compact-mode', compactMode);
+  if (btn) btn.classList.toggle('active', compactMode);
+}
+
+function initCompactMode() {
+  applyCompactMode(compactMode);
 }
 
 function toggleCompactMode() {
-  compactMode = !compactMode;
-  localStorage.setItem('compactMode', compactMode);
-  var area = document.getElementById('messages');
-  var btn = document.getElementById('compact-toggle');
-  area.classList.toggle('compact-mode', compactMode);
-  btn.classList.toggle('active', compactMode);
+  applyCompactMode(!compactMode);
+  persistLiveDashboardLayout();
 }
 
 // ==================== CONVERSATION MANAGEMENT ====================
 
 function clearMessages() {
-  if (!confirm('Clear all messages for this project? This cannot be undone.')) return;
-  var project = document.getElementById('project-select').value;
-  lttFetch('/api/clear-messages?project=' + encodeURIComponent(project), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
+  if (!confirm('Clear all messages for the current branch? This cannot be undone.')) return;
+  lttFetch(scopedApiUrl('/api/clear-messages'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      if (data.success) {
-        document.getElementById('messages').innerHTML = '';
-        showToast('Messages cleared');
+      if (data && data.error) {
+        throw new Error(data.error);
       }
+      if (data.success) {
+        cachedHistory = [];
+        lastRenderedIds = [];
+        lastMessageCount = 0;
+        msgTotalPages = 0;
+        activeThread = null;
+        activeChannel = null;
+        renderThreads(cachedHistory);
+        renderChannelBar(cachedHistory);
+        renderMessages(cachedHistory);
+        renderPinnedMessages();
+        renderBookmarksSidebar();
+        showToast('Cleared ' + (data.cleared_messages || 0) + ' message' + ((data.cleared_messages || 0) === 1 ? '' : 's') + ' from ' + ((data.branch || 'main') === 'main' ? 'main' : data.branch));
+        poll();
+      }
+    }).catch(function(error) {
+      console.error('Clear messages failed:', error);
+      showToast('Clear messages failed: ' + error.message);
     });
 }
 
@@ -5436,8 +6809,281 @@ function showToast(msg) {
 // ==================== SEARCH ====================
 
 var searchQuery = '';
+var omniboxForcedOpen = false;
+var omniboxResults = [];
+var omniboxSelectedIndex = 0;
+var omniboxSnapshotValue = '';
+
+function isOmniboxActive() {
+  var input = document.getElementById('search-input');
+  var raw = input ? String(input.value || '') : '';
+  return !!omniboxForcedOpen || raw.trim().charAt(0) === '>';
+}
+
+function getOmniboxQuery() {
+  var input = document.getElementById('search-input');
+  var raw = input ? String(input.value || '') : '';
+  var trimmed = raw.trim();
+  if (trimmed.charAt(0) === '>') trimmed = trimmed.slice(1);
+  return trimmed.trim().toLowerCase();
+}
+
+function closeOmniboxPanel() {
+  var panel = document.getElementById('omnibox-panel');
+  if (!panel) return;
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  panel.innerHTML = '';
+  omniboxResults = [];
+  omniboxSelectedIndex = 0;
+}
+
+function syncSearchBarVisibility() {
+  var bar = document.getElementById('search-bar');
+  if (!bar) return;
+  bar.style.display = (!replayActive && (activeView === 'messages' || isOmniboxActive())) ? 'flex' : 'none';
+}
+
+function updateSearchInputMode() {
+  var input = document.getElementById('search-input');
+  if (!input) return;
+  var omniboxActive = isOmniboxActive();
+  input.classList.toggle('omnibox-active', omniboxActive);
+  if (omniboxActive) input.placeholder = 'Command palette — switch views, branches, projects, or open an agent';
+  else if (searchAllMode) input.placeholder = 'Search ALL projects...';
+  else input.placeholder = 'Search messages...  ( / )';
+  if (!omniboxActive) closeOmniboxPanel();
+}
+
+function openOmnibox(prefillQuery) {
+  if (replayActive) return;
+  var input = document.getElementById('search-input');
+  if (!input) return;
+  if (!isOmniboxActive()) omniboxSnapshotValue = input.value || '';
+  omniboxForcedOpen = true;
+  if (typeof prefillQuery === 'string') input.value = prefillQuery;
+  syncSearchBarVisibility();
+  updateSearchInputMode();
+  renderOmnibox();
+  input.focus();
+  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function closeOmnibox(options) {
+  var opts = options || {};
+  var input = document.getElementById('search-input');
+  omniboxForcedOpen = false;
+  if (input) {
+    if (opts.restoreSnapshot) input.value = omniboxSnapshotValue || '';
+    else if (!opts.preserveInput) input.value = '';
+  }
+  updateSearchInputMode();
+  if (activeView === 'messages' && !isOmniboxActive()) onSearch();
+  else searchQuery = '';
+  syncSearchBarVisibility();
+  if (!opts.keepFocus && input) input.blur();
+}
+
+function ensureLocalMessageSearchMode() {
+  if (searchAllMode) toggleSearchAll();
+}
+
+function applyOmniboxMessageSearch(query) {
+  var input = document.getElementById('search-input');
+  if (!input) return;
+  omniboxForcedOpen = false;
+  ensureLocalMessageSearchMode();
+  input.value = query;
+  updateSearchInputMode();
+  switchView('messages');
+  onSearch();
+  input.focus();
+  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function applyOmniboxDeepSearch(query) {
+  var input = document.getElementById('search-input');
+  if (!input) return;
+  omniboxForcedOpen = false;
+  ensureLocalMessageSearchMode();
+  input.value = query;
+  updateSearchInputMode();
+  switchView('messages');
+  deepSearch();
+  input.focus();
+  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function buildOmniboxCommand(kind, label, subtitle, badge, keywords, run) {
+  return {
+    kind: kind,
+    label: label,
+    subtitle: subtitle,
+    badge: badge || '',
+    keywords: keywords || '',
+    run: run,
+  };
+}
+
+function collectOmniboxCommands() {
+  var commands = [];
+  var query = getOmniboxQuery();
+  var queryLabel = query ? '“' + query + '”' : '';
+  var viewCommands = [
+    { view: 'office', label: 'Open 3D Hub', subtitle: 'Switch to the office world view', keywords: 'office 3d hub world' },
+    { view: 'messages', label: 'Open Messages', subtitle: 'Switch to the live conversation feed', keywords: 'messages inbox chat conversation' },
+    { view: 'tasks', label: 'Open Tasks', subtitle: 'Switch to the task board', keywords: 'tasks kanban board' },
+    { view: 'workspaces', label: 'Open Workspaces', subtitle: 'Switch to per-agent workspaces', keywords: 'workspaces notes storage' },
+    { view: 'workflows', label: 'Open Workflows', subtitle: 'Switch to workflow pipelines', keywords: 'workflows pipelines steps' },
+    { view: 'graph', label: 'Open Graph', subtitle: 'Switch to the operator flow graph', keywords: 'graph operator flow channels svg' },
+    { view: 'plan', label: 'Open Plan', subtitle: 'Switch to the autonomous plan view', keywords: 'plan monitor autonomous execution' },
+    { view: 'launch', label: 'Open Launch', subtitle: 'Switch to the launcher panel', keywords: 'launch terminals templates' },
+    { view: 'rules', label: 'Open Rules', subtitle: 'Switch to project rules', keywords: 'rules governance' },
+    { view: 'stats', label: 'Open Stats', subtitle: 'Switch to team statistics', keywords: 'stats analytics leaderboard' },
+    { view: 'services', label: 'Open Services', subtitle: 'Switch to API service agents', keywords: 'services api agents bots' },
+    { view: 'docs', label: 'Open Docs', subtitle: 'Switch to in-dashboard documentation', keywords: 'docs help manual' },
+  ];
+
+  if (query.length >= 2) {
+    commands.push(buildOmniboxCommand('Search', 'Search loaded messages for ' + queryLabel, 'Filter the current conversation in the Messages view', 'Enter', 'search messages filter conversation', function() {
+      applyOmniboxMessageSearch(query);
+    }));
+    commands.push(buildOmniboxCommand('Deep Search', 'Deep search history for ' + queryLabel, 'Run the existing server-side history search', 'Enter', 'deep search history full text server', function() {
+      applyOmniboxDeepSearch(query);
+    }));
+  }
+
+  for (var i = 0; i < viewCommands.length; i++) {
+    (function(command) {
+      commands.push(buildOmniboxCommand('View', command.label, command.subtitle, activeView === command.view ? 'Current' : '', command.keywords, function() {
+        closeOmnibox();
+        switchView(command.view);
+      }));
+    })(viewCommands[i]);
+  }
+
+  var projectSelect = document.getElementById('project-select');
+  if (projectSelect) {
+    for (var p = 0; p < projectSelect.options.length; p++) {
+      var option = projectSelect.options[p];
+      if (!option.value) continue;
+      (function(projectValue, projectLabel) {
+        commands.push(buildOmniboxCommand('Project', 'Switch project to ' + projectLabel, projectValue, activeProject === projectValue ? 'Current' : '', 'project workspace repo folder', function() {
+          closeOmnibox();
+          projectSelect.value = projectValue;
+          switchProject();
+        }));
+      })(option.value, option.textContent || option.value);
+    }
+  }
+
+  var branchMap = (cachedBranchInfo && typeof cachedBranchInfo === 'object') ? cachedBranchInfo : {};
+  if (!branchMap.main) branchMap.main = { message_count: 0 };
+  var branchNames = Object.keys(branchMap);
+  for (var b = 0; b < branchNames.length; b++) {
+    (function(branchName, branchInfo) {
+      commands.push(buildOmniboxCommand('Branch', 'Switch branch to ' + branchName, (branchInfo.message_count || 0) + ' messages', activeBranch === branchName ? 'Current' : '', 'branch conversation history', function() {
+        closeOmnibox();
+        switchBranch(branchName);
+      }));
+    })(branchNames[b], branchMap[branchNames[b]] || {});
+  }
+
+  var agentNames = Object.keys(cachedAgents || {}).sort();
+  for (var a = 0; a < agentNames.length; a++) {
+    (function(agentName) {
+      var agent = cachedAgents[agentName] || {};
+      var state = agent.status || (agent.alive ? 'active' : 'dead');
+      var parts = [];
+      if (agent.role) parts.push(agent.role);
+      parts.push(state);
+      if (agent.provider) parts.push(agent.provider);
+      commands.push(buildOmniboxCommand('Agent', 'Open details for ' + (agent.display_name || agentName), parts.join(' • '), state.charAt(0).toUpperCase() + state.slice(1), 'agent profile metadata drawer details ' + agentName + ' ' + (agent.display_name || '') + ' ' + (agent.role || '') + ' ' + (agent.provider || ''), function() {
+        closeOmnibox();
+        openAgentMetadataDrawer(agentName);
+      }));
+    })(agentNames[a]);
+  }
+
+  commands.push(buildOmniboxCommand('Display', currentTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', 'Use the existing dashboard theme toggle', currentTheme === 'dark' ? 'Dark' : 'Light', 'theme appearance display light dark', function() {
+    closeOmnibox();
+    toggleTheme();
+  }));
+  commands.push(buildOmniboxCommand('Display', compactMode ? 'Disable compact mode' : 'Enable compact mode', 'Use the existing compact message layout toggle', compactMode ? 'On' : 'Off', 'compact mode density messages layout', function() {
+    closeOmnibox();
+    toggleCompactMode();
+  }));
+  commands.push(buildOmniboxCommand('Refresh', 'Refresh dashboard data', 'Run the existing dashboard poll immediately', '', 'refresh reload sync poll', function() {
+    closeOmnibox();
+    poll();
+  }));
+  commands.push(buildOmniboxCommand('Help', 'Show keyboard shortcuts', 'Open the current shortcuts overlay', '', 'help shortcuts keyboard overlay', function() {
+    closeOmnibox();
+    toggleShortcutsOverlay();
+  }));
+
+  if (!query) return commands.slice(0, 14);
+
+  return commands.filter(function(command) {
+    var haystack = (command.kind + ' ' + command.label + ' ' + command.subtitle + ' ' + command.keywords).toLowerCase();
+    return haystack.indexOf(query) !== -1;
+  }).slice(0, 14);
+}
+
+function renderOmnibox() {
+  if (!isOmniboxActive()) {
+    updateSearchInputMode();
+    return;
+  }
+
+  var panel = document.getElementById('omnibox-panel');
+  if (!panel) return;
+  omniboxResults = collectOmniboxCommands();
+  if (omniboxSelectedIndex >= omniboxResults.length) omniboxSelectedIndex = omniboxResults.length ? 0 : 0;
+  if (omniboxSelectedIndex < 0) omniboxSelectedIndex = 0;
+
+  var html = '<div class="omnibox-header"><strong>Command palette</strong><span class="omnibox-hint">↑ ↓ navigate • Enter run • Esc close</span></div>';
+  if (!omniboxResults.length) {
+    html += '<div class="omnibox-empty">No matching commands yet. Try a view, project, branch, agent, or a deep-search phrase.</div>';
+  } else {
+    html += '<div class="omnibox-list">';
+    for (var i = 0; i < omniboxResults.length; i++) {
+      var result = omniboxResults[i];
+      html += '<button type="button" class="omnibox-item' + (i === omniboxSelectedIndex ? ' active' : '') + '" onclick="executeOmniboxResult(' + i + ')">' +
+        '<span class="omnibox-item-kind">' + escapeHtml(result.kind) + '</span>' +
+        '<span class="omnibox-item-main">' +
+          '<span class="omnibox-item-label">' + escapeHtml(result.label) + '</span>' +
+          '<span class="omnibox-item-sub">' + escapeHtml(result.subtitle) + '</span>' +
+        '</span>' +
+        (result.badge ? '<span class="omnibox-item-badge">' + escapeHtml(result.badge) + '</span>' : '') +
+      '</button>';
+    }
+    html += '</div>';
+  }
+  panel.innerHTML = html;
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
+function moveOmniboxSelection(delta) {
+  if (!omniboxResults.length) return;
+  omniboxSelectedIndex = (omniboxSelectedIndex + delta + omniboxResults.length) % omniboxResults.length;
+  renderOmnibox();
+}
+
+function executeOmniboxResult(index) {
+  var command = omniboxResults[index];
+  if (!command || typeof command.run !== 'function') return;
+  command.run();
+}
 
 function onSearch() {
+  updateSearchInputMode();
+  if (isOmniboxActive()) {
+    renderOmnibox();
+    return;
+  }
+  omniboxSnapshotValue = document.getElementById('search-input').value || '';
   searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
   if (searchAllMode && searchQuery.length >= 2) {
     searchAllProjects(searchQuery);
@@ -5450,10 +7096,9 @@ function onSearch() {
 function deepSearch() {
   var query = document.getElementById('search-input').value.trim();
   if (query.length < 2) return;
-  var pq = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
   var countEl = document.getElementById('search-count');
   countEl.textContent = 'Searching...';
-  lttFetch('/api/search?q=' + encodeURIComponent(query) + '&limit=100' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch(scopedApiUrl('/api/search', { q: query, limit: 100 })).then(function(r) { return r.json(); }).then(function(data) {
     if (data.error) { countEl.textContent = data.error; return; }
     countEl.textContent = data.results_count + ' deep result' + (data.results_count !== 1 ? 's' : '');
     // Convert search results to message format for renderMessages
@@ -5508,16 +7153,16 @@ var reactions = {};
 var pins = {};
 
 function loadReactions() {
-  try { var s = localStorage.getItem('ltt-reactions'); if (s) reactions = JSON.parse(s); } catch (e) {}
-  try { var p = localStorage.getItem('ltt-pins'); if (p) pins = JSON.parse(p); } catch (e) {}
+  reactions = clonePlainObject(dashboardWorkspaceState.preferences.reactions);
+  pins = clonePlainObject(dashboardWorkspaceState.preferences.pins);
 }
 
 function saveReactions() {
-  try { localStorage.setItem('ltt-reactions', JSON.stringify(reactions)); } catch (e) {}
+  persistDashboardPreferences();
 }
 
 function savePins() {
-  try { localStorage.setItem('ltt-pins', JSON.stringify(pins)); } catch (e) {}
+  persistDashboardPreferences();
 }
 
 function toggleReactPicker(msgId) {
@@ -5553,6 +7198,7 @@ function renderPinnedMessages() {
   var pinIds = Object.keys(pins);
   if (!pinIds.length) {
     section.classList.remove('visible');
+    list.innerHTML = '';
     return;
   }
   section.classList.add('visible');
@@ -5569,13 +7215,14 @@ function renderPinnedMessages() {
       '</div></div>';
   }
   list.innerHTML = html;
+  applyPinnedSectionState();
 }
 
-var pinnedExpanded = true;
+var pinnedExpanded = dashboardWorkspaceState.liveWorkspace.snapshot.pinnedExpanded !== false;
 function togglePinnedSection() {
   pinnedExpanded = !pinnedExpanded;
-  document.getElementById('pinned-list').style.display = pinnedExpanded ? '' : 'none';
-  document.getElementById('pinned-toggle').textContent = pinnedExpanded ? 'Hide' : 'Show';
+  applyPinnedSectionState();
+  persistLiveDashboardLayout();
 }
 
 function buildMsgActions(msgId) {
@@ -5702,10 +7349,22 @@ loadReactions();
 
 // ==================== THEME ====================
 
-var currentTheme = localStorage.getItem('ltt-theme') || 'dark';
+var currentTheme = dashboardWorkspaceState.liveWorkspace.snapshot.theme || 'dark';
 
-function applyTheme(theme) {
-  currentTheme = theme;
+function refreshThemeSensitiveDashboardViews() {
+  renderAgents(cachedAgents);
+  refreshAgentMetadataDrawer();
+  renderAgentStats();
+  renderThreads(cachedHistory);
+  renderPinnedMessages();
+  renderBookmarksSidebar();
+  if (!replayActive) renderMessages(cachedHistory);
+  if (activeView === 'graph') renderGraphView();
+}
+
+function applyTheme(theme, options) {
+  var opts = options || {};
+  currentTheme = theme === 'light' ? 'light' : 'dark';
   if (theme === 'light') {
     document.documentElement.setAttribute('data-theme', 'light');
     document.getElementById('theme-toggle').innerHTML = '&#x2600;&#xfe0f;';
@@ -5713,25 +7372,55 @@ function applyTheme(theme) {
     document.documentElement.removeAttribute('data-theme');
     document.getElementById('theme-toggle').innerHTML = '&#x1f319;';
   }
-  localStorage.setItem('ltt-theme', theme);
+  if (!opts.skipRefresh) refreshThemeSensitiveDashboardViews();
+  if (!opts.skipPersist) persistLiveDashboardLayout();
 }
 
 function toggleTheme() {
   applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
-applyTheme(currentTheme);
+applyTheme(currentTheme, { skipPersist: true, skipRefresh: true });
 
 // ==================== KEYBOARD SHORTCUTS ====================
+
+document.getElementById('search-input').addEventListener('focus', function() {
+  if (isOmniboxActive()) renderOmnibox();
+});
+
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+  if (!isOmniboxActive()) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    moveOmniboxSelection(1);
+    return;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    moveOmniboxSelection(-1);
+    return;
+  }
+  if ((e.key === 'Enter' || e.key === 'Tab') && omniboxResults.length) {
+    e.preventDefault();
+    executeOmniboxResult(omniboxSelectedIndex);
+  }
+});
 
 document.addEventListener('keydown', function(e) {
   // Don't intercept when typing in inputs
   var tag = document.activeElement.tagName;
   var inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  var isPaletteShortcut = (e.ctrlKey || e.metaKey) && !e.shiftKey && String(e.key || '').toLowerCase() === 'k';
 
   // Escape — exit replay or clear search/filters
   if (e.key === 'Escape') {
     if (replayActive) { exitReplay(); return; }
+    if (isAgentMetadataDrawerOpen()) { closeAgentMetadataDrawer(); return; }
+    if (isOmniboxActive()) {
+      e.preventDefault();
+      closeOmnibox({ restoreSnapshot: activeView === 'messages' });
+      return;
+    }
     document.getElementById('search-input').value = '';
     searchQuery = '';
     bookmarkFilter = false;
@@ -5744,11 +7433,18 @@ document.addEventListener('keydown', function(e) {
     return;
   }
 
+  if (isPaletteShortcut) {
+    e.preventDefault();
+    openOmnibox('');
+    return;
+  }
+
   if (inInput) return;
 
-  // / or Ctrl+K — focus search
-  if (e.key === '/' || (e.ctrlKey && e.key === 'k')) {
+  // / — focus search
+  if (e.key === '/') {
     e.preventDefault();
+    if (activeView !== 'messages') switchView('messages');
     document.getElementById('search-input').focus();
     return;
   }
@@ -5786,7 +7482,9 @@ function toggleShortcutsOverlay() {
     '<h3 style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">Keyboard Shortcuts</h3>' +
     '<div style="display:grid;grid-template-columns:80px 1fr;gap:8px 16px;font-size:13px">' +
     '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">?</kbd><span>Show this help</span>' +
-    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">/</kbd><span>Focus search</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">/</kbd><span>Focus message search</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">Ctrl/⌘ K</kbd><span>Open command palette</span>' +
+    '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">&gt;</kbd><span>Use command mode inside search</span>' +
     '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">Esc</kbd><span>Clear search / exit</span>' +
     '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">1</kbd><span>3D Hub</span>' +
     '<kbd style="background:var(--surface-2);padding:2px 8px;border-radius:4px;text-align:center;font-family:monospace">2</kbd><span>Messages</span>' +
@@ -5940,14 +7638,11 @@ var bookmarks = {};
 var bookmarkFilter = false;
 
 function loadBookmarks() {
-  try {
-    var stored = localStorage.getItem('ltt-bookmarks');
-    if (stored) bookmarks = JSON.parse(stored);
-  } catch (e) {}
+  bookmarks = clonePlainObject(dashboardWorkspaceState.preferences.bookmarks);
 }
 
 function saveBookmarks() {
-  try { localStorage.setItem('ltt-bookmarks', JSON.stringify(bookmarks)); } catch (e) {}
+  persistDashboardPreferences();
 }
 
 function toggleBookmark(msgId) {
@@ -6031,47 +7726,53 @@ function exportConversation() {
 
 function exportJSON() {
   if (!cachedHistory.length) return;
-  var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
   var a = document.createElement('a');
-  a.href = '/api/export-json' + pq;
+  a.href = scopedApiUrl('/api/export-json', null, { includeToken: true });
   a.download = 'conversation-' + new Date().toISOString().slice(0, 10) + '-full.json';
   a.click();
 }
 
 // ==================== VIEW SWITCHING ====================
 
-var activeView = 'office';
+var activeView = dashboardWorkspaceState.liveWorkspace.snapshot.view || 'office';
 
-function switchView(view) {
+function switchView(view, options) {
+  var opts = options || {};
   activeView = view;
   document.getElementById('tab-messages').classList.toggle('active', view === 'messages');
   document.getElementById('tab-tasks').classList.toggle('active', view === 'tasks');
   document.getElementById('tab-workspaces').classList.toggle('active', view === 'workspaces');
   document.getElementById('tab-workflows').classList.toggle('active', view === 'workflows');
+  document.getElementById('tab-graph').classList.toggle('active', view === 'graph');
   document.getElementById('tab-plan').classList.toggle('active', view === 'plan');
   document.getElementById('tab-office').classList.toggle('active', view === 'office');
   document.getElementById('tab-launch').classList.toggle('active', view === 'launch');
   document.getElementById('tab-rules').classList.toggle('active', view === 'rules');
   document.getElementById('tab-stats').classList.toggle('active', view === 'stats');
+  document.getElementById('tab-services').classList.toggle('active', view === 'services');
   document.getElementById('tab-docs').classList.toggle('active', view === 'docs');
   document.getElementById('messages').style.display = view === 'messages' ? 'flex' : 'none';
   document.getElementById('tasks-area').classList.toggle('visible', view === 'tasks');
   document.getElementById('workspaces-area').classList.toggle('visible', view === 'workspaces');
   document.getElementById('workflows-area').classList.toggle('visible', view === 'workflows');
+  document.getElementById('graph-area').classList.toggle('visible', view === 'graph');
   document.getElementById('plan-area').classList.toggle('visible', view === 'plan');
   document.getElementById('monitor-panel').style.display = view === 'plan' ? 'block' : 'none';
   document.getElementById('office-area').classList.toggle('visible', view === 'office');
   document.getElementById('launch-area').classList.toggle('visible', view === 'launch');
   document.getElementById('rules-area').classList.toggle('visible', view === 'rules');
   document.getElementById('stats-area').classList.toggle('visible', view === 'stats');
+  document.getElementById('services-area').classList.toggle('visible', view === 'services');
   document.getElementById('docs-area').classList.toggle('visible', view === 'docs');
-  document.getElementById('search-bar').style.display = view === 'messages' ? 'flex' : 'none';
+  syncSearchBarVisibility();
   document.getElementById('channel-filter-bar').style.display = view === 'messages' && activeChannel !== undefined ? '' : 'none';
   if (view === 'messages') renderChannelBar(cachedHistory);
   if (view === 'tasks') fetchTasks();
   if (view === 'workspaces') fetchWorkspaces();
   if (view === 'workflows') fetchWorkflows();
+  if (view === 'graph') { renderGraphView(); ensureGraphWorkflowData(); }
   if (view === 'plan') { fetchPlanStatus(); fetchMonitorHealth(); }
+  if (view === 'services') renderServices();
   if (view === 'docs') renderDocs();
   if (view === 'office') {
     if (window.office3dStart) {
@@ -6103,6 +7804,7 @@ function switchView(view) {
   }
   // Auto-close sidebar on mobile after view switch
   if (isMobile) closeSidebar();
+  if (!opts.skipPersist) persistLiveDashboardLayout();
 }
 
 // ==================== TASKS ====================
@@ -6110,9 +7812,13 @@ function switchView(view) {
 var cachedTasks = [];
 
 function fetchTasks() {
-  var pq = projectParam();
   document.getElementById('tasks-area').innerHTML = '<div class="loading-spinner">Loading tasks...</div>';
-  lttFetch('/api/tasks' + pq).then(function(r) { return r.json(); }).then(function(tasks) {
+  lttFetch(scopedApiUrl('/api/tasks')).then(function(r) { return r.json(); }).then(function(tasks) {
+    if (tasks && tasks.error) {
+      cachedTasks = [];
+      document.getElementById('tasks-area').innerHTML = '<div class="tasks-empty">' + escapeHtml(tasks.error) + '</div>';
+      return;
+    }
     cachedTasks = Array.isArray(tasks) ? tasks : [];
     renderTasks();
   }).catch(function() {
@@ -6216,11 +7922,16 @@ function buildTaskCard(t) {
 }
 
 function updateTaskStatus(taskId, newStatus) {
-  lttFetch('/api/tasks' + projectParam(), {
+  lttFetch(scopedApiUrl('/api/tasks'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId, status: newStatus })
-  }).then(function(r) { return r.json(); }).then(function() {
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data && data.error) {
+      showToast('Task update failed: ' + data.error);
+      fetchTasks();
+      return;
+    }
     fetchTasks();
   }).catch(function(e) { console.error('Task update failed:', e); });
 }
@@ -6576,8 +8287,7 @@ document.addEventListener('click', function(e) {
 
 function exportShareableHTML() {
   if (!cachedHistory.length) return;
-  var pp = projectParam();
-  window.open('/api/export' + pp, '_blank');
+  window.open(scopedApiUrl('/api/export', null, { includeToken: true }), '_blank');
 }
 
 // ==================== AUTO-GROW TEXTAREA ====================
@@ -6826,6 +8536,7 @@ function openProfileEditor() {
   if (!editingAgent || !agent) return;
 
   document.getElementById('profile-popup').classList.remove('open');
+  if (isAgentMetadataDrawerOpen()) closeAgentMetadataDrawer();
 
   // Populate basic fields
   document.getElementById('pe-display-name').value = agent.display_name || editingAgent;
@@ -6984,6 +8695,228 @@ function saveProfile() {
   }).catch(function(e) { console.error('Save profile failed:', e); });
 }
 
+// ==================== AGENT METADATA DRAWER ====================
+
+var activeAgentDrawer = '';
+
+function isAgentMetadataDrawerOpen() {
+  var drawer = document.getElementById('agent-drawer');
+  return !!(drawer && drawer.classList.contains('open'));
+}
+
+function formatAgentDrawerValue(value) {
+  if (value === null || value === undefined || value === '') return '<span class="agent-detail-empty">—</span>';
+  return escapeHtml(String(value));
+}
+
+function formatAgentDrawerTimestamp(timestamp) {
+  if (!timestamp) return '<span class="agent-detail-empty">—</span>';
+  return escapeHtml(timeAgo(timestamp) + ' • ' + new Date(timestamp).toLocaleString());
+}
+
+function formatAgentDrawerIdle(seconds) {
+  if (seconds === null || seconds === undefined || seconds === '') return '<span class="agent-detail-empty">—</span>';
+  var total = Math.max(0, parseInt(seconds, 10) || 0);
+  if (total < 60) return escapeHtml(total + 's');
+  var mins = Math.floor(total / 60);
+  var secs = total % 60;
+  if (mins < 60) return escapeHtml(mins + 'm ' + secs + 's');
+  var hours = Math.floor(mins / 60);
+  return escapeHtml(hours + 'h ' + (mins % 60) + 'm');
+}
+
+function buildAgentDetailCard(label, valueHtml, muted) {
+  return '<div class="agent-detail-card">' +
+    '<div class="agent-detail-label">' + escapeHtml(label) + '</div>' +
+    '<div class="agent-detail-value' + (muted ? ' muted' : '') + '">' + valueHtml + '</div>' +
+  '</div>';
+}
+
+function buildAgentMetadataSummary(agentName) {
+  var summary = {
+    sent: 0,
+    received: 0,
+    handoffsOut: 0,
+    handoffsIn: 0,
+    threads: {},
+    channels: {},
+    lastSent: null,
+    lastReceived: null,
+  };
+
+  for (var i = 0; i < cachedHistory.length; i++) {
+    var message = cachedHistory[i];
+    if (message.from === agentName) {
+      summary.sent++;
+      if (message.type === 'handoff') summary.handoffsOut++;
+      if (message.thread_id) summary.threads[message.thread_id] = true;
+      summary.channels[message.channel || 'general'] = true;
+      summary.lastSent = message;
+    }
+    if (message.to === agentName) {
+      summary.received++;
+      if (message.type === 'handoff') summary.handoffsIn++;
+      if (message.thread_id) summary.threads[message.thread_id] = true;
+      summary.channels[message.channel || 'general'] = true;
+      summary.lastReceived = message;
+    }
+  }
+
+  return summary;
+}
+
+function openAgentMetadataDrawerFromPopup() {
+  if (!editingAgent) return;
+  openAgentMetadataDrawer(editingAgent);
+}
+
+function focusInjectForAgent(agentName) {
+  closeAgentMetadataDrawer();
+  switchView('messages');
+  var target = document.getElementById('inject-target');
+  var content = document.getElementById('inject-content');
+  if (target) target.value = agentName;
+  updateSendBtn();
+  if (content) content.focus();
+}
+
+function renderAgentMetadataDrawer() {
+  var agent = cachedAgents[activeAgentDrawer];
+  var body = document.getElementById('agent-drawer-body');
+  var title = document.getElementById('agent-drawer-title');
+  var subtitle = document.getElementById('agent-drawer-subtitle');
+  var avatar = document.getElementById('agent-drawer-avatar');
+  var avatarImg = document.getElementById('agent-drawer-avatar-img');
+  if (!body || !title || !subtitle || !avatar || !avatarImg) return;
+
+  if (!activeAgentDrawer || !agent) {
+    title.textContent = 'Agent details unavailable';
+    subtitle.textContent = '';
+    avatar.style.display = 'flex';
+    avatarImg.style.display = 'none';
+    avatar.textContent = '?';
+    avatar.style.background = 'var(--surface-3)';
+    body.innerHTML = '<div class="agent-detail-note"><div class="agent-detail-note-label">Unavailable</div><div class="agent-detail-note-value">This agent is not currently present in the cached dashboard data.</div></div>';
+    return;
+  }
+
+  var color = getColor(activeAgentDrawer);
+  var displayName = agent.display_name || activeAgentDrawer;
+  var state = agent.status || (agent.alive ? 'active' : 'dead');
+  var stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+  var listeningLabel = state === 'dead' ? 'Offline' : (agent.is_listening ? 'Listening' : 'Busy');
+  var hasContract = !!(agent.has_explicit_contract || agent.archetype || (agent.skills && agent.skills.length) || (agent.contract && agent.contract.archetype) || (agent.contract_mode && agent.contract_mode !== 'advisory'));
+  var summary = buildAgentMetadataSummary(activeAgentDrawer);
+  var channelNames = Object.keys(summary.channels).sort();
+  var channelSummary = channelNames.length ? channelNames.join(', ') : '—';
+
+  title.textContent = displayName;
+  title.style.color = color;
+  subtitle.textContent = '@' + activeAgentDrawer + ' • ' + (agent.provider || 'unknown') + ' • branch ' + (agent.branch || 'main');
+
+  if (agent.avatar && (agent.avatar.startsWith('data:image/') || agent.avatar.startsWith('/'))) {
+    avatarImg.setAttribute('src', agent.avatar);
+    avatarImg.style.display = '';
+    avatar.style.display = 'none';
+  } else {
+    avatarImg.style.display = 'none';
+    avatar.style.display = 'flex';
+    avatar.textContent = initial(activeAgentDrawer);
+    avatar.style.background = color;
+  }
+
+  var html = '';
+  html += '<div class="agent-drawer-status-row">';
+  html += '<span class="agent-detail-pill"><strong>' + escapeHtml(stateLabel) + '</strong></span>';
+  html += '<span class="agent-detail-pill">Listening <strong>' + escapeHtml(listeningLabel) + '</strong></span>';
+  if (agent.role) html += '<span class="agent-detail-pill">Role <strong>' + escapeHtml(agent.role) + '</strong></span>';
+  if (hasContract && agent.contract && agent.contract.archetype) html += '<span class="agent-detail-pill">Archetype <strong>' + escapeHtml(agent.contract.archetype) + '</strong></span>';
+  if (hasContract) html += '<span class="agent-detail-pill">Contract <strong>' + escapeHtml(agent.contract_mode || 'advisory') + '</strong></span>';
+  html += '<span class="agent-detail-pill">Branch <strong>' + escapeHtml(agent.branch || 'main') + '</strong></span>';
+  html += '</div>';
+
+  if (agent.current_status) {
+    html += '<div class="agent-detail-note">' +
+      '<div class="agent-detail-note-label">Current status</div>' +
+      '<div class="agent-detail-note-value">' + escapeHtml(agent.current_status) + '</div>' +
+    '</div>';
+  }
+
+  if (agent.bio) {
+    html += '<div class="agent-detail-note">' +
+      '<div class="agent-detail-note-label">Bio</div>' +
+      '<div class="agent-detail-note-value">' + escapeHtml(agent.bio) + '</div>' +
+    '</div>';
+  }
+
+  html += '<div class="agent-drawer-section">';
+  html += '<div class="agent-drawer-section-title">Runtime</div>';
+  html += '<div class="agent-detail-grid">';
+  html += buildAgentDetailCard('Provider', formatAgentDrawerValue(agent.provider || 'unknown'));
+  html += buildAgentDetailCard('PID', formatAgentDrawerValue(agent.pid));
+  html += buildAgentDetailCard('Status', formatAgentDrawerValue(stateLabel));
+  html += buildAgentDetailCard('Idle', formatAgentDrawerIdle(agent.idle_seconds));
+  html += buildAgentDetailCard('Registered', formatAgentDrawerTimestamp(agent.registered_at), true);
+  html += buildAgentDetailCard('Last heartbeat', formatAgentDrawerTimestamp(agent.last_activity), true);
+  html += buildAgentDetailCard('Last message', formatAgentDrawerTimestamp(agent.last_message), true);
+  html += buildAgentDetailCard('Role', formatAgentDrawerValue(agent.role), true);
+  if (hasContract) html += buildAgentDetailCard('Archetype', formatAgentDrawerValue(agent.archetype || (agent.contract && agent.contract.archetype)), true);
+  if (hasContract) html += buildAgentDetailCard('Contract mode', formatAgentDrawerValue(agent.contract_mode || 'advisory'), true);
+  if (hasContract) html += buildAgentDetailCard('Skills', formatAgentDrawerValue((agent.skills || []).join(', ')), true);
+  if (hasContract) html += buildAgentDetailCard('Effective skills', formatAgentDrawerValue(agent.contract && agent.contract.effective_skills ? agent.contract.effective_skills.join(', ') : ''), true);
+  if (hasContract) html += buildAgentDetailCard('Role alignment', formatAgentDrawerValue(agent.contract && agent.contract.role_alignment ? String(agent.contract.role_alignment).replace(/_/g, ' ') : ''), true);
+  html += '</div>';
+  html += '</div>';
+
+  html += '<div class="agent-drawer-section">';
+  html += '<div class="agent-drawer-section-title">Conversation</div>';
+  html += '<div class="agent-detail-grid">';
+  html += buildAgentDetailCard('Sent', formatAgentDrawerValue(summary.sent));
+  html += buildAgentDetailCard('Received', formatAgentDrawerValue(summary.received));
+  html += buildAgentDetailCard('Handoffs out', formatAgentDrawerValue(summary.handoffsOut));
+  html += buildAgentDetailCard('Handoffs in', formatAgentDrawerValue(summary.handoffsIn));
+  html += buildAgentDetailCard('Threads', formatAgentDrawerValue(Object.keys(summary.threads).length));
+  html += buildAgentDetailCard('Channels', formatAgentDrawerValue(channelSummary), true);
+  html += buildAgentDetailCard('Last sent', formatAgentDrawerTimestamp(summary.lastSent && summary.lastSent.timestamp), true);
+  html += buildAgentDetailCard('Last received', formatAgentDrawerTimestamp(summary.lastReceived && summary.lastReceived.timestamp), true);
+  html += '</div>';
+  html += '</div>';
+
+  html += '<div class="agent-drawer-actions">';
+  html += '<button class="btn btn-primary" type="button" onclick="focusInjectForAgent(\'' + escapeHtml(activeAgentDrawer) + '\')">Message Agent</button>';
+  html += '<button class="btn" type="button" onclick="openProfileEditor()">Edit Profile</button>';
+  html += '</div>';
+
+  body.innerHTML = html;
+}
+
+function openAgentMetadataDrawer(agentName) {
+  if (!agentName) return;
+  editingAgent = agentName;
+  activeAgentDrawer = agentName;
+  document.getElementById('profile-popup').classList.remove('open');
+  renderAgentMetadataDrawer();
+  document.getElementById('agent-drawer-backdrop').classList.add('open');
+  document.getElementById('agent-drawer').classList.add('open');
+  document.getElementById('agent-drawer').setAttribute('aria-hidden', 'false');
+}
+
+function closeAgentMetadataDrawer() {
+  activeAgentDrawer = '';
+  document.getElementById('agent-drawer-backdrop').classList.remove('open');
+  document.getElementById('agent-drawer').classList.remove('open');
+  document.getElementById('agent-drawer').setAttribute('aria-hidden', 'true');
+}
+
+function refreshAgentMetadataDrawer() {
+  if (!isAgentMetadataDrawerOpen()) return;
+  if (!activeAgentDrawer || !cachedAgents[activeAgentDrawer]) {
+    closeAgentMetadataDrawer();
+    return;
+  }
+  renderAgentMetadataDrawer();
+}
+
 // ==================== v3.0: WORKSPACES ====================
 
 function fetchWorkspaces() {
@@ -7034,15 +8967,26 @@ function renderWorkspaces(data) {
 // ==================== v3.0: WORKFLOWS ====================
 
 function fetchWorkflows() {
-  var pq = projectParam();
+  if (!isMainBranchSelected()) {
+    renderMainBranchOnlyView('workflows-area', 'Workflows');
+    return;
+  }
   document.getElementById('workflows-area').innerHTML = '<div class="loading-spinner">Loading workflows...</div>';
-  lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  lttFetch(scopedApiUrl('/api/workflows')).then(function(r) { return r.json(); }).then(function(data) {
+    if (data && data.code === 'main_branch_only') {
+      renderMainBranchOnlyView('workflows-area', 'Workflows');
+      return;
+    }
     renderWorkflows(Array.isArray(data) ? data : []);
   }).catch(function() {});
 }
 
 function renderWorkflows(workflows) {
   var el = document.getElementById('workflows-area');
+  if (!isMainBranchSelected()) {
+    el.innerHTML = mainBranchOnlyViewHtml('Workflows');
+    return;
+  }
   if (!workflows.length) {
     el.innerHTML = '<div class="tasks-empty">No workflows yet. Agents create workflows with <code style="background:var(--surface-2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--orange)">create_workflow(name, steps)</code></div>';
     return;
@@ -7106,11 +9050,661 @@ function renderWorkflows(workflows) {
 }
 
 function dashAdvanceWorkflow(wfId) {
-  lttFetch('/api/workflows' + projectParam(), {
+  if (!isMainBranchSelected()) {
+    showToast('Workflows only support the main branch right now.');
+    return;
+  }
+  lttFetch(scopedApiUrl('/api/workflows'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'advance', workflow_id: wfId })
   }).then(function() { fetchWorkflows(); }).catch(function() {});
+}
+
+// ==================== TASK 8C: GRAPH VIEW ====================
+
+var graphWorkflowState = {
+  cacheKey: '',
+  status: 'idle',
+  data: [],
+  error: '',
+  lastFetchedAt: 0,
+};
+
+var GRAPH_CHANNEL_PALETTE = [
+  { accent: 'var(--accent)', dim: 'var(--accent-dim)' },
+  { accent: 'var(--purple)', dim: 'var(--purple-dim)' },
+  { accent: 'var(--green)', dim: 'var(--green-dim)' },
+  { accent: 'var(--orange)', dim: 'var(--orange-dim)' },
+  { accent: 'var(--red)', dim: 'var(--red-dim)' },
+];
+
+function getGraphWorkflowCacheKey() {
+  return (activeProject || '__default__') + '::main';
+}
+
+function shouldRefreshGraphWorkflowData() {
+  if (graphWorkflowState.cacheKey !== getGraphWorkflowCacheKey()) return true;
+  if (graphWorkflowState.status === 'idle') return true;
+  return (Date.now() - graphWorkflowState.lastFetchedAt) > 15000;
+}
+
+function ensureGraphWorkflowData(options) {
+  var opts = options || {};
+  if (!opts.force && !shouldRefreshGraphWorkflowData()) return;
+  if (graphWorkflowState.status === 'loading') return;
+  fetchGraphWorkflowData();
+}
+
+function normalizeGraphWorkflowList(rawWorkflows) {
+  if (!Array.isArray(rawWorkflows)) return [];
+  var workflows = [];
+  for (var i = 0; i < rawWorkflows.length; i++) {
+    var workflow = rawWorkflows[i];
+    if (!workflow || typeof workflow !== 'object' || !Array.isArray(workflow.steps)) continue;
+    var steps = [];
+    for (var j = 0; j < workflow.steps.length; j++) {
+      var step = workflow.steps[j];
+      if (!step || typeof step !== 'object') continue;
+      steps.push({
+        id: step.id,
+        description: cleanString(step.description, 'Step ' + (j + 1)),
+        status: cleanString(step.status, 'pending') || 'pending',
+        assignee: cleanString(step.assignee, ''),
+      });
+    }
+    workflows.push({
+      id: cleanString(workflow.id, 'workflow-' + (i + 1)),
+      name: cleanString(workflow.name, 'Workflow ' + (i + 1)),
+      status: cleanString(workflow.status, 'active') || 'active',
+      steps: steps,
+      autonomous: !!workflow.autonomous,
+      parallel: !!workflow.parallel,
+    });
+  }
+  return workflows;
+}
+
+function fetchGraphWorkflowData() {
+  var requestCacheKey = getGraphWorkflowCacheKey();
+  var requestUrl = scopedApiUrl('/api/workflows', null, { branch: 'main' });
+  graphWorkflowState.status = 'loading';
+  graphWorkflowState.cacheKey = requestCacheKey;
+  graphWorkflowState.error = '';
+  graphWorkflowState.lastFetchedAt = Date.now();
+  if (activeView === 'graph') renderGraphView();
+  lttFetch(requestUrl).then(function(r) { return r.json(); }).then(function(data) {
+    if (requestCacheKey !== getGraphWorkflowCacheKey()) {
+      graphWorkflowState.status = 'idle';
+      if (activeView === 'graph') ensureGraphWorkflowData({ force: true });
+      return;
+    }
+    graphWorkflowState.cacheKey = requestCacheKey;
+    graphWorkflowState.status = 'ready';
+    graphWorkflowState.data = normalizeGraphWorkflowList(Array.isArray(data) ? data : []);
+    graphWorkflowState.error = '';
+    graphWorkflowState.lastFetchedAt = Date.now();
+    if (activeView === 'graph') renderGraphView();
+  }).catch(function(error) {
+    if (requestCacheKey !== getGraphWorkflowCacheKey()) {
+      graphWorkflowState.status = 'idle';
+      if (activeView === 'graph') ensureGraphWorkflowData({ force: true });
+      return;
+    }
+    graphWorkflowState.cacheKey = requestCacheKey;
+    graphWorkflowState.status = 'error';
+    graphWorkflowState.data = [];
+    graphWorkflowState.error = error && error.message ? error.message : 'Workflow data unavailable';
+    graphWorkflowState.lastFetchedAt = Date.now();
+    if (activeView === 'graph') renderGraphView();
+  });
+}
+
+function normalizeGraphEndpoint(name) {
+  var raw = cleanString(name, '').trim();
+  if (!raw) return null;
+  var lower = raw.toLowerCase();
+  if (lower === '__all__' || lower === '__group__' || lower === 'all' || lower === '*' || lower === 'broadcast') {
+    return { key: '__broadcast__', label: 'Broadcast', synthetic: true };
+  }
+  if (lower === 'system' || lower === 'dashboard' || lower === 'server') {
+    return { key: '__system__', label: raw.charAt(0).toUpperCase() + raw.slice(1), synthetic: true };
+  }
+  return { key: raw, label: raw, synthetic: false };
+}
+
+function ensureGraphNode(nodeMap, endpoint, agentsSource, branchName) {
+  if (!endpoint) return null;
+  if (!nodeMap[endpoint.key]) {
+    var agent = !endpoint.synthetic && agentsSource && agentsSource[endpoint.key] ? agentsSource[endpoint.key] : null;
+    var agentStatus = agent && cleanString(agent.status, '') ? cleanString(agent.status, '') : (agent && agent.alive ? 'active' : 'unknown');
+    nodeMap[endpoint.key] = {
+      key: endpoint.key,
+      label: agent && cleanString(agent.display_name, '').trim() ? cleanString(agent.display_name, '').trim() : endpoint.label,
+      agentName: endpoint.synthetic ? '' : endpoint.key,
+      synthetic: !!endpoint.synthetic,
+      color: endpoint.synthetic ? 'var(--surface-3)' : getColor(endpoint.key),
+      status: endpoint.synthetic ? 'synthetic' : (agentStatus || 'unknown'),
+      provider: agent ? cleanString(agent.provider, '') : '',
+      role: agent ? cleanString(agent.role, '') : '',
+      branch: agent ? (cleanString(agent.branch, 'main') || 'main') : branchName,
+      sendCount: 0,
+      receiveCount: 0,
+      channelCounts: {},
+      neighbors: {},
+      x: 0,
+      y: 0,
+      laneKey: '',
+      dominantChannel: '',
+    };
+  }
+  return nodeMap[endpoint.key];
+}
+
+function getGraphDominantChannel(channelCounts) {
+  var keys = Object.keys(channelCounts || {});
+  if (!keys.length) return '';
+  keys.sort(function(a, b) {
+    return (channelCounts[b] || 0) - (channelCounts[a] || 0) || a.localeCompare(b);
+  });
+  return keys[0] || '';
+}
+
+function getGraphLanePalette(index) {
+  return GRAPH_CHANNEL_PALETTE[index % GRAPH_CHANNEL_PALETTE.length];
+}
+
+function getGraphStatusColor(status) {
+  if (status === 'active') return 'var(--green)';
+  if (status === 'sleeping' || status === 'idle') return 'var(--orange)';
+  if (status === 'dead') return 'var(--red)';
+  if (status === 'synthetic') return 'var(--border-light)';
+  return 'var(--text-muted)';
+}
+
+function truncateGraphText(text, maxLength) {
+  var value = cleanString(text, '');
+  if (value.length <= maxLength) return value;
+  return value.slice(0, Math.max(1, maxLength - 1)) + '…';
+}
+
+function buildGraphModel() {
+  var branchName = getActiveDashboardBranchName();
+  var agentsSource = cachedAgents && typeof cachedAgents === 'object' ? cachedAgents : {};
+  var historySource = Array.isArray(cachedHistory) ? cachedHistory : [];
+  var nodeMap = {};
+  var edgeMap = {};
+  var channelMap = {};
+  var agentNames = Object.keys(agentsSource || {});
+
+  for (var a = 0; a < agentNames.length; a++) {
+    var agentName = agentNames[a];
+    var agent = agentsSource[agentName];
+    var agentBranch = agent ? (cleanString(agent.branch, 'main') || 'main') : 'main';
+    if (agentBranch !== branchName) continue;
+    ensureGraphNode(nodeMap, { key: agentName, label: agentName, synthetic: false }, agentsSource, branchName);
+  }
+
+  for (var i = 0; i < historySource.length; i++) {
+    var message = historySource[i];
+    if (!message || typeof message !== 'object') continue;
+    var fromEndpoint = normalizeGraphEndpoint(message.from);
+    var toEndpoint = normalizeGraphEndpoint(message.to);
+    if (!fromEndpoint || !toEndpoint) continue;
+    var fromNode = ensureGraphNode(nodeMap, fromEndpoint, agentsSource, branchName);
+    var toNode = ensureGraphNode(nodeMap, toEndpoint, agentsSource, branchName);
+    if (!fromNode || !toNode) continue;
+
+    var channelName = cleanString(message.channel, '').trim() || 'general';
+    if (!channelMap[channelName]) {
+      channelMap[channelName] = {
+        name: channelName,
+        count: 0,
+        participants: {},
+      };
+    }
+    channelMap[channelName].count += 1;
+    channelMap[channelName].participants[fromNode.key] = true;
+    channelMap[channelName].participants[toNode.key] = true;
+
+    fromNode.sendCount += 1;
+    toNode.receiveCount += 1;
+    fromNode.channelCounts[channelName] = (fromNode.channelCounts[channelName] || 0) + 1;
+    toNode.channelCounts[channelName] = (toNode.channelCounts[channelName] || 0) + 1;
+    fromNode.neighbors[toNode.key] = true;
+    toNode.neighbors[fromNode.key] = true;
+
+    if (fromNode.key === toNode.key) continue;
+    var edgeKey = fromNode.key + '→' + toNode.key;
+    if (!edgeMap[edgeKey]) {
+      edgeMap[edgeKey] = {
+        key: edgeKey,
+        from: fromNode.key,
+        to: toNode.key,
+        count: 0,
+        handoffs: 0,
+        channelCounts: {},
+        lastTimestamp: '',
+      };
+    }
+    edgeMap[edgeKey].count += 1;
+    if (message.type === 'handoff') edgeMap[edgeKey].handoffs += 1;
+    edgeMap[edgeKey].channelCounts[channelName] = (edgeMap[edgeKey].channelCounts[channelName] || 0) + 1;
+    if (message.timestamp) edgeMap[edgeKey].lastTimestamp = message.timestamp;
+  }
+
+  var channels = [];
+  var channelKeys = Object.keys(channelMap);
+  for (var c = 0; c < channelKeys.length; c++) {
+    var key = channelKeys[c];
+    channels.push({
+      name: key,
+      count: channelMap[key].count,
+      participantCount: Object.keys(channelMap[key].participants).length,
+    });
+  }
+  channels.sort(function(a, b) {
+    return b.count - a.count || a.name.localeCompare(b.name);
+  });
+
+  var displayedChannels = channels.slice(0, 5);
+  var displayedChannelNames = {};
+  var lanes = [];
+  var laneLookup = {};
+
+  for (var dc = 0; dc < displayedChannels.length; dc++) {
+    var channel = displayedChannels[dc];
+    var palette = getGraphLanePalette(dc);
+    var laneKey = 'channel:' + channel.name;
+    displayedChannelNames[channel.name] = true;
+    laneLookup[laneKey] = {
+      key: laneKey,
+      label: '#' + channel.name,
+      type: 'channel',
+      accent: palette.accent,
+      dim: palette.dim,
+      count: channel.count,
+      participantCount: channel.participantCount,
+      nodes: [],
+      y: 0,
+      height: 0,
+      cy: 0,
+    };
+    lanes.push(laneLookup[laneKey]);
+  }
+
+  var hiddenChannelCount = 0;
+  var hiddenChannelMessages = 0;
+  for (var hc = 5; hc < channels.length; hc++) {
+    hiddenChannelCount += 1;
+    hiddenChannelMessages += channels[hc].count;
+  }
+  if (hiddenChannelCount > 0) {
+    laneLookup.__other__ = {
+      key: '__other__',
+      label: 'Other channels',
+      type: 'other',
+      accent: 'var(--text-dim)',
+      dim: 'var(--surface-2)',
+      count: hiddenChannelMessages,
+      participantCount: 0,
+      nodes: [],
+      y: 0,
+      height: 0,
+      cy: 0,
+    };
+    lanes.push(laneLookup.__other__);
+  }
+
+  var nodes = [];
+  var nodeKeys = Object.keys(nodeMap);
+  var hasIdleNodes = false;
+  var hasSyntheticNodes = false;
+  for (var nk = 0; nk < nodeKeys.length; nk++) {
+    var node = nodeMap[nodeKeys[nk]];
+    node.dominantChannel = getGraphDominantChannel(node.channelCounts);
+    if (node.synthetic) {
+      node.laneKey = '__system__';
+      hasSyntheticNodes = true;
+    } else if (!node.dominantChannel) {
+      node.laneKey = '__idle__';
+      hasIdleNodes = true;
+    } else if (displayedChannelNames[node.dominantChannel]) {
+      node.laneKey = 'channel:' + node.dominantChannel;
+    } else {
+      node.laneKey = hiddenChannelCount > 0 ? '__other__' : 'channel:' + node.dominantChannel;
+      if (!laneLookup[node.laneKey]) {
+        laneLookup[node.laneKey] = {
+          key: node.laneKey,
+          label: '#' + node.dominantChannel,
+          type: 'channel',
+          accent: 'var(--accent)',
+          dim: 'var(--accent-dim)',
+          count: node.channelCounts[node.dominantChannel] || 0,
+          participantCount: 1,
+          nodes: [],
+          y: 0,
+          height: 0,
+          cy: 0,
+        };
+        lanes.push(laneLookup[node.laneKey]);
+      }
+    }
+    if (laneLookup[node.laneKey]) laneLookup[node.laneKey].nodes.push(node.key);
+    nodes.push(node);
+  }
+
+  if (hasIdleNodes) {
+    laneLookup.__idle__ = {
+      key: '__idle__',
+      label: 'Idle agents',
+      type: 'idle',
+      accent: 'var(--text-muted)',
+      dim: 'var(--surface-2)',
+      count: 0,
+      participantCount: laneLookup.__idle__ && laneLookup.__idle__.nodes ? laneLookup.__idle__.nodes.length : 0,
+      nodes: laneLookup.__idle__ && laneLookup.__idle__.nodes ? laneLookup.__idle__.nodes : [],
+      y: 0,
+      height: 0,
+      cy: 0,
+    };
+    if (!laneLookup.__idle__.nodes.length) {
+      for (var idleIndex = 0; idleIndex < nodes.length; idleIndex++) {
+        if (nodes[idleIndex].laneKey === '__idle__') laneLookup.__idle__.nodes.push(nodes[idleIndex].key);
+      }
+    }
+    lanes.push(laneLookup.__idle__);
+  }
+
+  if (hasSyntheticNodes) {
+    laneLookup.__system__ = {
+      key: '__system__',
+      label: 'System endpoints',
+      type: 'system',
+      accent: 'var(--border-light)',
+      dim: 'var(--surface-2)',
+      count: 0,
+      participantCount: laneLookup.__system__ && laneLookup.__system__.nodes ? laneLookup.__system__.nodes.length : 0,
+      nodes: laneLookup.__system__ && laneLookup.__system__.nodes ? laneLookup.__system__.nodes : [],
+      y: 0,
+      height: 0,
+      cy: 0,
+    };
+    if (!laneLookup.__system__.nodes.length) {
+      for (var systemIndex = 0; systemIndex < nodes.length; systemIndex++) {
+        if (nodes[systemIndex].laneKey === '__system__') laneLookup.__system__.nodes.push(nodes[systemIndex].key);
+      }
+    }
+    lanes.push(laneLookup.__system__);
+  }
+
+  var uniqueLaneMap = {};
+  var orderedLanes = [];
+  for (var l = 0; l < lanes.length; l++) {
+    if (uniqueLaneMap[lanes[l].key]) continue;
+    uniqueLaneMap[lanes[l].key] = true;
+    orderedLanes.push(lanes[l]);
+  }
+  lanes = orderedLanes;
+
+  var networkPanel = { x: 24, y: 78, w: 808, h: 718 };
+  var laneAreaTop = networkPanel.y + 56;
+  var laneAreaBottom = networkPanel.y + networkPanel.h - 24;
+  var laneAreaHeight = laneAreaBottom - laneAreaTop;
+  var laneHeight = lanes.length ? Math.max(68, Math.floor(laneAreaHeight / lanes.length)) : 0;
+  var nodeXStart = networkPanel.x + 172;
+  var nodeXEnd = networkPanel.x + networkPanel.w - 70;
+
+  for (var laneIndex = 0; laneIndex < lanes.length; laneIndex++) {
+    var lane = lanes[laneIndex];
+    lane.y = laneAreaTop + (laneIndex * laneHeight) + 6;
+    lane.height = Math.max(58, laneHeight - 12);
+    lane.cy = lane.y + (lane.height / 2);
+    lane.participantCount = lane.nodes.length;
+    var laneNodes = [];
+    for (var ln = 0; ln < lane.nodes.length; ln++) {
+      if (nodeMap[lane.nodes[ln]]) laneNodes.push(nodeMap[lane.nodes[ln]]);
+    }
+    laneNodes.sort(function(a, b) {
+      var aCount = a.sendCount + a.receiveCount;
+      var bCount = b.sendCount + b.receiveCount;
+      return bCount - aCount || a.label.localeCompare(b.label);
+    });
+    var useTwoRows = laneNodes.length > 4;
+    var columns = Math.max(1, useTwoRows ? Math.ceil(laneNodes.length / 2) : laneNodes.length);
+    var stepX = columns === 1 ? 0 : (nodeXEnd - nodeXStart) / (columns - 1);
+    for (var nodeIndex = 0; nodeIndex < laneNodes.length; nodeIndex++) {
+      var laneNode = laneNodes[nodeIndex];
+      var row = useTwoRows ? (nodeIndex % 2) : 0;
+      var column = useTwoRows ? Math.floor(nodeIndex / 2) : nodeIndex;
+      laneNode.x = columns === 1 ? (nodeXStart + nodeXEnd) / 2 : (nodeXStart + (column * stepX));
+      laneNode.y = lane.cy + (useTwoRows ? (row === 0 ? -24 : 24) : 0);
+    }
+  }
+
+  var edges = [];
+  var edgeKeys = Object.keys(edgeMap);
+  for (var ek = 0; ek < edgeKeys.length; ek++) {
+    var edge = edgeMap[edgeKeys[ek]];
+    edge.dominantChannel = getGraphDominantChannel(edge.channelCounts);
+    if (edge.dominantChannel && displayedChannelNames[edge.dominantChannel]) edge.laneKey = 'channel:' + edge.dominantChannel;
+    else if (edge.dominantChannel && hiddenChannelCount > 0) edge.laneKey = '__other__';
+    else edge.laneKey = '';
+    edges.push(edge);
+  }
+  edges.sort(function(a, b) {
+    return b.count - a.count || b.handoffs - a.handoffs || String(b.lastTimestamp || '').localeCompare(String(a.lastTimestamp || ''));
+  });
+
+  return {
+    branchName: branchName,
+    nodes: nodes,
+    nodeMap: nodeMap,
+    lanes: lanes,
+    channels: channels,
+    edges: edges,
+    visibleEdges: edges.slice(0, 18),
+  };
+}
+
+function buildGraphWorkflowPanelSvg(workflowState) {
+  var panelX = 852;
+  var panelY = 78;
+  var panelW = 324;
+  var panelH = 718;
+  var parts = [];
+  parts.push('<rect x="' + panelX + '" y="' + panelY + '" width="' + panelW + '" height="' + panelH + '" rx="22" style="fill:var(--surface);stroke:var(--border-light);"></rect>');
+  parts.push('<text x="' + (panelX + 18) + '" y="' + (panelY + 28) + '" style="fill:var(--text);font-size:16px;font-weight:700;">Main branch workflows</text>');
+  parts.push('<text x="' + (panelX + 18) + '" y="' + (panelY + 48) + '" style="fill:var(--text-dim);font-size:11px;">Read-only structure from the existing workflow surface</text>');
+
+  if (workflowState.status === 'loading' && !workflowState.data.length) {
+    parts.push('<rect x="' + (panelX + 18) + '" y="' + (panelY + 72) + '" width="' + (panelW - 36) + '" height="92" rx="16" style="fill:var(--surface-2);stroke:var(--border);"></rect>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 112) + '" style="fill:var(--text);font-size:13px;font-weight:600;">Loading workflows…</text>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 132) + '" style="fill:var(--text-dim);font-size:11px;">The graph will add the main pipeline rail when the data returns.</text>');
+    return parts.join('');
+  }
+
+  if (workflowState.status === 'error') {
+    parts.push('<rect x="' + (panelX + 18) + '" y="' + (panelY + 72) + '" width="' + (panelW - 36) + '" height="112" rx="16" style="fill:var(--surface-2);stroke:var(--red);"></rect>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 108) + '" style="fill:var(--text);font-size:13px;font-weight:600;">Workflow data unavailable</text>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 128) + '" style="fill:var(--text-dim);font-size:11px;">' + escapeHtml(truncateGraphText(workflowState.error || 'The existing workflow view still works.', 42)) + '</text>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 148) + '" style="fill:var(--text-dim);font-size:11px;">This optional graph surface degrades safely instead of breaking the dashboard.</text>');
+    return parts.join('');
+  }
+
+  var workflows = Array.isArray(workflowState.data) ? workflowState.data.slice(0, 4) : [];
+  if (!workflows.length) {
+    parts.push('<rect x="' + (panelX + 18) + '" y="' + (panelY + 72) + '" width="' + (panelW - 36) + '" height="112" rx="16" style="fill:var(--surface-2);stroke:var(--border);"></rect>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 110) + '" style="fill:var(--text);font-size:13px;font-weight:600;">No main-branch workflows yet</text>');
+    parts.push('<text x="' + (panelX + 34) + '" y="' + (panelY + 130) + '" style="fill:var(--text-dim);font-size:11px;">The graph still renders agents, channels, and message flow from the current branch.</text>');
+    return parts.join('');
+  }
+
+  var cardHeight = 152;
+  var cardGap = 12;
+  for (var i = 0; i < workflows.length; i++) {
+    var workflow = workflows[i];
+    var steps = Array.isArray(workflow.steps) ? workflow.steps : [];
+    var doneCount = 0;
+    var activeStep = null;
+    for (var s = 0; s < steps.length; s++) {
+      if (steps[s].status === 'done') doneCount += 1;
+      if (!activeStep && steps[s].status === 'in_progress') activeStep = steps[s];
+    }
+    if (!activeStep && steps.length) activeStep = steps[0];
+    var pct = steps.length ? Math.round((doneCount / steps.length) * 100) : 0;
+    var cardX = panelX + 16;
+    var cardY = panelY + 68 + (i * (cardHeight + cardGap));
+    var cardW = panelW - 32;
+    var statusColor = workflow.status === 'completed' ? 'var(--green)' : workflow.status === 'paused' ? 'var(--orange)' : 'var(--accent)';
+    var statusLabel = truncateGraphText(String(workflow.status || 'active').replace(/_/g, ' '), 12).toUpperCase();
+    var summaryLabel = activeStep ? truncateGraphText(activeStep.description || 'Waiting for next step', 42) : 'Waiting for steps';
+    parts.push('<rect x="' + cardX + '" y="' + cardY + '" width="' + cardW + '" height="' + cardHeight + '" rx="18" style="fill:var(--surface-2);stroke:var(--border);"></rect>');
+    parts.push('<text x="' + (cardX + 16) + '" y="' + (cardY + 24) + '" style="fill:var(--text);font-size:13px;font-weight:700;">' + escapeHtml(truncateGraphText(workflow.name, 28)) + '</text>');
+    parts.push('<rect x="' + (cardX + cardW - 94) + '" y="' + (cardY + 12) + '" width="78" height="20" rx="10" style="fill:' + statusColor + ';fill-opacity:0.14;stroke:' + statusColor + ';"></rect>');
+    parts.push('<text x="' + (cardX + cardW - 55) + '" y="' + (cardY + 26) + '" text-anchor="middle" style="fill:' + statusColor + ';font-size:9px;font-weight:700;letter-spacing:0.08em;">' + escapeHtml(statusLabel) + '</text>');
+    parts.push('<text x="' + (cardX + 16) + '" y="' + (cardY + 46) + '" style="fill:var(--text-dim);font-size:10px;">' + doneCount + '/' + steps.length + ' steps complete • ' + pct + '%</text>');
+    parts.push('<rect x="' + (cardX + 16) + '" y="' + (cardY + 56) + '" width="' + (cardW - 32) + '" height="6" rx="3" style="fill:var(--surface-3);"></rect>');
+    parts.push('<rect x="' + (cardX + 16) + '" y="' + (cardY + 56) + '" width="' + Math.max(0, Math.round((cardW - 32) * (pct / 100))) + '" height="6" rx="3" style="fill:' + (workflow.status === 'completed' ? 'var(--green)' : 'var(--accent)') + ';"></rect>');
+
+    var visibleSteps = steps.slice(0, 6);
+    var stepStartX = cardX + 22;
+    var stepEndX = cardX + cardW - 22;
+    var stepGap = visibleSteps.length > 1 ? (stepEndX - stepStartX) / (visibleSteps.length - 1) : 0;
+    var stepY = cardY + 88;
+    if (visibleSteps.length > 1) {
+      parts.push('<line x1="' + stepStartX + '" y1="' + stepY + '" x2="' + stepEndX + '" y2="' + stepY + '" style="stroke:var(--border-light);stroke-width:2;"></line>');
+    }
+    for (var stepIndex = 0; stepIndex < visibleSteps.length; stepIndex++) {
+      var visibleStep = visibleSteps[stepIndex];
+      var dotX = visibleSteps.length === 1 ? ((stepStartX + stepEndX) / 2) : (stepStartX + (stepIndex * stepGap));
+      var dotColor = visibleStep.status === 'done' ? 'var(--green)' : visibleStep.status === 'in_progress' ? 'var(--accent)' : 'var(--text-muted)';
+      parts.push('<circle cx="' + dotX + '" cy="' + stepY + '" r="7" style="fill:var(--surface);stroke:' + dotColor + ';stroke-width:3;"></circle>');
+      parts.push('<text x="' + dotX + '" y="' + (stepY + 22) + '" text-anchor="middle" style="fill:var(--text-dim);font-size:9px;font-weight:700;">' + escapeHtml(String(visibleStep.id || (stepIndex + 1))) + '</text>');
+    }
+    if (steps.length > visibleSteps.length) {
+      parts.push('<text x="' + (cardX + cardW - 18) + '" y="' + (stepY + 24) + '" text-anchor="end" style="fill:var(--text-muted);font-size:9px;font-weight:700;">+' + (steps.length - visibleSteps.length) + '</text>');
+    }
+
+    parts.push('<text x="' + (cardX + 16) + '" y="' + (cardY + 124) + '" style="fill:var(--text);font-size:11px;font-weight:600;">' + escapeHtml(summaryLabel) + '</text>');
+    parts.push('<text x="' + (cardX + 16) + '" y="' + (cardY + 142) + '" style="fill:var(--text-dim);font-size:10px;">' + escapeHtml(activeStep && activeStep.assignee ? ('Owner: ' + activeStep.assignee) : 'Owner pending') + (workflow.autonomous ? ' • autonomous' : '') + (workflow.parallel ? ' • parallel' : '') + '</text>');
+  }
+
+  if (workflowState.data.length > workflows.length) {
+    parts.push('<text x="' + (panelX + 18) + '" y="' + (panelY + panelH - 20) + '" style="fill:var(--text-dim);font-size:10px;">+' + (workflowState.data.length - workflows.length) + ' more workflows continue in the primary Workflows view.</text>');
+  }
+
+  return parts.join('');
+}
+
+function buildGraphSvg(model) {
+  var networkPanel = { x: 24, y: 78, w: 808, h: 718 };
+  var parts = [];
+  parts.push('<svg class="graph-surface" viewBox="0 0 1200 820" role="img" aria-label="Operator graph view showing agents, message flow, channels, and main branch workflows">');
+  parts.push('<defs>');
+  parts.push('<marker id="graph-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">');
+  parts.push('<path d="M0,0 L10,5 L0,10 z" style="fill:var(--text-muted);"></path>');
+  parts.push('</marker>');
+  parts.push('</defs>');
+  parts.push('<rect x="0" y="0" width="1200" height="820" fill="transparent"></rect>');
+  parts.push('<rect x="' + networkPanel.x + '" y="' + networkPanel.y + '" width="' + networkPanel.w + '" height="' + networkPanel.h + '" rx="22" style="fill:var(--surface);stroke:var(--border-light);"></rect>');
+  parts.push('<text x="' + (networkPanel.x + 18) + '" y="' + (networkPanel.y + 28) + '" style="fill:var(--text);font-size:16px;font-weight:700;">Conversation flow</text>');
+  parts.push('<text x="' + (networkPanel.x + 18) + '" y="' + (networkPanel.y + 48) + '" style="fill:var(--text-dim);font-size:11px;">Branch ' + escapeHtml(model.branchName) + ' • grouped by dominant channel • top 18 directed edges</text>');
+
+  if (!model.nodes.length) {
+    parts.push('<rect x="' + (networkPanel.x + 18) + '" y="' + (networkPanel.y + 72) + '" width="' + (networkPanel.w - 36) + '" height="120" rx="18" style="fill:var(--surface-2);stroke:var(--border);"></rect>');
+    parts.push('<text x="' + (networkPanel.x + 40) + '" y="' + (networkPanel.y + 120) + '" style="fill:var(--text);font-size:14px;font-weight:600;">No graphable operator data yet</text>');
+    parts.push('<text x="' + (networkPanel.x + 40) + '" y="' + (networkPanel.y + 144) + '" style="fill:var(--text-dim);font-size:11px;">Once agents register and exchange messages, this view will render channel lanes and conversation edges.</text>');
+  } else {
+    for (var laneIndex = 0; laneIndex < model.lanes.length; laneIndex++) {
+      var lane = model.lanes[laneIndex];
+      var laneWidth = networkPanel.w - 24;
+      var laneX = networkPanel.x + 12;
+      parts.push('<rect x="' + laneX + '" y="' + lane.y + '" width="' + laneWidth + '" height="' + lane.height + '" rx="18" style="fill:' + lane.dim + ';fill-opacity:0.55;stroke:' + lane.accent + ';stroke-opacity:0.32;"></rect>');
+      parts.push('<text x="' + (laneX + 16) + '" y="' + (lane.y + 24) + '" style="fill:' + lane.accent + ';font-size:11px;font-weight:700;letter-spacing:0.05em;">' + escapeHtml(lane.label.toUpperCase()) + '</text>');
+      parts.push('<text x="' + (laneX + 16) + '" y="' + (lane.y + 42) + '" style="fill:var(--text-dim);font-size:10px;">' + escapeHtml(String(lane.count || 0)) + ' msgs • ' + escapeHtml(String(lane.participantCount || 0)) + ' participants</text>');
+    }
+
+    for (var edgeIndex = 0; edgeIndex < model.visibleEdges.length; edgeIndex++) {
+      var edge = model.visibleEdges[edgeIndex];
+      var fromNode = model.nodeMap[edge.from];
+      var toNode = model.nodeMap[edge.to];
+      if (!fromNode || !toNode || !fromNode.x || !toNode.x) continue;
+      var stroke = edge.laneKey && model.lanes.filter(function(lane) { return lane.key === edge.laneKey; }).length ? model.lanes.filter(function(lane) { return lane.key === edge.laneKey; })[0].accent : 'var(--text-muted)';
+      var dx = toNode.x - fromNode.x;
+      var dy = toNode.y - fromNode.y;
+      var sameLane = Math.abs(dy) < 8;
+      var midX = (fromNode.x + toNode.x) / 2;
+      var controlY = sameLane ? (fromNode.y - (44 + ((edgeIndex % 3) * 16))) : ((fromNode.y + toNode.y) / 2) - (dy > 0 ? 20 : -20);
+      var path = 'M' + fromNode.x + ' ' + fromNode.y + ' Q ' + midX + ' ' + controlY + ' ' + toNode.x + ' ' + toNode.y;
+      var labelX = midX;
+      var labelY = sameLane ? (controlY - 10) : (controlY - 8);
+      var labelText = String(edge.count) + (edge.handoffs ? '↗' : '');
+      var labelWidth = 12 + (labelText.length * 6);
+      parts.push('<g>');
+      parts.push('<path d="' + path + '" fill="none" stroke="' + stroke + '" stroke-opacity="0.7" stroke-width="' + (1.5 + Math.min(5, edge.count * 0.8)) + '" marker-end="url(#graph-arrow)"></path>');
+      parts.push('<title>' + escapeHtml(edge.from + ' → ' + edge.to + ' • ' + edge.count + ' messages' + (edge.dominantChannel ? ' • #' + edge.dominantChannel : '')) + '</title>');
+      parts.push('<rect x="' + Math.round(labelX - (labelWidth / 2)) + '" y="' + Math.round(labelY - 10) + '" width="' + labelWidth + '" height="16" rx="8" style="fill:var(--surface);stroke:var(--border-light);"></rect>');
+      parts.push('<text x="' + labelX + '" y="' + (labelY + 2) + '" text-anchor="middle" style="fill:var(--text);font-size:9px;font-weight:700;">' + escapeHtml(labelText) + '</text>');
+      parts.push('</g>');
+    }
+
+    for (var nodeIndex = 0; nodeIndex < model.nodes.length; nodeIndex++) {
+      var node = model.nodes[nodeIndex];
+      if (!node.x || !node.y) continue;
+      var nodeStatusColor = getGraphStatusColor(node.status);
+      var nodeInitialFill = node.synthetic ? 'var(--text)' : 'var(--surface)';
+      var label = truncateGraphText(node.label, 16);
+      var summary = (node.sendCount + node.receiveCount) ? (node.sendCount + '↑ ' + node.receiveCount + '↓') : (node.synthetic ? 'system' : 'idle');
+      var clickAttr = node.synthetic ? '' : ' style="cursor:pointer" onclick="openAgentMetadataDrawer(' + escapeHtml(JSON.stringify(node.agentName)) + ')"';
+      parts.push('<g' + clickAttr + '>');
+      parts.push('<title>' + escapeHtml(node.label + ' • sent ' + node.sendCount + ' • received ' + node.receiveCount + (node.role ? ' • ' + node.role : '')) + '</title>');
+      parts.push('<circle cx="' + node.x + '" cy="' + node.y + '" r="26" style="fill:var(--bg);opacity:0.48;"></circle>');
+      parts.push('<circle cx="' + node.x + '" cy="' + node.y + '" r="21" style="fill:' + node.color + ';stroke:' + nodeStatusColor + ';stroke-width:2.5;opacity:' + (node.status === 'dead' ? '0.58' : '0.94') + ';"></circle>');
+      parts.push('<text x="' + node.x + '" y="' + (node.y + 5) + '" text-anchor="middle" style="fill:' + nodeInitialFill + ';font-size:12px;font-weight:800;">' + escapeHtml(initial(node.label)) + '</text>');
+      parts.push('<text x="' + node.x + '" y="' + (node.y + 38) + '" text-anchor="middle" style="fill:var(--text);font-size:11px;font-weight:700;">' + escapeHtml(label) + '</text>');
+      parts.push('<text x="' + node.x + '" y="' + (node.y + 54) + '" text-anchor="middle" style="fill:var(--text-dim);font-size:9px;">' + escapeHtml(summary) + '</text>');
+      parts.push('</g>');
+    }
+  }
+
+  parts.push('<text x="40" y="784" style="fill:var(--text-dim);font-size:10px;">Tip: click an agent node to open the existing metadata drawer. The primary Messages and Workflows views remain the main control surfaces.</text>');
+  parts.push(buildGraphWorkflowPanelSvg(graphWorkflowState));
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+function renderGraphView() {
+  var el = document.getElementById('graph-area');
+  if (!el) return;
+  var model = buildGraphModel();
+  var branchLabel = activeBranch && activeBranch !== 'main' ? activeBranch : 'main';
+  var workflowBadge = graphWorkflowState.status === 'loading'
+    ? 'Loading…'
+    : graphWorkflowState.status === 'error'
+      ? 'Unavailable'
+      : String(Array.isArray(graphWorkflowState.data) ? graphWorkflowState.data.length : 0);
+  var subtitle = branchLabel === 'main'
+    ? 'Secondary operator slice only: this graph reuses the current dashboard data already in memory, while Messages and Workflows remain the primary navigation and control views.'
+    : 'Secondary operator slice only: conversation flow is scoped to branch ' + branchLabel + ', while the workflow rail intentionally stays pinned to main-branch structure.';
+  var html = '';
+  html += '<div class="graph-shell">';
+  html += '<div class="graph-header">';
+  html += '<div>';
+  html += '<div class="graph-title">Graph operator view</div>';
+  html += '<div class="graph-subtitle">' + escapeHtml(subtitle) + '</div>';
+  html += '</div>';
+  html += '<div class="graph-meta">';
+  html += '<div class="graph-pill">Flow branch <strong>' + escapeHtml(branchLabel) + '</strong></div>';
+  html += '<div class="graph-pill">Agents <strong>' + escapeHtml(String(model.nodes.length)) + '</strong></div>';
+  html += '<div class="graph-pill">Edges <strong>' + escapeHtml(String(model.edges.length)) + '</strong></div>';
+  html += '<div class="graph-pill">Channels <strong>' + escapeHtml(String(model.channels.length)) + '</strong></div>';
+  html += '<div class="graph-pill">Main workflows <strong>' + escapeHtml(workflowBadge) + '</strong></div>';
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="graph-surface-wrap">' + buildGraphSvg(model) + '</div>';
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 // ==================== v5.0: PLAN EXECUTION VIEW ====================
@@ -7118,12 +9712,25 @@ function dashAdvanceWorkflow(wfId) {
 var planRefreshInterval = null;
 
 function fetchPlanStatus() {
-  var pq = projectParam();
-  lttFetch('/api/plan/status' + pq).then(function(r) { return r.json(); }).then(function(data) {
+  if (!isMainBranchSelected()) {
+    if (planRefreshInterval) { clearInterval(planRefreshInterval); planRefreshInterval = null; }
+    document.getElementById('monitor-panel').innerHTML = '';
+    renderMainBranchOnlyView('plan-area', 'Plan view');
+    return;
+  }
+  lttFetch(scopedApiUrl('/api/plan/status')).then(function(r) { return r.json(); }).then(function(data) {
+    if (data && data.code === 'main_branch_only') {
+      renderMainBranchOnlyView('plan-area', 'Plan view');
+      return;
+    }
     renderPlanView(data);
   }).catch(function() {
     // Fallback: use workflows API if plan API not yet available
-    lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(wfs) {
+    lttFetch(scopedApiUrl('/api/workflows')).then(function(r) { return r.json(); }).then(function(wfs) {
+      if (wfs && wfs.code === 'main_branch_only') {
+        renderMainBranchOnlyView('plan-area', 'Plan view');
+        return;
+      }
       var active = (Array.isArray(wfs) ? wfs : []).filter(function(w) { return w.status === 'active'; });
       renderPlanView({ workflows: active, fallback: true });
     }).catch(function() {
@@ -7140,6 +9747,10 @@ function fetchPlanStatus() {
 
 function renderPlanView(data) {
   var el = document.getElementById('plan-area');
+  if (!isMainBranchSelected()) {
+    el.innerHTML = mainBranchOnlyViewHtml('Plan view');
+    return;
+  }
   var workflows = data.workflows || (data.fallback ? data.workflows : [data]);
 
   if (!workflows || !workflows.length) {
@@ -7296,8 +9907,11 @@ function renderPlanView(data) {
 }
 
 function planAction(action, stepId, wfId) {
-  var pq = projectParam();
-  var url = '/api/plan/' + action + (stepId ? '/' + stepId : '') + pq;
+  if (!isMainBranchSelected()) {
+    showToast('Plan controls only support the main branch right now.');
+    return;
+  }
+  var url = scopedApiUrl('/api/plan/' + action + (stepId ? '/' + stepId : ''));
   lttFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -7306,10 +9920,13 @@ function planAction(action, stepId, wfId) {
 }
 
 function planReassign(stepId, wfId) {
+  if (!isMainBranchSelected()) {
+    showToast('Plan controls only support the main branch right now.');
+    return;
+  }
   var newAgent = prompt('Reassign step ' + stepId + ' to which agent?');
   if (!newAgent) return;
-  var pq = projectParam();
-  lttFetch('/api/plan/reassign/' + stepId + pq, {
+  lttFetch(scopedApiUrl('/api/plan/reassign/' + stepId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workflow_id: wfId, new_assignee: newAgent })
@@ -7317,10 +9934,13 @@ function planReassign(stepId, wfId) {
 }
 
 function planInject(wfId) {
+  if (!isMainBranchSelected()) {
+    showToast('Plan controls only support the main branch right now.');
+    return;
+  }
   var msg = prompt('Inject message to all agents:');
   if (!msg) return;
-  var pq = projectParam();
-  lttFetch('/api/plan/inject' + pq, {
+  lttFetch(scopedApiUrl('/api/plan/inject'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workflow_id: wfId, message: msg })
@@ -7332,8 +9952,8 @@ function planInject(wfId) {
 var _lastKnownWorkflowStatuses = {};
 
 function checkPlanCompletion() {
-  var pq = projectParam();
-  lttFetch('/api/workflows' + pq).then(function(r) { return r.json(); }).then(function(wfs) {
+  if (!isMainBranchSelected()) return;
+  lttFetch(scopedApiUrl('/api/workflows')).then(function(r) { return r.json(); }).then(function(wfs) {
     if (!Array.isArray(wfs)) return;
     for (var i = 0; i < wfs.length; i++) {
       var wf = wfs[i];
@@ -7359,6 +9979,11 @@ function checkPlanCompletion() {
 // ==================== v5.0: MONITOR HEALTH PANEL ====================
 
 function fetchMonitorHealth() {
+  if (!isMainBranchSelected()) {
+    var hiddenEl = document.getElementById('monitor-panel');
+    if (hiddenEl) hiddenEl.innerHTML = '';
+    return;
+  }
   var pq = projectParam();
   lttFetch('/api/monitor/health' + pq).then(function(r) { return r.json(); }).then(function(data) {
     renderMonitorPanel(data);
@@ -7419,12 +10044,15 @@ function renderMonitorPanel(data) {
 
 // ==================== v3.0: BRANCHES ====================
 
-var activeBranch = '';
+var activeBranch = dashboardWorkspaceState.liveWorkspace.snapshot.branch || 'main';
+var cachedBranchInfo = { main: { message_count: 0 } };
 
 function fetchBranches() {
   var pq = projectParam();
   lttFetch('/api/branches' + pq).then(function(r) { return r.json(); }).then(function(data) {
-    renderBranchTabs(data);
+    cachedBranchInfo = data && typeof data === 'object' ? data : { main: { message_count: 0 } };
+    if (!cachedBranchInfo.main) cachedBranchInfo.main = { message_count: 0 };
+    renderBranchTabs(cachedBranchInfo);
   }).catch(function() {});
 }
 
@@ -7452,6 +10080,8 @@ function renderBranchTabs(branches) {
 function switchBranch(name) {
   activeBranch = name;
   lastMessageCount = 0;
+  lastRenderedIds = [];
+  persistLiveDashboardLayout();
   poll();
 }
 
@@ -7529,11 +10159,7 @@ function toggleSearchAll() {
   btn.style.background = searchAllMode ? 'var(--accent-dim)' : 'var(--surface-2)';
   btn.style.color = searchAllMode ? 'var(--accent)' : 'var(--text-muted)';
   btn.style.borderColor = searchAllMode ? 'var(--accent)' : 'var(--border)';
-  if (searchAllMode) {
-    document.getElementById('search-input').placeholder = 'Search ALL projects...';
-  } else {
-    document.getElementById('search-input').placeholder = 'Search messages...  ( / )';
-  }
+  updateSearchInputMode();
   onSearch();
 }
 
@@ -7568,8 +10194,7 @@ function searchAllProjects(query) {
 // ==================== v3.5: REPLAY EXPORT ====================
 
 function exportReplay() {
-  var pq = projectParam();
-  window.location.href = '/api/export-replay' + (pq || '?') + (_lttToken ? '&token=' + encodeURIComponent(_lttToken) : '');
+  window.location.href = scopedApiUrl('/api/export-replay', null, { includeToken: true });
 }
 
 // ==================== v3.5: PERFORMANCE SCORES ====================
@@ -7627,12 +10252,10 @@ function renderScores(data, repData) {
 // ==================== POLLING ====================
 
 function poll() {
-  var pp = activeProject ? '&project=' + encodeURIComponent(activeProject) : '';
   var pq = activeProject ? '?project=' + encodeURIComponent(activeProject) : '';
-  var bp = activeBranch && activeBranch !== 'main' ? '&branch=' + encodeURIComponent(activeBranch) : '';
   var pollStart = Date.now();
   Promise.all([
-    lttFetch('/api/history?limit=500' + pp + bp).then(function(r) { return r.json(); }),
+    lttFetch(scopedApiUrl('/api/history', { limit: 500 })).then(function(r) { return r.json(); }),
     lttFetch('/api/agents' + pq).then(function(r) { return r.json(); }),
     lttFetch('/api/status' + pq).then(function(r) { return r.json(); }),
   ]).then(function(results) {
@@ -7683,6 +10306,7 @@ function poll() {
       : 'Let Them Talk';
 
     renderAgents(cachedAgents);
+    refreshAgentMetadataDrawer();
     renderAgentStats();
     renderThreads(cachedHistory);
     if (!replayActive) renderMessages(cachedHistory);
@@ -7693,9 +10317,11 @@ function poll() {
     fetchBranches();
     fetchNotifications();
     updateTypingIndicator(cachedAgents);
+    if (activeView === 'services') renderServices();
     if (activeView === 'tasks') fetchTasks();
     if (activeView === 'workspaces') fetchWorkspaces();
     if (activeView === 'workflows') fetchWorkflows();
+    if (activeView === 'graph') { renderGraphView(); ensureGraphWorkflowData(); }
     if (activeView === 'plan') fetchPlanStatus();
     if (activeView === 'stats') fetchStats();
     fetchReadReceipts();
@@ -7732,10 +10358,8 @@ function loadProjects() {
       sel.appendChild(opt);
     }
 
-    // Auto-select first project if none selected
     if (!activeProject && projects.length > 0) {
       activeProject = projects[0].path;
-      console.log('[LTT] auto-selected first project:', activeProject);
     }
 
     // If project came from URL param, try fuzzy match (handles path separator differences)
@@ -7749,22 +10373,26 @@ function loadProjects() {
       }
     }
 
+    var hasMatchingProject = !activeProject;
     if (activeProject) {
-      sel.value = activeProject;
-      document.getElementById('remove-project-btn').style.display = '';
-      // Update header project indicator for mobile
-      var indicator = document.getElementById('mobile-project-name');
-      if (indicator) {
-        var proj = projects.find(function(p) { return p.path === activeProject; });
-        indicator.textContent = proj ? proj.name : '';
-        indicator.style.display = proj ? '' : 'none';
+      for (var k = 0; k < projects.length; k++) {
+        if (projects[k].path === activeProject) {
+          hasMatchingProject = true;
+          break;
+        }
       }
     }
+    if (!hasMatchingProject) {
+      activeProject = projects.length > 0 ? projects[0].path : '';
+    }
 
-    // Show/hide remove button
-    document.getElementById('remove-project-btn').style.display = activeProject ? '' : 'none';
-    // Sync mobile header project select
+    if (activeProject) {
+      sel.value = activeProject;
+    }
+
     syncMobileProjectSelect();
+    syncProjectSelectionUI();
+    persistLiveDashboardLayout();
   }).catch(function(e) {
     console.error('[LTT] loadProjects failed:', e);
   });
@@ -7773,8 +10401,10 @@ function loadProjects() {
 function switchProject() {
   activeProject = document.getElementById('project-select').value;
   lastMessageCount = 0;
-  document.getElementById('remove-project-btn').style.display = activeProject ? '' : 'none';
+  lastRenderedIds = [];
   syncMobileProjectSelect();
+  syncProjectSelectionUI();
+  persistLiveDashboardLayout();
   loadConversationList();
   poll();
   if (isMobile) closeSidebar();
@@ -7783,9 +10413,12 @@ function switchProject() {
 function mobileSelectProject(val) {
   activeProject = val;
   lastMessageCount = 0;
+  lastRenderedIds = [];
   // Sync sidebar select
   document.getElementById('project-select').value = val;
-  document.getElementById('remove-project-btn').style.display = val ? '' : 'none';
+  syncProjectSelectionUI();
+  persistLiveDashboardLayout();
+  loadConversationList();
   poll();
 }
 
@@ -7895,6 +10528,8 @@ function removeProject() {
     if (res.success) {
       activeProject = '';
       document.getElementById('project-select').value = '';
+      syncProjectSelectionUI();
+      persistLiveDashboardLayout();
       loadProjects();
       poll();
     }
@@ -8003,7 +10638,7 @@ function exitReplay() {
   if (replayTimer) { clearTimeout(replayTimer); replayTimer = null; }
   document.getElementById('replay-bar').classList.remove('visible');
   document.getElementById('view-tabs').style.display = '';
-  document.getElementById('search-bar').style.display = '';
+  syncSearchBarVisibility();
   document.getElementById('replay-header-btn').style.display = '';
   lastMessageCount = 0;
   renderMessages(cachedHistory);
@@ -8094,7 +10729,7 @@ function renderReplayMessages() {
 
 // ==================== BROWSER NOTIFICATIONS ====================
 
-var notifEnabled = localStorage.getItem('ltt-notif') === 'true';
+var notifEnabled = !!dashboardWorkspaceState.preferences.notificationsEnabled;
 var notifPermission = (typeof Notification !== 'undefined') ? Notification.permission : 'denied';
 
 function toggleNotifications() {
@@ -8105,17 +10740,17 @@ function toggleNotifications() {
         notifPermission = perm;
         if (perm === 'granted') {
           notifEnabled = true;
-          localStorage.setItem('ltt-notif', 'true');
+          persistDashboardPreferences();
           updateNotifBtn();
         }
       });
     } else {
       notifEnabled = true;
-      localStorage.setItem('ltt-notif', 'true');
+      persistDashboardPreferences();
     }
   } else {
     notifEnabled = false;
-    localStorage.setItem('ltt-notif', 'false');
+    persistDashboardPreferences();
   }
   updateNotifBtn();
 }
@@ -8676,6 +11311,263 @@ function copyWatcherPrompt(idx) {
   }).catch(function() {});
 }
 
+// ==================== SERVICES VIEW ====================
+
+var cachedApiAgents = [];
+var cachedMediaItems = [];
+
+function renderServices() {
+  var el = document.getElementById('services-area');
+  fetchApiAgents();
+  fetchMediaItems();
+}
+
+function fetchApiAgents() {
+  var pq = projectParam();
+  lttFetch('/api/api-agents' + pq).then(function(r) { return r.json(); }).then(function(agents) {
+    cachedApiAgents = Array.isArray(agents) ? agents : [];
+    renderServicesUI();
+  }).catch(function() { cachedApiAgents = []; renderServicesUI(); });
+}
+
+function fetchMediaItems() {
+  var pq = projectParam();
+  lttFetch('/api/media' + pq + (pq ? '&' : '?') + 'limit=50').then(function(r) { return r.json(); }).then(function(media) {
+    cachedMediaItems = Array.isArray(media) ? media : [];
+    renderMediaBrowser();
+  }).catch(function() { cachedMediaItems = []; renderMediaBrowser(); });
+}
+
+function renderServicesUI() {
+  var el = document.getElementById('services-area');
+  var html = '<div class="services-container">';
+  html += '<div class="services-header"><h2>API Service Agents</h2></div>';
+
+  // Create form
+  html += '<div class="services-form">';
+  html += '<div class="form-row"><div>';
+  html += '<label>Agent Name</label>';
+  html += '<input type="text" id="svc-name" placeholder="e.g. ImageGen" maxlength="20">';
+  html += '</div><div>';
+  html += '<label>Provider</label>';
+  html += '<select id="svc-provider" onchange="onProviderChange()">';
+  html += '<option value="gemini">Gemini (Google)</option>';
+  html += '<option value="zai">Z.AI / GLM (Cloud)</option>';
+  html += '<option value="comfyui">ComfyUI (Local)</option>';
+  html += '<option value="ollama">Ollama (Local)</option>';
+  html += '<option value="dalle">DALL-E 3 (OpenAI)</option>';
+  html += '<option value="replicate">Replicate (Cloud)</option>';
+  html += '</select>';
+  html += '</div></div>';
+
+  html += '<div class="form-row"><div>';
+  html += '<label>Model</label>';
+  html += '<input type="text" id="svc-model" placeholder="e.g. sdxl, flux, dall-e-3">';
+  html += '</div><div>';
+  html += '<label id="svc-endpoint-label">Endpoint URL</label>';
+  html += '<input type="text" id="svc-endpoint" placeholder="http://localhost:11434">';
+  html += '</div></div>';
+
+  html += '<div id="svc-apikey-row" style="display:none">';
+  html += '<label>API Key</label>';
+  html += '<input type="password" id="svc-apikey" placeholder="sk-...">';
+  html += '</div>';
+
+  html += '<button onclick="createApiAgent()">Create Agent</button>';
+  html += '</div>';
+
+  // Agent cards
+  if (cachedApiAgents.length > 0) {
+    html += '<div class="services-cards">';
+    cachedApiAgents.forEach(function(agent) {
+      var dotColor = agent.running ? '#4ade80' : '#666';
+      var statusText = agent.running ? 'Running' : 'Stopped';
+      html += '<div class="service-card">';
+      html += '<div class="sc-header">';
+      html += '<div class="sc-dot" style="background:' + dotColor + '"></div>';
+      html += '<span class="sc-name">' + escapeHtml(agent.name) + '</span>';
+      html += '<span class="sc-provider" style="background:' + (agent.color || '#666') + '">' + escapeHtml(agent.provider) + '</span>';
+      html += '</div>';
+      html += '<div class="sc-stats">';
+      html += 'Model: ' + escapeHtml(agent.model) + '<br>';
+      html += 'Status: ' + statusText + '<br>';
+      html += 'Requests: ' + (agent.stats ? agent.stats.requests : 0) + ' | Completed: ' + (agent.stats ? agent.stats.completed : 0) + ' | Errors: ' + (agent.stats ? agent.stats.errors : 0);
+      if (agent.stats && agent.stats.lastActivity) {
+        html += '<br>Last: ' + new Date(agent.stats.lastActivity).toLocaleTimeString();
+      }
+      html += '</div>';
+      html += '<div class="sc-controls">';
+      if (agent.running) {
+        html += '<button class="sc-stop" onclick="stopApiAgent(\'' + escapeHtml(agent.name) + '\')">Stop</button>';
+      } else {
+        html += '<button class="sc-start" onclick="startApiAgent(\'' + escapeHtml(agent.name) + '\')">Start</button>';
+      }
+      html += '<button class="sc-delete" onclick="deleteApiAgent(\'' + escapeHtml(agent.name) + '\')">Delete</button>';
+      html += '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="text-align:center;padding:24px;color:var(--text-dim);font-size:13px">No API agents configured. Create one above to get started.</div>';
+  }
+
+  // Media browser placeholder
+  html += '<div class="media-browser"><h3>Generated Media</h3><div id="media-grid-container" class="media-grid"></div></div>';
+
+  html += '</div>';
+  el.innerHTML = html;
+
+  // Initialize provider form fields (show/hide API key, set defaults)
+  if (document.getElementById('svc-provider')) onProviderChange();
+
+  // Render media separately (may load async)
+  renderMediaBrowser();
+}
+
+function renderMediaBrowser() {
+  var container = document.getElementById('media-grid-container');
+  if (!container) return;
+
+  if (cachedMediaItems.length === 0) {
+    container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-dim);font-size:12px">No media generated yet. Send a message to an API agent to get started.</div>';
+    return;
+  }
+
+  var pq = projectParam();
+  var html = '';
+  cachedMediaItems.forEach(function(item) {
+    var imgSrc = '/api/media/' + item.id + '/file' + pq;
+    html += '<div class="media-item" onclick="showMediaLightbox(\'' + item.id + '\')">';
+    if (item.type === 'image') {
+      html += '<img src="' + imgSrc + '" alt="' + escapeHtml(item.prompt || '') + '" loading="lazy">';
+    } else {
+      html += '<div style="width:100%;aspect-ratio:1;background:var(--surface-1);display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:24px">' + (item.type === 'video' ? '&#x25B6;' : '&#x1F5BC;') + '</div>';
+    }
+    html += '<div class="mi-info">';
+    html += '<div class="mi-prompt">' + escapeHtml(item.prompt || 'Untitled') + '</div>';
+    html += '<div style="display:flex;justify-content:space-between;margin-top:2px"><span>' + escapeHtml(item.agent || '') + '</span><span>' + new Date(item.timestamp).toLocaleTimeString() + '</span></div>';
+    html += '</div></div>';
+  });
+  container.innerHTML = html;
+}
+
+function showMediaLightbox(id) {
+  var pq = projectParam();
+  var item = cachedMediaItems.find(function(m) { return m.id === id; });
+  if (!item) return;
+
+  var overlay = document.createElement('div');
+  overlay.className = 'media-lightbox';
+  overlay.onclick = function() { overlay.remove(); };
+
+  var imgSrc = '/api/media/' + id + '/file' + pq;
+  overlay.innerHTML = '<img src="' + imgSrc + '"><div class="lb-info">' + escapeHtml(item.prompt || '') + '<br><small>' + escapeHtml(item.agent || '') + ' &middot; ' + escapeHtml(item.model || '') + ' &middot; ' + new Date(item.timestamp).toLocaleString() + '</small></div>';
+  document.body.appendChild(overlay);
+}
+
+function onProviderChange() {
+  var provider = document.getElementById('svc-provider').value;
+  var keyRow = document.getElementById('svc-apikey-row');
+  var endpointLabel = document.getElementById('svc-endpoint-label');
+  var endpointInput = document.getElementById('svc-endpoint');
+
+  if (provider === 'zai') {
+    keyRow.style.display = 'block';
+    endpointLabel.textContent = 'Endpoint (leave default)';
+    endpointInput.placeholder = 'https://api.z.ai';
+    endpointInput.value = '';
+    document.getElementById('svc-model').placeholder = 'glm-5';
+    document.getElementById('svc-model').value = 'glm-5';
+    document.getElementById('svc-apikey').placeholder = 'your-zai-api-key';
+  } else if (provider === 'comfyui') {
+    keyRow.style.display = 'none';
+    endpointLabel.textContent = 'ComfyUI URL';
+    endpointInput.placeholder = 'http://127.0.0.1:8188';
+    endpointInput.value = 'http://127.0.0.1:8188';
+    document.getElementById('svc-model').placeholder = 'flux_text_to_image';
+    document.getElementById('svc-model').value = 'flux_text_to_image';
+  } else if (provider === 'gemini') {
+    keyRow.style.display = 'block';
+    endpointLabel.textContent = 'Endpoint (leave default)';
+    endpointInput.placeholder = 'https://generativelanguage.googleapis.com';
+    endpointInput.value = '';
+    document.getElementById('svc-model').placeholder = 'gemini-3-pro-image-preview';
+    document.getElementById('svc-model').value = 'gemini-3-pro-image-preview';
+    document.getElementById('svc-apikey').placeholder = 'AIza...';
+  } else if (provider === 'ollama') {
+    keyRow.style.display = 'none';
+    endpointLabel.textContent = 'Endpoint URL';
+    endpointInput.placeholder = 'http://localhost:11434';
+    endpointInput.value = 'http://localhost:11434';
+    document.getElementById('svc-model').placeholder = 'e.g. qwen3.5, llama3.2-vision';
+    document.getElementById('svc-model').value = '';
+    document.getElementById('svc-apikey').placeholder = 'sk-...';
+  } else if (provider === 'dalle') {
+    keyRow.style.display = 'block';
+    endpointLabel.textContent = 'Endpoint (leave default)';
+    endpointInput.placeholder = 'https://api.openai.com';
+    endpointInput.value = '';
+    document.getElementById('svc-model').placeholder = 'dall-e-3';
+    document.getElementById('svc-model').value = 'dall-e-3';
+    document.getElementById('svc-apikey').placeholder = 'sk-...';
+  } else if (provider === 'replicate') {
+    keyRow.style.display = 'block';
+    endpointLabel.textContent = 'Endpoint (leave default)';
+    endpointInput.placeholder = 'https://api.replicate.com';
+    endpointInput.value = '';
+    document.getElementById('svc-model').placeholder = 'stability-ai/sdxl';
+    document.getElementById('svc-model').value = '';
+    document.getElementById('svc-apikey').placeholder = 'r8_...';
+  }
+}
+
+function createApiAgent() {
+  var name = document.getElementById('svc-name').value.trim();
+  var provider = document.getElementById('svc-provider').value;
+  var model = document.getElementById('svc-model').value.trim() || 'sdxl';
+  var endpoint = document.getElementById('svc-endpoint').value.trim() || 'http://localhost:11434';
+  var apiKey = (document.getElementById('svc-apikey') || {}).value || '';
+
+  if (!name) { alert('Enter an agent name'); return; }
+
+  var pq = projectParam();
+  lttFetch('/api/api-agents' + pq, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-LTT-Request': '1' },
+    body: JSON.stringify({ name: name, provider: provider, model: model, endpoint: endpoint, apiKey: apiKey })
+  }).then(function(r) { return r.json(); }).then(function(result) {
+    if (result.error) { alert(result.error); return; }
+    document.getElementById('svc-name').value = '';
+    // Auto-start the bot immediately after creation
+    startApiAgent(name);
+  }).catch(function(e) { alert('Failed: ' + e.message); });
+}
+
+function startApiAgent(name) {
+  var pq = projectParam();
+  lttFetch('/api/api-agents/' + encodeURIComponent(name) + '/start' + pq, {
+    method: 'POST',
+    headers: { 'X-LTT-Request': '1' }
+  }).then(function() { fetchApiAgents(); });
+}
+
+function stopApiAgent(name) {
+  var pq = projectParam();
+  lttFetch('/api/api-agents/' + encodeURIComponent(name) + '/stop' + pq, {
+    method: 'POST',
+    headers: { 'X-LTT-Request': '1' }
+  }).then(function() { fetchApiAgents(); });
+}
+
+function deleteApiAgent(name) {
+  if (!confirm('Delete API agent "' + name + '"?')) return;
+  var pq = projectParam();
+  lttFetch('/api/api-agents/' + encodeURIComponent(name) + pq, {
+    method: 'DELETE',
+    headers: { 'X-LTT-Request': '1' }
+  }).then(function() { fetchApiAgents(); });
+}
+
 // ==================== v3.6: DOCS VIEW ====================
 
 function renderDocs() {
@@ -8694,7 +11586,7 @@ function renderDocs() {
       '<h3>Quick Start \u2014 One Command</h3>' +
       '<pre><code>npx let-them-talk run "build a REST API with auth" --agents 4</code></pre>' +
       '<p>Spawns 4 agents, auto-assigns roles (Lead, Implementer, Quality, etc.), creates an autonomous workflow, and starts execution. Walk away, come back to finished work.</p>' +
-      '<p>Monitor progress: <code>npx let-them-talk dashboard</code> | Check status: <code>npx let-them-talk status</code> | Diagnose issues: <code>npx let-them-talk doctor</code></p>' +
+      '<p>Monitor progress: <code>node .agent-bridge/launch.js</code> | Check status: <code>node .agent-bridge/launch.js status</code> | Diagnose issues: <code>npx let-them-talk doctor</code></p>' +
     '</div>' +
 
     // v5.0 Autonomy Engine
@@ -8720,7 +11612,7 @@ function renderDocs() {
       '<p>This auto-detects your CLI (Claude Code, Gemini CLI, or Codex CLI) and adds the agent-bridge MCP server to its config. To set up all CLIs at once:</p>' +
       '<pre><code>npx let-them-talk init --all</code></pre>' +
       '<h4>2. Open the Dashboard</h4>' +
-      '<pre><code>npx let-them-talk dashboard</code></pre>' +
+      '<pre><code>node .agent-bridge/launch.js</code></pre>' +
       '<p>Opens this web dashboard at <code>http://localhost:3777</code>. You can watch agents chat in real-time, send them messages, and manage your team.</p>' +
       '<h4>3. Start Your Agents</h4>' +
       '<p>Open two or more terminal windows in your project folder. In each one, start your AI CLI (e.g. type <code>claude</code>) and tell it to register:</p>' +
@@ -8799,9 +11691,10 @@ function renderDocs() {
         '<div class="docs-tool-item"><code>npx let-them-talk init</code><div class="desc">Set up MCP server config for your CLI</div></div>' +
         '<div class="docs-tool-item"><code>npx let-them-talk init --all</code><div class="desc">Set up for all detected CLIs at once</div></div>' +
         '<div class="docs-tool-item"><code>npx let-them-talk init --template &lt;name&gt;</code><div class="desc">Start with a team template</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk dashboard</code><div class="desc">Open the web dashboard</div></div>' +
+        '<div class="docs-tool-item"><code>node .agent-bridge/launch.js</code><div class="desc">Open the web dashboard (no re-download)</div></div>' +
+        '<div class="docs-tool-item"><code>node .agent-bridge/launch.js status</code><div class="desc">Show active agents and tasks</div></div>' +
+        '<div class="docs-tool-item"><code>node .agent-bridge/launch.js reset</code><div class="desc">Clear conversation data (auto-archives first)</div></div>' +
         '<div class="docs-tool-item"><code>npx let-them-talk templates</code><div class="desc">List available templates</div></div>' +
-        '<div class="docs-tool-item"><code>npx let-them-talk reset --force</code><div class="desc">Clear conversation data (auto-archives first)</div></div>' +
       '</div>' +
     '</div>' +
 
@@ -9013,6 +11906,7 @@ function initSSE() {
         // Targeted fetch for tasks/workflows only — no full poll needed
         if (needTasks && activeView === 'tasks') fetchTasks();
         if (needWorkflows && activeView === 'workflows') fetchWorkflows();
+        if (needAgents && activeView === 'services') fetchApiAgents();
       }
     };
     eventSource.onopen = function() {
@@ -9057,6 +11951,11 @@ function initSSE() {
 
 // Init UI preferences
 initCompactMode();
+applyAgentFilterInputs();
+applyPinnedSectionState();
+refreshDashboardWorkspaceControls();
+updateSearchInputMode();
+syncSearchBarVisibility();
 
 // Load projects first, then poll (so auto-select works before first data fetch)
 loadProjects().then(function() {
@@ -9064,12 +11963,12 @@ loadProjects().then(function() {
   loadConversationList();
   poll();
   initSSE();
-  switchView('office');
+  switchView(activeView, { skipPersist: true });
 }).catch(function(e) {
   console.error('[LTT] init: loadProjects failed, polling anyway:', e);
   poll();
   initSSE();
-  switchView('office');
+  switchView(activeView, { skipPersist: true });
 });
 // Safety-net poll at 10s (SSE handles real-time, this catches any missed updates)
 setInterval(poll, 10000);

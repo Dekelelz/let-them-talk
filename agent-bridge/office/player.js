@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { S } from './state.js';
 import { createCharacter } from './character.js';
 import { resolveAppearance } from './appearance.js';
+import { galleryNavigate } from './gallery.js';
 // ============================================================
 // PLAYER AVATAR — Walk around the 3D world as a character
 // Not an agent — no MCP, no messages — just visual presence
@@ -16,6 +17,8 @@ var PLAYER_RADIUS = 0.35; // collision radius
 var _tmpForward = new THREE.Vector3();
 var _tmpRight = new THREE.Vector3();
 var _tmpDir = new THREE.Vector3();
+var _screenRaycaster = new THREE.Raycaster();
+_screenRaycaster.far = 8; // only detect screens within 8 units
 var _tmpCamTarget = new THREE.Vector3();
 var _tmpLookAt = new THREE.Vector3();
 var _tmpTargetPos = new THREE.Vector3();
@@ -25,63 +28,49 @@ var _tmpTargetPos = new THREE.Vector3();
 // Thin walls as boxes with small thickness
 
 function getCampusColliders() {
-  var W = 50, D = 35;
   var colliders = [
-    // Building walls (0.3 thick)
-    { minX: -W/2 - 0.3, maxX: -W/2,     minZ: -D/2, maxZ: D/2 },  // left wall
-    { minX:  W/2,       maxX:  W/2 + 0.3, minZ: -D/2, maxZ: D/2 },  // right wall
-    { minX: -W/2,       maxX:  W/2,       minZ: -D/2 - 0.3, maxZ: -D/2 }, // back wall
-    // Front wall with entrance gap (gap at x: -4 to 4)
-    { minX: -W/2,       maxX: -4,         minZ: D/2,  maxZ: D/2 + 0.3 },
-    { minX:  4,          maxX: W/2,        minZ: D/2,  maxZ: D/2 + 0.3 },
+    // Building walls (0.4 thick) — campus 90W x 60D (X: -45 to +45, Z: -30 to +30)
+    { minX: -45.4, maxX: -45,   minZ: -30,   maxZ: 30 },      // left wall
+    { minX:  45,   maxX:  45.4, minZ: -30,   maxZ: 30 },       // right wall (solid)
+    { minX: -45,   maxX:  45,   minZ: -30.4, maxZ: -30 },      // back wall
+    // Front wall with 6-unit entrance gap at center (X: -3 to +3)
+    { minX: -45,   maxX:  -3,   minZ:  30,   maxZ:  30.4 },
+    { minX:   3,   maxX:  45,   minZ:  30,   maxZ:  30.4 },
 
-    // Manager office walls: group at (12,5), offW=8, offD=7
-    // Left wall (x=8): z from 1.5 to 8.5
-    { minX: 7.85, maxX: 8.15, minZ: 1.5, maxZ: 8.5 },
-    // Right wall (x=16): z from 1.5 to 8.5
-    { minX: 15.85, maxX: 16.15, minZ: 1.5, maxZ: 8.5 },
-    // Back wall (z=8.5): x from 8 to 16
-    { minX: 8, maxX: 16, minZ: 8.35, maxZ: 8.65 },
-    // Front wall left of door (z=1.5, x from 8 to ~11.4)
-    { minX: 8, maxX: 11.4, minZ: 1.35, maxZ: 1.65 },
-    // Front wall right of door (z=1.5, x from ~12.6 to 16)
-    { minX: 12.6, maxX: 16, minZ: 1.35, maxZ: 1.65 },
+    // Manager office walls: center (30, 10), size 10x10
+    // Left wall (X=25): Z from 5 to 15
+    { minX: 24.8, maxX: 25.2, minZ:  5,   maxZ: 15 },
+    // Right wall (X=35): Z from 5 to 15
+    { minX: 34.8, maxX: 35.2, minZ:  5,   maxZ: 15 },
+    // Back wall (Z=15): X from 25 to 35
+    { minX: 25,   maxX: 35,   minZ: 14.8, maxZ: 15.2 },
+    // Front wall left of door (Z=5, X from 25 to 29.25)
+    { minX: 25,   maxX: 29.25, minZ: 4.85, maxZ: 5.15 },
+    // Front wall right of door (Z=5, X from 30.75 to 35)
+    { minX: 30.75, maxX: 35,   minZ: 4.85, maxZ: 5.15 },
     // Door collider (only active when closed) — handled dynamically below
 
-    // Glass partition between workspace and rec (z=-7, gap at x=-1 to 1)
-    { minX: -7, maxX: -1, minZ: -7.15, maxZ: -6.85 },
-    { minX:  1, maxX:  7, minZ: -7.15, maxZ: -6.85 },
-
-    // Glass partition designer/main (x=-8, gap at z=2 to 4)
-    { minX: -8.15, maxX: -7.85, minZ: -5, maxZ: 2 },
-    { minX: -8.15, maxX: -7.85, minZ: 4, maxZ: 7 },
-
     // Reception desk (ground floor)
-    { minX: -2.2, maxX: 2.2, minZ: 13.5, maxZ: 15, floor: 'ground' },
-    // Reception logo wall
-    { minX: -3, maxX: 3, minZ: 15.5, maxZ: 16, floor: 'ground' },
-    // Water feature
-    { minX: -1.5, maxX: 1.5, minZ: 9.5, maxZ: 10.5, floor: 'ground' },
+    { minX: -2.5, maxX: 2.5, minZ: 24,   maxZ: 26, floor: 'ground' },
+    // Water feature (ground floor)
+    { minX: -2.5, maxX: 2.5, minZ: 20,   maxZ: 22, floor: 'ground' },
 
-    // Bar counter (ground floor)
-    { minX: -17, maxX: -11, minZ: -12.7, maxZ: -11.3, floor: 'ground' },
+    // Bar area counter (ground floor, center -28,-18, approx)
+    { minX: -34, maxX: -22, minZ: -22, maxZ: -20, floor: 'ground' },
 
-    // Pool table (ground floor)
-    { minX: -3.3, maxX: -0.7, minZ: -12.7, maxZ: -11.3, floor: 'ground' },
-    // Foosball (ground floor)
-    { minX: 1.8, maxX: 3.2, minZ: -12.4, maxZ: -11.6, floor: 'ground' },
+    // Rec Center (ground floor, center 0,-18)
+    { minX: -5,  maxX:  5,  minZ: -22, maxZ: -20, floor: 'ground' },
 
-    // Mezzanine support columns (thin cylinders, approximate as small boxes)
-    // Columns at x: -18,-9,0,9,18  z: -CAMPUS_D/2 + MEZZ_DEPTH = -17.5+12 = -5.5
+    // Gym equipment (ground floor, center 22,-18)
+    { minX: 16,  maxX: 28,  minZ: -22, maxZ: -20, floor: 'ground' },
   ];
 
-  // Desk colliders (gaming desks)
+  // Desk colliders (20 regular desks)
   var CAMPUS_DESKS = [
-    { x: -4.5, z: 2 }, { x: -1.5, z: 2 }, { x: 1.5, z: 2 }, { x: 4.5, z: 2 },
-    { x: -4.5, z: -1 }, { x: -1.5, z: -1 }, { x: 1.5, z: -1 }, { x: 4.5, z: -1 },
-    { x: -4.5, z: -4 }, { x: -1.5, z: -4 }, { x: 1.5, z: -4 }, { x: 4.5, z: -4 },
-    { x: -14, z: 1 }, { x: -11, z: 1 },
-    { x: -14, z: -2 }, { x: -11, z: -2 },
+    { x: -8, z: 6 }, { x: -4, z: 6 }, { x: 0, z: 6 }, { x: 4, z: 6 }, { x: 8, z: 6 },
+    { x: -8, z: 10 }, { x: -4, z: 10 }, { x: 0, z: 10 }, { x: 4, z: 10 }, { x: 8, z: 10 },
+    { x: -8, z: 14 }, { x: -4, z: 14 }, { x: 0, z: 14 }, { x: 4, z: 14 }, { x: 8, z: 14 },
+    { x: -8, z: 18 }, { x: -4, z: 18 }, { x: 0, z: 18 }, { x: 4, z: 18 }, { x: 8, z: 18 },
   ];
   CAMPUS_DESKS.forEach(function(d) {
     // Desk body only — chair area excluded so player can stand up without getting stuck
@@ -89,13 +78,23 @@ function getCampusColliders() {
   });
 
   // Manager's desk inside office — chair side excluded (ground floor)
-  colliders.push({ minX: 10.5, maxX: 14.5, minZ: 5.5, maxZ: 6.8, floor: 'ground' });
+  colliders.push({ minX: 27, maxX: 33, minZ: 8.5, maxZ: 10, floor: 'ground' });
 
-  // Bar counter (ground floor)
-  // Pool table, foosball (ground floor) — already added above without tag, let me not duplicate
-
-  // Reception area (ground floor)
-  // Already added above
+  // Gallery Wing colliders (inside campus, center at X:-36, Z:10, 14W x 12D)
+  // West wall (X=-43)
+  colliders.push({ minX: -43.2, maxX: -42.8, minZ: 4, maxZ: 16 });
+  // South wall (Z=4)
+  colliders.push({ minX: -43, maxX: -29, minZ: 3.8, maxZ: 4.2 });
+  // North wall (Z=16)
+  colliders.push({ minX: -43, maxX: -29, minZ: 15.8, maxZ: 16.2 });
+  // East wall (X=-29) — glass facade with door gap at center (Z: 8.75 to 11.25)
+  colliders.push({ minX: -29.2, maxX: -28.8, minZ: 4, maxZ: 8.75 });
+  colliders.push({ minX: -29.2, maxX: -28.8, minZ: 11.25, maxZ: 16 });
+  // Gallery furniture
+  colliders.push({ minX: -39.4, maxX: -36.6, minZ: 11.5, maxZ: 12.5, floor: 'ground' }); // robot desk
+  colliders.push({ minX: -37.5, maxX: -34.5, minZ: 10.2, maxZ: 10.8, floor: 'ground' }); // bench
+  colliders.push({ minX: -33.3, maxX: -32.7, minZ: 13.5, maxZ: 14.5, floor: 'ground' }); // pedestal
+  colliders.push({ minX: -39.3, maxX: -38.7, minZ: 13.5, maxZ: 14.5, floor: 'ground' }); // pedestal
 
   return colliders;
 }
@@ -146,15 +145,15 @@ function checkCollision(x, z, r) {
 
   // Mezzanine railing — blocks walking off the edge (only when on mezzanine)
   if (onMezzanine && !onStairs) {
-    // Front edge of mezzanine at z = -5.5 (except staircase gap at x 18.75-21.25)
-    if (z > -5.7 && z < -5.3 && !(x >= STAIR_X_MIN - 0.5 && x <= STAIR_X_MAX + 0.5)) {
+    // Front edge of mezzanine at z = -18 (except staircase gap at x 33.5-36.5)
+    if (z > -18.2 && z < -17.8 && !(x >= STAIR_X_MIN - 0.5 && x <= STAIR_X_MAX + 0.5)) {
       return true;
     }
   }
 
   // Dynamic: manager door (closed = collider, open = passable)
   if (S.currentEnv === 'campus' && S._managerDoorLerp < 0.5 && !onMezzanine) {
-    var doorBox = { minX: 11.4, maxX: 12.6, minZ: 1.35, maxZ: 1.65 };
+    var doorBox = { minX: 29.25, maxX: 30.75, minZ: 4.85, maxZ: 5.15 };
     var dcx = Math.max(doorBox.minX, Math.min(x, doorBox.maxX));
     var dcz = Math.max(doorBox.minZ, Math.min(z, doorBox.maxZ));
     var ddx = x - dcx, ddz = z - dcz;
@@ -193,12 +192,12 @@ function resolveMovement(oldX, oldZ, newX, newZ, r) {
 }
 
 // ==================== HEIGHT SYSTEM ====================
-// Staircase: x 18.75-21.25, z -3.5 (bottom, y=0) to -9.5 (top, y=3.2)
-// Mezzanine: y=3.2, z from -17.5 to -5.5, full width
-var STAIR_X_MIN = 18.75, STAIR_X_MAX = 21.25;
-var STAIR_Z_BOTTOM = -3.5, STAIR_Z_TOP = -9.5;
+// Staircase: switchback at X=35, X range 33.5 to 36.5, Z -14 (bottom) to -22 (top, y=3.2)
+// Mezzanine: y=3.2, z from -30 to -18, full width (X: -43 to +43)
+var STAIR_X_MIN = 33.5, STAIR_X_MAX = 36.5;
+var STAIR_Z_BOTTOM = -14, STAIR_Z_TOP = -22;
 var MEZZ_HEIGHT = 3.2;
-var MEZZ_Z_BACK = -17.5, MEZZ_Z_FRONT = -5.5;
+var MEZZ_Z_BACK = -30, MEZZ_Z_FRONT = -18;
 
 function getGroundHeight(x, z, currentY) {
   if (S.currentEnv !== 'campus') return 0;
@@ -237,7 +236,7 @@ export function spawnPlayer() {
   } catch (e) {}
 
   var parts = createCharacter('Player', appearance);
-  parts.group.position.set(0, 0, 12); // spawn at lobby
+  parts.group.position.set(0, 0, 4); // spawn at main corridor, facing workspace
 
   // Remove typing dots and task indicator (player doesn't need them)
   parts.typingLabel.visible = false;
@@ -253,7 +252,7 @@ export function spawnPlayer() {
 
   S._player = {
     parts: parts,
-    pos: { x: 0, y: 0, z: 12 },
+    pos: { x: 0, y: 0, z: 4 },
     facing: 0, // radians, 0 = +z direction
     velocity: { x: 0, z: 0 },
     isMoving: false,
@@ -265,6 +264,8 @@ export function spawnPlayer() {
     _jumpVel: 0,
     _jumpY: 0,
     _landSquash: 0,
+    firstPerson: false,   // V key toggle
+    _vPressed: false,
   };
 
   // Disable spectator camera movement but keep key/mouse tracking alive
@@ -288,6 +289,14 @@ export function despawnPlayer() {
     if (S._player._sitPrompt.parentElement) S._player._sitPrompt.remove();
     S._player._sitPrompt = null;
   }
+  if (S._player._fpPrompt) {
+    if (S._player._fpPrompt.parentElement) S._player._fpPrompt.remove();
+    S._player._fpPrompt = null;
+  }
+  if (S._player._screenPrompt) {
+    if (S._player._screenPrompt.parentElement) S._player._screenPrompt.remove();
+    S._player._screenPrompt = null;
+  }
   S.scene.remove(S._player.parts.group);
   S._player.parts.group.traverse(function(child) {
     if (child.geometry) child.geometry.dispose();
@@ -297,6 +306,9 @@ export function despawnPlayer() {
     }
   });
   S._player = null;
+
+  // Release pointer lock if active
+  if (document.pointerLockElement) document.exitPointerLock();
 
   // Re-enable spectator camera
   if (S.controls) {
@@ -562,12 +574,79 @@ export function updatePlayer(dt, time, keys) {
     player.parts.rightLowerLeg.rotation.x = 1.5 * sl;
     player.parts.leftForearm.rotation.x = -0.4 * sl;
     player.parts.rightForearm.rotation.x = -0.4 * sl;
-    player.parts.group.position.y = player.pos.y + sl * 0.14;
+    player.parts.group.position.y = player.pos.y + sl * 0.08;
   }
 
-  // --- Third-person camera follow (or desk POV when sitting) ---
+  // --- E/Q: navigate gallery screens via line trace from camera ---
+  // Runs BEFORE sit system — if looking at a screen, E navigates instead of sitting
+  var _lookingAtScreen = null;
+  if (S._galleryScreenMeshes && S._galleryScreenMeshes.length > 0 && !player.sitting) {
+    _screenRaycaster.setFromCamera({ x: 0, y: 0 }, S.camera);
+    var screenHits = _screenRaycaster.intersectObjects(S._galleryScreenMeshes, false);
+    _lookingAtScreen = screenHits.length > 0 ? screenHits[0].object.userData._galleryScreen : null;
+
+    if (_lookingAtScreen) {
+      if (!player._screenPrompt) {
+        player._screenPrompt = document.createElement('div');
+        player._screenPrompt.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#06b6d4;padding:8px 16px;border-radius:8px;font-size:13px;z-index:1000;pointer-events:none;border:1px solid #06b6d4;';
+        document.body.appendChild(player._screenPrompt);
+      }
+      player._screenPrompt.textContent = _lookingAtScreen.toUpperCase() + ' — E: Next  Q: Prev';
+      player._screenPrompt.style.display = 'block';
+
+      // E = next, Q = previous (with cooldown to prevent skipping)
+      var now = performance.now();
+      var galleryCooldown = 300; // ms between navigations
+      if (!player._galleryLastNav) player._galleryLastNav = 0;
+
+      if (keys['KeyE'] && !player._screenEPressed && now - player._galleryLastNav > galleryCooldown) {
+        player._screenEPressed = true;
+        player._galleryLastNav = now;
+        galleryNavigate(_lookingAtScreen, 1);
+      }
+      if (!keys['KeyE']) player._screenEPressed = false;
+
+      if (keys['KeyQ'] && !player._screenQPressed && now - player._galleryLastNav > galleryCooldown) {
+        player._screenQPressed = true;
+        player._galleryLastNav = now;
+        galleryNavigate(_lookingAtScreen, -1);
+      }
+      if (!keys['KeyQ']) player._screenQPressed = false;
+    } else {
+      if (player._screenPrompt) player._screenPrompt.style.display = 'none';
+      player._screenEPressed = false;
+      player._screenQPressed = false;
+    }
+  }
+
+  // --- V key: toggle first-person / third-person ---
+  if (keys['KeyV'] && !player._vPressed) {
+    player._vPressed = true;
+    player.firstPerson = !player.firstPerson;
+    // Show/hide character mesh in first-person
+    player.parts.group.traverse(function(child) {
+      if (child.isMesh) child.visible = !player.firstPerson;
+    });
+    // Show FP indicator
+    if (!player._fpPrompt) {
+      player._fpPrompt = document.createElement('div');
+      player._fpPrompt.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);color:#58a6ff;padding:6px 14px;border-radius:6px;font-size:12px;z-index:1000;pointer-events:none;transition:opacity 0.5s;';
+      document.body.appendChild(player._fpPrompt);
+    }
+    player._fpPrompt.textContent = player.firstPerson ? 'First Person (V to switch)' : 'Third Person (V to switch)';
+    player._fpPrompt.style.opacity = '1';
+    clearTimeout(player._fpFadeTimer);
+    player._fpFadeTimer = setTimeout(function() {
+      if (player._fpPrompt) player._fpPrompt.style.opacity = '0';
+    }, 2000);
+  }
+  if (!keys['KeyV']) player._vPressed = false;
+
+  // --- Camera follow ---
   if (player.sitting) {
     updatePlayerCameraDesk(dt);
+  } else if (player.firstPerson) {
+    updatePlayerCameraFP(dt);
   } else {
     updatePlayerCamera(dt);
   }
@@ -622,6 +701,37 @@ function updatePlayerCameraDesk(dt) {
   // Look at the monitor (desk is at z, monitor is slightly behind at z - 0.3)
   _tmpLookAt.set(deskX, baseY + 1.2, deskZ - 0.5);
   S.camera.lookAt(_tmpLookAt);
+}
+
+// First-person camera — at head height, looks where mouse points
+function updatePlayerCameraFP(dt) {
+  var player = S._player;
+  if (!player) return;
+
+  var yaw = 0, pitch = 0;
+  if (S.controls && S.controls._euler) {
+    yaw = S.controls._euler.y;
+    pitch = -S.controls._euler.x; // flip: mouse up = look up
+  }
+
+  // Clamp pitch to prevent flipping
+  pitch = Math.max(-1.2, Math.min(1.2, pitch));
+
+  // Camera at standing eye level (higher than chibi head for immersive FP view)
+  var headY = player.pos.y + 1.65;
+  S.camera.position.set(player.pos.x, headY, player.pos.z);
+
+  // Look direction from yaw/pitch
+  var lookDist = 5;
+  var lookX = player.pos.x - Math.sin(yaw) * Math.cos(pitch) * lookDist;
+  var lookZ = player.pos.z - Math.cos(yaw) * Math.cos(pitch) * lookDist;
+  var lookY = headY - Math.sin(pitch) * lookDist;
+
+  _tmpLookAt.set(lookX, lookY, lookZ);
+  S.camera.lookAt(_tmpLookAt);
+
+  // Also face the character model in the look direction (for shadow/collision)
+  player.facing = yaw + Math.PI;
 }
 
 // --- Public API for iframe integration ---

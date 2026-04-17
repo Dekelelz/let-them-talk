@@ -56,6 +56,12 @@ export function SpectatorCamera(camera, domElement) {
     lastMouse.x = e.clientX;
     lastMouse.y = e.clientY;
     e.preventDefault();
+
+    // In player mode: request pointer lock on left click for FPS-style mouse
+    // Skip if world builder is open (needs free mouse cursor)
+    if (!self.enabled && e.button === 0 && !document.pointerLockElement && !window._builderActive) {
+      domElement.requestPointerLock();
+    }
   }
 
   function onMouseUp(e) {
@@ -65,12 +71,21 @@ export function SpectatorCamera(camera, domElement) {
   }
 
   function onMouseMove(e) {
-    var dx = e.clientX - lastMouse.x;
-    var dy = e.clientY - lastMouse.y;
-    lastMouse.x = e.clientX;
-    lastMouse.y = e.clientY;
+    var isLocked = document.pointerLockElement === domElement;
+    var dx, dy;
 
-    if (isRightDrag) {
+    if (isLocked) {
+      // Pointer lock: use movementX/Y directly (no need for drag)
+      dx = e.movementX;
+      dy = e.movementY;
+    } else {
+      dx = e.clientX - lastMouse.x;
+      dy = e.clientY - lastMouse.y;
+      lastMouse.x = e.clientX;
+      lastMouse.y = e.clientY;
+    }
+
+    if (isRightDrag || isLocked) {
       // Look around (rotate) — always update euler, but only apply to camera in spectator mode
       euler.y -= dx * self.lookSpeed;
       euler.x -= dy * self.lookSpeed;
@@ -78,11 +93,11 @@ export function SpectatorCamera(camera, domElement) {
       if (self.enabled) {
         camera.quaternion.setFromEuler(euler);
       }
-      // In player mode, euler is read by player.js for orbit camera
+      // In player mode, euler is read by player.js for orbit/FP camera
     }
 
-    if ((isLeftDrag || isMiddleDrag) && self.enabled) {
-      // Pan (strafe) — only in spectator mode
+    if ((isLeftDrag || isMiddleDrag) && self.enabled && !isLocked) {
+      // Pan (strafe) — only in spectator mode, not during pointer lock
       _panRight.setFromMatrixColumn(camera.matrixWorld, 0);
       _panUp.setFromMatrixColumn(camera.matrixWorld, 1);
       camera.position.addScaledVector(_panRight, -dx * self.panSpeed);
@@ -126,6 +141,12 @@ export function SpectatorCamera(camera, domElement) {
   function onContextMenu(e) {
     if (e.target === domElement) e.preventDefault();
   }
+
+  // Release pointer lock on Escape (browser does this, but track it)
+  function onPointerLockChange() {
+    // Nothing special needed — isLocked check in onMouseMove handles it
+  }
+  document.addEventListener('pointerlockchange', onPointerLockChange);
 
   // --- Public methods ---
   self.update = function(dt) {

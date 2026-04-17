@@ -22,4 +22,6 @@ export const S = {
   monitorCanvases: {},
   fpsCounter: 0,
   fpsTime: 0,
+  galleryScreens: null,
+  cachedMedia: [],
 };

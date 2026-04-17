@@ -15,10 +15,31 @@ function getProjectParam() {
   return window.activeProject ? '?project=' + encodeURIComponent(window.activeProject) : '';
 }
 
+function getScopedWorldUrl(path) {
+  if (typeof window.scopedApiUrl === 'function') {
+    return window.scopedApiUrl(path, null, { includeBranch: false });
+  }
+  return path + getProjectParam();
+}
+
+function clonePlacementEntry(entry) {
+  if (!entry || typeof entry !== 'object' || !entry.type) return null;
+  return {
+    id: entry.id || generatePlacementId(),
+    type: entry.type,
+    x: entry.x,
+    y: entry.y || 0,
+    z: entry.z,
+    rotY: entry.rotY || 0,
+    placed_by: entry.placed_by || 'user',
+    timestamp: entry.timestamp || new Date().toISOString()
+  };
+}
+
 // --- Load world layout from server ---
 export async function loadWorld() {
   try {
-    var res = await fetch('/api/world-layout' + getProjectParam());
+    var res = await fetch(getScopedWorldUrl('/api/world-layout'));
     if (res.ok) {
       var data = await res.json();
       _placements = Array.isArray(data) ? data : [];
@@ -38,7 +59,7 @@ function scheduleSave() {
   if (_saveTimeout) clearTimeout(_saveTimeout);
   _saveTimeout = setTimeout(function() {
     _saveTimeout = null;
-    fetch('/api/world-save' + getProjectParam(), {
+    fetch(getScopedWorldUrl('/api/world-save'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-LTT-Request': '1' },
       body: JSON.stringify(_placements)
@@ -50,7 +71,7 @@ function scheduleSave() {
 
 // --- Add a single placement ---
 export function addPlacement(type, x, y, z, rotY, placedBy) {
-  var entry = {
+  var entry = clonePlacementEntry({
     id: generatePlacementId(),
     type: type,
     x: x,
@@ -59,10 +80,20 @@ export function addPlacement(type, x, y, z, rotY, placedBy) {
     rotY: rotY || 0,
     placed_by: placedBy || 'user',
     timestamp: new Date().toISOString()
-  };
+  });
   _placements.push(entry);
   scheduleSave();
   return entry;
+}
+
+export function restorePlacement(entry) {
+  var restored = clonePlacementEntry(entry);
+  if (!restored) return null;
+  var idx = _placements.findIndex(function(p) { return p.id === restored.id; });
+  if (idx === -1) _placements.push(restored);
+  else _placements[idx] = restored;
+  scheduleSave();
+  return restored;
 }
 
 // --- Remove a placement by ID ---

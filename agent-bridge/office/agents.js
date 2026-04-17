@@ -1,11 +1,44 @@
 import { S } from './state.js';
 import { DESK_POSITIONS, SPAWN_POS, REST_AREA_POS, REST_AREA_ENTRANCE } from './constants.js';
 import { createCharacter } from './character.js';
+import { createRobotCharacter, updateRobotAnimation } from './robot-character.js';
 import { resolveAppearance } from './appearance.js';
 import { buildHair } from './hair.js';
 import { buildFaceSprite, setEmotion } from './face.js';
 import { buildOutfit, removeOutfit } from './outfits.js';
 import { getNavigationPath } from './navigation.js';
+import { GALLERY_SEATS } from './gallery.js';
+
+// Track which gallery seats are occupied (prevents overlapping bots)
+var _gallerySeatsOccupied = { image: null, video: null, texture: null };
+
+// Map bot capability to gallery seat
+// image_gen → image seat (left monitor), video_gen → video seat (center), texture_gen → texture seat (right)
+// vision/chat bots → null (go to regular desk)
+function _getGallerySeat(capability) {
+  var seatMap = { image_gen: 'image', video_gen: 'video', texture_gen: 'texture' };
+  var seatKey = seatMap[capability];
+  if (!seatKey || !GALLERY_SEATS || !GALLERY_SEATS[seatKey]) return null;
+  if (_gallerySeatsOccupied[seatKey]) return null; // seat taken
+  return GALLERY_SEATS[seatKey];
+}
+
+function _claimGallerySeat(capability, agentName) {
+  var seatMap = { image_gen: 'image', video_gen: 'video', texture_gen: 'texture' };
+  var seatKey = seatMap[capability];
+  if (seatKey) _gallerySeatsOccupied[seatKey] = agentName;
+}
+
+function _releaseGallerySeat(agentName) {
+  for (var key in _gallerySeatsOccupied) {
+    if (_gallerySeatsOccupied[key] === agentName) _gallerySeatsOccupied[key] = null;
+  }
+}
+
+// Get the Z position an agent should walk to when going to their desk
+function _agentDeskZ(agent) {
+  return agent.isGallerySeat ? agent.deskPos.z : agent.deskPos.z + 0.7;
+}
 
 // Navigate agent using waypoint pathfinding (campus) or direct walk (other envs)
 export function navigateTo(agent, tx, tz, callback) {
@@ -89,7 +122,9 @@ function assignDesk(agentName) {
 }
 
 function fetchTasks() {
-  var base = window.currentProjectPath ? '/api/tasks?project=' + encodeURIComponent(window.currentProjectPath) : '/api/tasks';
+  var base = typeof window.scopedApiUrl === 'function'
+    ? window.scopedApiUrl('/api/tasks')
+    : (window.currentProjectPath ? '/api/tasks?project=' + encodeURIComponent(window.currentProjectPath) : '/api/tasks');
   fetch(base).then(function(r) { return r.json(); }).then(function(data) {
     S.cachedTasks = Array.isArray(data) ? data : (data.tasks || []);
   }).catch(function() {});
@@ -153,6 +188,43 @@ function updateDeskScreen(deskIdx, status, isListening) {
   }
 }
 
+function shouldRenderAgent(info) {
+  var isApiAgent = !!(info && (info.is_api_agent || (info.role && info.role === 'api-agent')));
+  return !(isApiAgent && info.status !== 'active');
+}
+
+function retireAgent(agentName, agent, status) {
+  if (!agent) return;
+  agent.prevState = agent.state;
+  agent.state = status || 'dead';
+  agent.isListening = false;
+  agent.target = null;
+  agent.walkQueue = [];
+  agent.walkProgress = 0;
+  agent.walkDuration = 0;
+  agent.isSitting = false;
+  agent.location = 'desk';
+  if (agent.deskIdx >= 0) updateDeskScreen(agent.deskIdx, agent.state, false);
+  updateLabel(agent);
+  agent.registered = false;
+  if (!agent.dying) {
+    agent.dying = true;
+    agent.deathOpacity = 1;
+  }
+  _releaseGallerySeat(agentName);
+}
+
+function projectBotCapability(capabilities, legacyBotCapability) {
+  if (Array.isArray(capabilities)) {
+    if (capabilities.indexOf('video_generation') !== -1) return 'video_gen';
+    if (capabilities.indexOf('texture_generation') !== -1) return 'texture_gen';
+    if (capabilities.indexOf('image_generation') !== -1) return 'image_gen';
+    if (capabilities.indexOf('vision') !== -1) return 'vision';
+    if (capabilities.indexOf('chat') !== -1) return 'chat';
+  }
+  return legacyBotCapability || '';
+}
+
 function flashDeskScreen(deskIdx) {
   var desk = S.deskMeshes[deskIdx];
   if (!desk) return;
@@ -207,16 +279,48 @@ function rebuildCharacterAppearance(agent) {
 export function syncAgents() {
   if (!window.cachedAgents) return;
 
+  // Reset gallery seats if environment was switched
+  if (window._gallerySeatsReset) {
+    _gallerySeatsOccupied = { image: null, video: null, texture: null };
+    window._gallerySeatsReset = false;
+  }
+
   fetchTasks();
   updateConversationVelocity();
 
   for (var name in window.cachedAgents) {
     var info = window.cachedAgents[name];
+    // Skip API agents that aren't actively running (user hasn't clicked Start)
+    var isApiAgent = !!(info.is_api_agent || (info.role && info.role === 'api-agent'));
+    if (!shouldRenderAgent(info)) {
+      if (S.agents3d[name]) retireAgent(name, S.agents3d[name], info.status || 'dead');
+      continue;
+    }
+
     if (!S.agents3d[name]) {
-      var deskIdx = assignDesk(name);
-      var allDesks = getDeskPositions();
-      var deskPos = allDesks[deskIdx] || allDesks[0];
-      var parts = createCharacter(info.display_name || name, info.appearance || {});
+      var providerColor = info.provider_color || '#0ea5e9';
+      var botCap = projectBotCapability(info.capabilities, info.bot_capability);
+      var deskIdx, deskPos;
+
+      if (isApiAgent && _getGallerySeat(botCap)) {
+        // Creative bots (image/video/texture generators) sit at gallery desk
+        deskIdx = -1;
+        deskPos = _getGallerySeat(botCap);
+      } else if (isApiAgent && !_getGallerySeat(botCap)) {
+        // Non-creative bots (vision, chat) get a regular workspace desk
+        deskIdx = assignDesk(name);
+        var allDesks2 = getDeskPositions();
+        deskPos = allDesks2[deskIdx] || allDesks2[0];
+      } else {
+        deskIdx = assignDesk(name);
+        var allDesks = getDeskPositions();
+        deskPos = allDesks[deskIdx] || allDesks[0];
+      }
+      // Gallery bots (image/video/texture) get robot character, chat/vision bots get chibi
+      var isGalleryBot = isApiAgent && deskIdx === -1;
+      var parts = isGalleryBot
+        ? createRobotCharacter(info.display_name || name, providerColor)
+        : createCharacter(info.display_name || name, info.appearance || {});
       var agent = {
         name: name,
         displayName: info.display_name || name,
@@ -257,24 +361,32 @@ export function syncAgents() {
         lastMessageTime: 0,
         monitorTimer: 0,
         location: 'desk', // 'desk', 'dressing_room', 'rest', 'walking'
+        isApiAgent: isApiAgent,
+        botCapability: botCap,
+        isGallerySeat: !!(isApiAgent && deskIdx === -1),
+        _processing: false,
       };
+
+      // Claim gallery seat if applicable
+      if (isApiAgent && deskIdx === -1) _claimGallerySeat(botCap, name);
 
       parts.group.position.set(SPAWN_POS.x, 0, SPAWN_POS.z);
       S.scene.add(parts.group);
       updateLabel(agent);
       S.agents3d[name] = agent;
 
-      // Registration animation
+      // Gallery bots walk directly to seat pos, others walk to desk + 0.7 (chair offset)
+      var walkTargetZ = agent.isGallerySeat ? deskPos.z : deskPos.z + 0.7;
       showBubble(agent, 'Checking in...');
-      (function(a) {
+      (function(a, wz) {
         setTimeout(function() {
-          navigateTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
+          navigateTo(a, a.deskPos.x, wz, function() {
             a.registered = true;
-            showBubble(a, 'Ready to work!');
-            updateDeskScreen(a.deskIdx, a.state, a.isListening);
+            showBubble(a, a.isApiAgent ? 'Systems online.' : 'Ready to work!');
+            if (a.deskIdx >= 0) updateDeskScreen(a.deskIdx, a.state, a.isListening);
           });
         }, 800);
-      })(agent);
+      })(agent, walkTargetZ);
     } else {
       var existing = S.agents3d[name];
       var newState = info.status || 'active';
@@ -315,7 +427,7 @@ export function syncAgents() {
         existing.state = 'active';
         (function(a) {
           showBubble(a, 'Back to work!');
-          navigateTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
+          navigateTo(a, a.deskPos.x, _agentDeskZ(a), function() {
             a.location = 'desk';
           });
         })(existing);
@@ -365,7 +477,7 @@ export function syncAgents() {
       }
 
       updateLabel(existing);
-      if (existing.registered) updateDeskScreen(existing.deskIdx, existing.state, existing.isListening);
+      if (existing.registered && existing.deskIdx >= 0) updateDeskScreen(existing.deskIdx, existing.state, existing.isListening);
     }
   }
 
@@ -405,7 +517,7 @@ export function syncAgents() {
             showBubble(a, 'Hey ' + b.displayName + '!');
             setEmotion(a, 'playful', 6);
             var stopX = b.deskPos.x + 1.5;
-            var stopZ = b.deskPos.z + 0.7;
+            var stopZ = _agentDeskZ(b);
             navigateTo(a, stopX, stopZ, function() {
               // Face buddy
               var dx = b.pos.x - a.pos.x;
@@ -416,7 +528,7 @@ export function syncAgents() {
               b.facingTarget = Math.atan2(-dx, -dz);
               setTimeout(function() {
                 showBubble(a, 'Back to it!');
-                navigateTo(a, a.deskPos.x, a.deskPos.z + 0.7, function() {
+                navigateTo(a, a.deskPos.x, _agentDeskZ(a), function() {
                   a.location = 'desk';
                 });
                 // Buddy turns back to desk
@@ -431,12 +543,7 @@ export function syncAgents() {
 
   for (var n in S.agents3d) {
     if (!window.cachedAgents[n]) {
-      var deadAgent = S.agents3d[n];
-      if (!deadAgent.dying) {
-        deadAgent.dying = true;
-        deadAgent.deathOpacity = 1;
-        deadAgent.state = 'dead';
-      }
+      retireAgent(n, S.agents3d[n], 'dead');
     }
   }
 }
@@ -546,7 +653,7 @@ export function processMessages() {
 
             setTimeout(function() {
               // Sender walks back to desk
-              navigateTo(f, f.deskPos.x, f.deskPos.z + 0.7);
+              navigateTo(f, f.deskPos.x, _agentDeskZ(f));
               // Target turns back to desk after a short delay
               setTimeout(function() {
                 if (t._listeningTo === f.name) {
@@ -576,7 +683,7 @@ export function processMessages() {
               a._listeningTo = f.name;
             }
             setTimeout(function() {
-              navigateTo(f, f.deskPos.x, f.deskPos.z + 0.7);
+              navigateTo(f, f.deskPos.x, _agentDeskZ(f));
               // All listeners turn back
               setTimeout(function() {
                 for (var an2 in S.agents3d) {

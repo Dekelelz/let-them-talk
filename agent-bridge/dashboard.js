@@ -4,6 +4,20 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const { ApiAgentEngine } = require('./api-agents');
+const {
+  DEFAULT_DATA_DIR_NAME,
+  DEFAULT_MARKDOWN_WORKSPACE_DIR_NAME,
+  resolveDataDir: resolveSharedDataDir,
+  resolveDefaultDataRoot,
+} = require('./data-dir');
+const {
+  buildRuntimeContractMetadata,
+  resolveAgentContract,
+  sanitizeContractProfilePatch,
+} = require('./agent-contracts');
+const { resolveAgentRuntimeMetadata } = require('./runtime-descriptor');
+const { createCanonicalState } = require('./state/canonical');
 
 // --- File-level mutex for serializing read-then-write operations ---
 const lockMap = new Map();
@@ -15,11 +29,6 @@ function withFileLock(filePath, fn) {
 }
 
 const PORT = parseInt(process.env.AGENT_BRIDGE_PORT || '3000', 10);
-const LAN_STATE_FILE = path.join(__dirname, '.lan-mode');
-let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true' || (fs.existsSync(LAN_STATE_FILE) && fs.readFileSync(LAN_STATE_FILE, 'utf8').trim() === 'true');
-
-const LAN_TOKEN_FILE = path.join(__dirname, '.lan-token');
-let LAN_TOKEN = null;
 
 function generateLanToken() {
   const crypto = require('crypto');
@@ -35,8 +44,7 @@ function loadLanToken() {
   if (!LAN_TOKEN) generateLanToken();
 }
 
-// Load or generate token on startup
-loadLanToken();
+// Token loaded after DEFAULT_DATA_DIR is set (see below)
 
 function persistLanMode() {
   try { fs.writeFileSync(LAN_STATE_FILE, LAN_MODE ? 'true' : 'false'); } catch {}
@@ -56,10 +64,16 @@ function getLanIP() {
   }
   return fallback;
 }
-const DEFAULT_DATA_DIR = process.env.AGENT_BRIDGE_DATA || path.join(process.cwd(), '.agent-bridge');
+const DEFAULT_PROJECT_ROOT = resolveDefaultDataRoot();
+const DEFAULT_DATA_DIR = resolveSharedDataDir();
 const HTML_FILE = path.join(__dirname, 'dashboard.html');
 const LOGO_FILE = path.join(__dirname, 'logo.png');
-const PROJECTS_FILE = path.join(__dirname, 'projects.json');
+const PROJECTS_FILE = path.join(DEFAULT_DATA_DIR, 'projects.json');
+const LAN_STATE_FILE = path.join(DEFAULT_DATA_DIR, '.lan-mode');
+let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true' || (fs.existsSync(LAN_STATE_FILE) && fs.readFileSync(LAN_STATE_FILE, 'utf8').trim() === 'true');
+const LAN_TOKEN_FILE = path.join(DEFAULT_DATA_DIR, '.lan-token');
+let LAN_TOKEN = null;
+loadLanToken();
 
 // --- Multi-project support ---
 
@@ -85,22 +99,18 @@ function hasDataFiles(dir) {
 // Prefers directories with actual data files over empty ones
 function resolveDataDir(projectPath) {
   if (projectPath) {
-    const dir = path.join(projectPath, '.agent-bridge');
-    const dataDir = path.join(projectPath, 'data');
-    // Prefer whichever has data
-    if (hasDataFiles(dir)) return dir;
-    if (hasDataFiles(dataDir)) return dataDir;
-    if (fs.existsSync(dir)) return dir;
-    if (fs.existsSync(dataDir)) return dataDir;
-    return dir;
+    return path.join(projectPath, DEFAULT_DATA_DIR_NAME);
   }
-  const legacyDir = path.join(__dirname, 'data');
-  // Prefer dir with actual data files
-  if (hasDataFiles(DEFAULT_DATA_DIR)) return DEFAULT_DATA_DIR;
-  if (hasDataFiles(legacyDir)) return legacyDir;
-  if (fs.existsSync(DEFAULT_DATA_DIR)) return DEFAULT_DATA_DIR;
-  if (fs.existsSync(legacyDir)) return legacyDir;
   return DEFAULT_DATA_DIR;
+}
+
+const canonicalStateCache = new Map();
+function getCanonicalState(projectPath) {
+  const dataDir = resolveDataDir(projectPath);
+  if (!canonicalStateCache.has(dataDir)) {
+    canonicalStateCache.set(dataDir, createCanonicalState({ dataDir, processPid: process.pid }));
+  }
+  return canonicalStateCache.get(dataDir);
 }
 
 function filePath(name, projectPath) {
@@ -114,12 +124,26 @@ function validateProjectPath(projectPath) {
   const projects = getProjects();
   const cwd = path.resolve(process.cwd());
   const scriptDir = path.resolve(__dirname);
-  if (absPath === cwd || absPath === scriptDir) return true;
+  if (absPath === DEFAULT_PROJECT_ROOT || absPath === cwd || absPath === scriptDir) return true;
   return projects.some(p => path.resolve(p.path) === absPath);
 }
 
 function htmlEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const BRANCH_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function getValidatedBranch(query) {
+  const branchParam = query.get('branch') || null;
+  if (branchParam && !BRANCH_NAME_RE.test(branchParam)) {
+    return { error: 'Invalid branch name' };
+  }
+  return { branch: branchParam || 'main' };
+}
+
+function getRouteErrorStatus(result) {
+  return result && result.error ? 400 : 200;
 }
 
 // --- Shared helpers ---
@@ -214,86 +238,27 @@ function getDefaultAvatar(name) {
 
 function apiHistory(query) {
   const projectPath = query.get('project') || null;
-  const branch = query.get('branch') || null;
-  if (branch && !/^[a-zA-Z0-9_-]{1,64}$/.test(branch)) {
-    return { error: 'Invalid branch name' };
-  }
-  const histFile = branch && branch !== 'main'
-    ? filePath(`branch-${branch}-history.jsonl`, projectPath)
-    : filePath('history.jsonl', projectPath);
-  let history = readJsonl(histFile);
-
-  // Merge channel-specific history files
-  const dataDir = resolveDataDir(projectPath);
-  try {
-    const files = fs.readdirSync(dataDir);
-    for (const f of files) {
-      if (f.startsWith('channel-') && f.endsWith('-history.jsonl') && f !== 'channel-general-history.jsonl') {
-        const channelHistory = readJsonl(path.join(dataDir, f));
-        history = history.concat(channelHistory);
-      }
-    }
-  } catch {}
-  // Sort merged messages by timestamp
-  history.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-  const acks = readJson(filePath('acks.json', projectPath));
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
   const limit = Math.min(parseInt(query.get('limit') || '500', 10), 1000);
   const page = parseInt(query.get('page') || '0', 10);
   const threadId = query.get('thread_id');
 
-  let messages = history;
-  if (threadId) {
-    messages = messages.filter(m => m.thread_id === threadId || m.id === threadId);
-  }
-
-  // Scale fix: pagination support for large histories
-  const total = messages.length;
-  if (page > 0) {
-    // Page-based: page 1 = most recent, page 2 = older, etc.
-    const start = Math.max(0, total - (page * limit));
-    const end = Math.max(0, total - ((page - 1) * limit));
-    messages = messages.slice(start, end);
-  } else {
-    // Default: last N messages (backward compatible)
-    messages = messages.slice(-limit);
-  }
-
-  messages.forEach(m => { m.acked = !!acks[m.id]; });
-  // Include pagination metadata when page is requested
-  if (page > 0) {
-    return { messages, total, page, limit, pages: Math.ceil(total / limit) };
-  }
-  return messages;
+  return getCanonicalState(projectPath).getHistoryView({ branch: branchResult.branch, limit, page, threadId });
 }
 
 function apiChannels(query) {
   const projectPath = query.get('project') || null;
-  const channelsFile = filePath('channels.json', projectPath);
-  const channels = readJson(channelsFile);
-  if (!channels) return { general: { description: 'General channel', members: ['*'], message_count: 0 } };
-  const dataDir = resolveDataDir(projectPath);
-  const result = {};
-  for (const [name, ch] of Object.entries(channels)) {
-    let msgCount = 0;
-    const msgFile = name === 'general'
-      ? filePath('history.jsonl', projectPath)
-      : path.join(dataDir, 'channel-' + name + '-history.jsonl');
-    try {
-      if (fs.existsSync(msgFile)) {
-        const content = fs.readFileSync(msgFile, 'utf8').trim();
-        if (content) msgCount = content.split(/\r?\n/).filter(l => l.trim()).length;
-      }
-    } catch {}
-    result[name] = { description: ch.description || '', members: ch.members, message_count: msgCount };
-  }
-  return result;
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).getChannelsView({ branch: branchResult.branch });
 }
 
 function apiAgents(query) {
   const projectPath = query.get('project') || null;
-  const agents = readJson(filePath('agents.json', projectPath));
-  const profiles = readJson(filePath('profiles.json', projectPath));
+  const canonicalState = getCanonicalState(projectPath);
+  const agents = canonicalState.listAgents();
+  const profiles = canonicalState.listProfiles();
   const history = readJsonl(filePath('history.jsonl', projectPath));
 
   // Merge per-agent heartbeat files — agents write these during listen loops
@@ -321,11 +286,24 @@ function apiAgents(query) {
   }
 
   for (const [name, info] of Object.entries(agents)) {
-    const alive = isPidAlive(info.pid, info.last_activity);
+    // API agents: alive = status is 'active' (they share dashboard PID, so PID check is meaningless)
+    const alive = info.is_api_agent ? (info.status === 'active') : isPidAlive(info.pid, info.last_activity);
     const lastActivity = info.last_activity || info.timestamp;
     const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
     const profile = profiles[name] || {};
+    const contract = resolveAgentContract(profile);
     const isLocal = (() => { try { process.kill(info.pid, 0); return true; } catch { return false; } })();
+    const runtimeMetadata = resolveAgentRuntimeMetadata({
+      name,
+      is_api_agent: !!(info.is_api_agent),
+      runtime_type: info.runtime_type,
+      provider_id: info.provider_id,
+      model_id: info.model_id,
+      capabilities: info.capabilities,
+      provider: info.provider,
+      provider_color: info.provider_color,
+      bot_capability: info.bot_capability,
+    });
     result[name] = {
       pid: info.pid,
       alive,
@@ -333,26 +311,31 @@ function apiAgents(query) {
       last_activity: lastActivity,
       last_message: lastMessageTime[name] || null,
       idle_seconds: alive ? idleSeconds : null,
-      status: !alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active',
+      status: info.is_api_agent ? (info.status || 'sleeping') : (!alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active'),
       listening_since: info.listening_since || null,
       is_listening: !!(info.listening_since && alive),
-      provider: info.provider || 'unknown',
+      runtime_type: runtimeMetadata.runtime_type,
+      provider_id: runtimeMetadata.provider_id,
+      model_id: runtimeMetadata.model_id,
+      capabilities: runtimeMetadata.capabilities,
+      provider: runtimeMetadata.provider || 'unknown',
       branch: info.branch || 'main',
       display_name: profile.display_name || name,
       avatar: profile.avatar || getDefaultAvatar(name),
       role: profile.role || '',
       bio: profile.bio || '',
+      ...buildRuntimeContractMetadata(contract),
       appearance: profile.appearance || {},
       hostname: info.hostname || null,
       is_remote: !isLocal && alive,
+      is_api_agent: !!(info.is_api_agent),
+      provider_color: runtimeMetadata.provider_color || null,
+      bot_capability: runtimeMetadata.bot_capability,
     };
     // Include workspace status for agent intent board
     try {
-      const wsPath = path.join(resolveDataDir(projectPath), 'workspaces', name + '.json');
-      if (fs.existsSync(wsPath)) {
-        const ws = JSON.parse(fs.readFileSync(wsPath, 'utf8'));
-        if (ws._status) result[name].current_status = ws._status;
-      }
+      const workspace = canonicalState.readWorkspace(name, { branch: info.branch || 'main' });
+      if (workspace && workspace._status) result[name].current_status = workspace._status;
     } catch {}
   }
   return result;
@@ -395,6 +378,20 @@ function apiStatus(query) {
   }
 
   return result;
+}
+
+function apiPlanStatus(query) {
+  const projectPath = query.get('project') || null;
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).getPlanStatusView({ branch: branchResult.branch });
+}
+
+function apiPlanReport(query) {
+  const projectPath = query.get('project') || null;
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).getPlanReportView({ branch: branchResult.branch });
 }
 
 function apiStats(query) {
@@ -640,10 +637,9 @@ function apiSearchAll(query) {
 }
 
 // --- v3.4: Replay Export ---
-function apiExportReplay(query) {
+function apiExportReplay(query, branchName = 'main') {
   const projectPath = query.get('project') || null;
-  const history = readJsonl(filePath('history.jsonl', projectPath));
-  const profiles = readJson(filePath('profiles.json', projectPath));
+  const history = getCanonicalState(projectPath).getConversationMessages({ branch: branchName });
 
   const colors = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f778ba','#ff7b72','#79c0ff','#7ee787'];
   const agentColors = {};
@@ -715,71 +711,19 @@ showNext();
 
 function apiReset(query) {
   const projectPath = query.get('project') || null;
-  const dataDir = resolveDataDir(projectPath);
-  const fixedFiles = ['messages.jsonl', 'history.jsonl', 'agents.json', 'acks.json', 'tasks.json', 'profiles.json', 'workflows.json', 'branches.json', 'read_receipts.json', 'permissions.json', 'config.json'];
-  for (const f of fixedFiles) {
-    const p = path.join(dataDir, f);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-  }
-  if (fs.existsSync(dataDir)) {
-    for (const f of fs.readdirSync(dataDir)) {
-      if (f.startsWith('consumed-') && f.endsWith('.json')) {
-        fs.unlinkSync(path.join(dataDir, f));
-      }
-      if (f.startsWith('branch-') && (f.endsWith('-messages.jsonl') || f.endsWith('-history.jsonl'))) {
-        fs.unlinkSync(path.join(dataDir, f));
-      }
-    }
-  }
-  // Remove workspaces dir
-  const wsDir = path.join(dataDir, 'workspaces');
-  if (fs.existsSync(wsDir)) {
-    for (const f of fs.readdirSync(wsDir)) fs.unlinkSync(path.join(wsDir, f));
-    try { fs.rmdirSync(wsDir); } catch {}
-  }
-  return { success: true };
+  return getCanonicalState(projectPath).resetRuntime();
 }
 
 function apiClearMessages(query) {
   const projectPath = query.get('project') || null;
-  const dataDir = resolveDataDir(projectPath);
-  for (const f of ['messages.jsonl', 'history.jsonl']) {
-    const p = path.join(dataDir, f);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-  }
-  if (fs.existsSync(dataDir)) {
-    for (const f of fs.readdirSync(dataDir)) {
-      if (f.startsWith('consumed-') && f.endsWith('.json')) {
-        fs.unlinkSync(path.join(dataDir, f));
-      }
-    }
-  }
-  return { success: true };
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).clearMessages({ branch: branchResult.branch, actor: 'Dashboard' });
 }
 
 function apiNewConversation(query) {
   const projectPath = query.get('project') || null;
-  const dataDir = resolveDataDir(projectPath);
-  const convDir = path.join(dataDir, 'conversations');
-  if (!fs.existsSync(convDir)) fs.mkdirSync(convDir, { recursive: true });
-  const now = new Date();
-  const stamp = now.toISOString().replace(/:/g, '-').replace(/\.\d+Z$/, '') + '-' + Math.random().toString(36).slice(2, 6);
-  const baseName = 'conversation-' + stamp;
-  const msgSrc = path.join(dataDir, 'messages.jsonl');
-  const histSrc = path.join(dataDir, 'history.jsonl');
-  if (fs.existsSync(msgSrc)) fs.copyFileSync(msgSrc, path.join(convDir, baseName + '.jsonl'));
-  if (fs.existsSync(histSrc)) fs.copyFileSync(histSrc, path.join(convDir, baseName + '-history.jsonl'));
-  // Clean up current files
-  if (fs.existsSync(msgSrc)) fs.unlinkSync(msgSrc);
-  if (fs.existsSync(histSrc)) fs.unlinkSync(histSrc);
-  if (fs.existsSync(dataDir)) {
-    for (const f of fs.readdirSync(dataDir)) {
-      if (f.startsWith('consumed-') && f.endsWith('.json')) {
-        fs.unlinkSync(path.join(dataDir, f));
-      }
-    }
-  }
-  return { success: true, archived: baseName };
+  return getCanonicalState(projectPath).archiveCurrentConversation();
 }
 
 function apiListConversations(query) {
@@ -817,57 +761,30 @@ function apiLoadConversation(query) {
   if (!name || /[^a-zA-Z0-9_-]/.test(name) || name.length > 100) {
     return { error: 'Invalid conversation name' };
   }
-  const dataDir = resolveDataDir(projectPath);
-  const convDir = path.join(dataDir, 'conversations');
-  const msgFile = path.join(convDir, name + '.jsonl');
-  const histFile = path.join(convDir, name + '-history.jsonl');
-  if (!fs.existsSync(msgFile)) return { error: 'Conversation not found' };
-  // Use file lock to prevent corruption during concurrent writes
-  const lockPath = path.join(dataDir, 'messages.jsonl.lock');
-  try { fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' }); } catch {
-    return { error: 'Messages file is locked by another operation. Try again.' };
-  }
-  try {
-    fs.copyFileSync(msgFile, path.join(dataDir, 'messages.jsonl'));
-    if (fs.existsSync(histFile)) {
-      fs.copyFileSync(histFile, path.join(dataDir, 'history.jsonl'));
-    } else {
-      const hp = path.join(dataDir, 'history.jsonl');
-      if (fs.existsSync(hp)) fs.unlinkSync(hp);
-    }
-    // Clear stale consumed offsets
-    if (fs.existsSync(dataDir)) {
-      for (const f of fs.readdirSync(dataDir)) {
-        if (f.startsWith('consumed-') && f.endsWith('.json')) {
-          fs.unlinkSync(path.join(dataDir, f));
-        }
-      }
-    }
-  } finally {
-    try { fs.unlinkSync(lockPath); } catch {}
-  }
-  return { success: true };
+  return getCanonicalState(projectPath).loadConversation(name);
 }
 
 // Inject a message from the dashboard (system message or nudge to an agent)
 function apiInjectMessage(body, query) {
   const projectPath = query.get('project') || null;
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  const branch = branchResult.branch;
   const dataDir = resolveDataDir(projectPath);
-  const messagesFile = path.join(dataDir, 'messages.jsonl');
-  const historyFile = path.join(dataDir, 'history.jsonl');
+  const canonicalState = getCanonicalState(projectPath);
 
-  if (!body.to || !body.content) {
+  if (!body.to || (!body.content && (!body.attachments || body.attachments.length === 0))) {
     return { error: 'Missing "to" and/or "content" fields' };
   }
-  if (typeof body.content !== 'string' || body.content.length > 100000) {
+  if (body.content && (typeof body.content !== 'string' || body.content.length > 100000)) {
     return { error: 'Message content too long (max 100KB)' };
   }
   if (body.to !== '__all__' && !/^[a-zA-Z0-9_-]{1,20}$/.test(body.to)) {
     return { error: 'Invalid agent name' };
   }
-
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  const fromName = 'Dashboard';
+  // Allow sending as 'Owner' or 'Dashboard' (both are treated as high-priority by agents)
+  const fromName = (body.from === 'Owner' || body.from === 'owner') ? 'Owner' : 'Dashboard';
   const now = new Date().toISOString();
 
   // Broadcast to all agents
@@ -879,12 +796,12 @@ function apiInjectMessage(body, query) {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
         from: fromName,
         to: name,
-        content: body.content,
+        content: body.content || '',
         timestamp: now,
         system: true,
       };
-      fs.appendFileSync(messagesFile, JSON.stringify(msg) + '\n');
-      fs.appendFileSync(historyFile, JSON.stringify(msg) + '\n');
+      if (body.attachments && body.attachments.length > 0) msg.attachments = body.attachments;
+      canonicalState.appendMessage(msg, { branch });
       ids.push(msg.id);
     }
     return { success: true, messageIds: ids, broadcast: true };
@@ -894,13 +811,19 @@ function apiInjectMessage(body, query) {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
     from: fromName,
     to: body.to,
-    content: body.content,
+    content: body.content || '',
     timestamp: now,
     system: true,
   };
+  if (body.attachments && body.attachments.length > 0) msg.attachments = body.attachments;
 
-  fs.appendFileSync(messagesFile, JSON.stringify(msg) + '\n');
-  fs.appendFileSync(historyFile, JSON.stringify(msg) + '\n');
+  // Route to private assistant channel if targeting Assistant
+  if (body.to === 'Assistant' && body.assistant_private === true) {
+    const assistantMsgFile = path.join(dataDir, 'assistant-messages.jsonl');
+    fs.appendFileSync(assistantMsgFile, JSON.stringify(msg) + '\n');
+  } else {
+    canonicalState.appendMessage(msg, { branch });
+  }
 
   return { success: true, messageId: msg.id };
 }
@@ -953,12 +876,9 @@ function apiRemoveProject(body) {
 }
 
 // Export conversation as self-contained HTML
-function apiExportHtml(query) {
+function apiExportHtml(query, branchName = 'main') {
   const projectPath = query.get('project') || null;
-  const history = readJsonl(filePath('history.jsonl', projectPath));
-  const acks = readJson(filePath('acks.json', projectPath));
-  const agents = readJson(filePath('agents.json', projectPath));
-  history.forEach(m => { m.acked = !!acks[m.id]; });
+  const history = getCanonicalState(projectPath).getConversationMessages({ branch: branchName });
 
   const agentNames = [...new Set(history.map(m => m.from))];
   const exportDate = new Date().toLocaleString();
@@ -1109,56 +1029,70 @@ function apiTimeline(query) {
 // Tasks API
 function apiTasks(query) {
   const projectPath = query.get('project') || null;
-  const tasksFile = filePath('tasks.json', projectPath);
-  if (!fs.existsSync(tasksFile)) return [];
-  try { return JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch { return []; }
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).listTasks({ branch: branchResult.branch });
+}
+
+function apiSearch(query) {
+  const projectPath = query.get('project') || null;
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+
+  const searchQuery = (query.get('q') || '').trim();
+  const from = query.get('from') || null;
+  const limit = Math.min(Math.max(1, parseInt(query.get('limit') || '50', 10)), 100);
+
+  if (searchQuery.length < 2) {
+    return { error: 'Query must be at least 2 characters' };
+  }
+
+  const results = getCanonicalState(projectPath).getSearchResultsView({
+    branch: branchResult.branch,
+    query: searchQuery,
+    from,
+    limit,
+  });
+
+  return {
+    query: searchQuery,
+    results_count: results.length,
+    results,
+  };
 }
 
 function apiUpdateTask(body, query) {
   const projectPath = query.get('project') || null;
-  const tasksFile = filePath('tasks.json', projectPath);
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
   if (!body.task_id || !body.status) return { error: 'Missing task_id or status' };
 
-  let tasks = [];
-  if (fs.existsSync(tasksFile)) {
-    try { tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch {}
-  }
-
-  const task = tasks.find(t => t.id === body.task_id);
-  if (!task) return { error: 'Task not found' };
-
-  const validStatuses = ['pending', 'in_progress', 'done', 'blocked'];
+  const validStatuses = ['pending', 'in_progress', 'in_review', 'done', 'blocked'];
   if (!validStatuses.includes(body.status)) return { error: 'Invalid status. Must be: ' + validStatuses.join(', ') };
-  task.status = body.status;
-  task.updated_at = new Date().toISOString();
-  if (body.notes) {
-    if (!Array.isArray(task.notes)) task.notes = [];
-    task.notes.push({ by: 'Dashboard', text: body.notes, at: new Date().toISOString() });
-  }
-
-  fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
-  return { success: true, task_id: task.id, status: task.status };
+  return getCanonicalState(projectPath).updateTaskStatus({
+    taskId: body.task_id,
+    status: body.status,
+    notes: body.notes,
+    actor: 'Dashboard',
+    branch: branchResult.branch,
+  });
 }
 
 // Rules API
 function apiRules(query) {
   const projectPath = query.get('project') || null;
-  const rulesFile = filePath('rules.json', projectPath);
-  if (!fs.existsSync(rulesFile)) return [];
-  try { return JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch { return []; }
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).listRules({ branch: branchResult.branch });
 }
 
 function apiAddRule(body, query) {
   const projectPath = query.get('project') || null;
-  const rulesFile = filePath('rules.json', projectPath);
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
   if (!body.text || !body.text.trim()) return { error: 'Rule text is required' };
 
   const crypto = require('crypto');
-  let rules = [];
-  if (fs.existsSync(rulesFile)) {
-    try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch {}
-  }
-
   const rule = {
     id: 'rule_' + crypto.randomBytes(6).toString('hex'),
     text: body.text.trim(),
@@ -1168,49 +1102,49 @@ function apiAddRule(body, query) {
     created_at: new Date().toISOString(),
     active: true
   };
-  rules.push(rule);
-  fs.writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
-  return { success: true, rule };
+  const created = getCanonicalState(projectPath).addRule({
+    rule,
+    actor: body.created_by || 'Dashboard',
+    branch: branchResult.branch,
+    correlationId: rule.id,
+  });
+  if (created.error) return created;
+  return { success: true, rule: created.rule };
 }
 
 function apiUpdateRule(body, query) {
   const projectPath = query.get('project') || null;
-  const rulesFile = filePath('rules.json', projectPath);
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
   if (!body.rule_id) return { error: 'Missing rule_id' };
 
-  let rules = [];
-  if (fs.existsSync(rulesFile)) {
-    try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch {}
-  }
-
-  const rule = rules.find(r => r.id === body.rule_id);
-  if (!rule) return { error: 'Rule not found' };
-
-  if (body.text !== undefined) rule.text = body.text.trim();
-  if (body.category !== undefined) rule.category = body.category;
-  if (body.priority !== undefined) rule.priority = body.priority;
-  if (body.active !== undefined) rule.active = body.active;
-  rule.updated_at = new Date().toISOString();
-
-  fs.writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
-  return { success: true, rule };
+  const updated = getCanonicalState(projectPath).updateRule({
+    ruleId: body.rule_id,
+    text: body.text !== undefined ? body.text.trim() : undefined,
+    category: body.category,
+    priority: body.priority,
+    active: body.active,
+    actor: body.updated_by || 'Dashboard',
+    branch: branchResult.branch,
+    correlationId: body.rule_id,
+  });
+  if (updated.error) return updated;
+  return { success: true, rule: updated.rule };
 }
 
 function apiDeleteRule(body, query) {
   const projectPath = query.get('project') || null;
-  const rulesFile = filePath('rules.json', projectPath);
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
   if (!body.rule_id) return { error: 'Missing rule_id' };
 
-  let rules = [];
-  if (fs.existsSync(rulesFile)) {
-    try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch {}
-  }
-
-  const idx = rules.findIndex(r => r.id === body.rule_id);
-  if (idx === -1) return { error: 'Rule not found' };
-  rules.splice(idx, 1);
-
-  fs.writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
+  const removed = getCanonicalState(projectPath).removeRule({
+    ruleId: body.rule_id,
+    actor: body.deleted_by || 'Dashboard',
+    branch: branchResult.branch,
+    correlationId: body.rule_id,
+  });
+  if (removed.error) return removed;
   return { success: true };
 }
 
@@ -1228,6 +1162,7 @@ function apiDiscover() {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
+        if (entry.name === DEFAULT_MARKDOWN_WORKSPACE_DIR_NAME) continue;
         if (entry.name.startsWith('.') && entry.name !== '.agent-bridge') continue;
         if (entry.name === 'node_modules') continue;
         const fullPath = path.join(dir, entry.name);
@@ -1253,7 +1188,6 @@ function apiDiscover() {
     scanDir(path.join(home, 'Desktop'), 0);
     scanDir(path.join(home, 'Documents'), 0);
     scanDir(path.join(home, 'Projects'), 0);
-    scanDir(path.join(home, 'Desktop', 'Claude Projects'), 0);
     scanDir(path.join(home, 'Desktop', 'Projects'), 0);
   }
 
@@ -1339,124 +1273,42 @@ function apiLaunchAgent(body) {
 async function apiEditMessage(body, query) {
   const projectPath = query.get('project') || null;
   const { id, content } = body;
+  const branch = query.get('branch') || null;
   if (!id || !content) return { error: 'Missing "id" and/or "content" fields' };
   if (content.length > 50000) return { error: 'Content too long (max 50000 chars)' };
 
-  const dataDir = resolveDataDir(projectPath);
-  const historyFile = path.join(dataDir, 'history.jsonl');
-  const messagesFile = path.join(dataDir, 'messages.jsonl');
+  if (branch && !/^[a-zA-Z0-9_-]{1,64}$/.test(branch)) return { error: 'Invalid branch name' };
 
-  let found = false;
-  const now = new Date().toISOString();
-
-  // Update in history.jsonl (locked)
-  await withFileLock(historyFile, () => {
-    if (fs.existsSync(historyFile)) {
-      const lines = fs.readFileSync(historyFile, 'utf8').trim().split(/\r?\n/).filter(Boolean);
-      const updated = lines.map(line => {
-        try {
-          const msg = JSON.parse(line);
-          if (msg.id === id) {
-            found = true;
-            if (!msg.edit_history) msg.edit_history = [];
-            msg.edit_history.push({ content: msg.content, edited_at: now });
-            if (msg.edit_history.length > 10) msg.edit_history = msg.edit_history.slice(-10);
-            msg.content = content;
-            msg.edited = true;
-            msg.edited_at = now;
-            return JSON.stringify(msg);
-          }
-          return line;
-        } catch { return line; }
-      });
-      if (found) fs.writeFileSync(historyFile, updated.join('\n') + '\n');
-    }
+  const result = getCanonicalState(projectPath).editMessage({
+    id,
+    content,
+    branch,
+    actor: 'Dashboard',
+    maxEditHistory: 10,
   });
 
-  // Also update in messages.jsonl (locked independently)
-  if (found) {
-    await withFileLock(messagesFile, () => {
-      if (fs.existsSync(messagesFile)) {
-        const raw = fs.readFileSync(messagesFile, 'utf8').trim();
-        if (raw) {
-          const lines = raw.split(/\r?\n/);
-          const updated = lines.map(line => {
-            try {
-              const msg = JSON.parse(line);
-              if (msg.id === id) {
-                msg.content = content;
-                msg.edited = true;
-                msg.edited_at = now;
-                return JSON.stringify(msg);
-              }
-              return line;
-            } catch { return line; }
-          });
-          fs.writeFileSync(messagesFile, updated.join('\n') + '\n');
-        }
-      }
-    });
-  }
-
-  if (!found) return { error: 'Message not found' };
-  return { success: true, id, edited_at: now };
+  if (!result) return { error: 'Message not found' };
+  return { success: true, id, edited_at: result.edited_at };
 }
 
 // --- v3.4: Message Delete ---
 async function apiDeleteMessage(body, query) {
   const projectPath = query.get('project') || null;
   const { id } = body;
+  const branch = query.get('branch') || null;
   if (!id) return { error: 'Missing "id" field' };
 
-  const dataDir = resolveDataDir(projectPath);
-  const historyFile = path.join(dataDir, 'history.jsonl');
-  const messagesFile = path.join(dataDir, 'messages.jsonl');
+  if (branch && !/^[a-zA-Z0-9_-]{1,64}$/.test(branch)) return { error: 'Invalid branch name' };
 
-  let found = false;
-  let msgFrom = null;
-
-  // Find the message and remove from history.jsonl (locked)
-  await withFileLock(historyFile, () => {
-    if (fs.existsSync(historyFile)) {
-      const lines = fs.readFileSync(historyFile, 'utf8').trim().split(/\r?\n/);
-      for (const line of lines) {
-        try {
-          const msg = JSON.parse(line);
-          if (msg.id === id) { found = true; msgFrom = msg.from; break; }
-        } catch {}
-      }
-
-      if (found) {
-        const allowed = ['Dashboard', 'dashboard', 'system', '__system__'];
-        if (allowed.includes(msgFrom)) {
-          const filtered = lines.filter(line => {
-            try { return JSON.parse(line).id !== id; } catch { return true; }
-          });
-          fs.writeFileSync(historyFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
-        }
-      }
-    }
+  const result = getCanonicalState(projectPath).deleteMessage({
+    id,
+    branch,
+    actor: 'Dashboard',
+    allowedFrom: ['Dashboard', 'dashboard', 'system', '__system__'],
   });
 
-  if (!found) return { error: 'Message not found' };
-
-  // Only allow deleting dashboard-injected or system messages
-  const allowed = ['Dashboard', 'dashboard', 'system', '__system__'];
-  if (!allowed.includes(msgFrom)) {
-    return { error: 'Can only delete messages sent from Dashboard or system' };
-  }
-
-  // Remove from messages.jsonl (locked independently)
-  await withFileLock(messagesFile, () => {
-    if (fs.existsSync(messagesFile)) {
-      const lines = fs.readFileSync(messagesFile, 'utf8').trim().split(/\r?\n/);
-      const filtered = lines.filter(line => {
-        try { return JSON.parse(line).id !== id; } catch { return true; }
-      });
-      fs.writeFileSync(messagesFile, filtered.join('\n') + (filtered.length ? '\n' : ''));
-    }
-  });
-
+  if (!result.found) return { error: 'Message not found' };
+  if (result.denied) return { error: 'Can only delete messages sent from Dashboard or system' };
   return { success: true, id };
 }
 
@@ -1579,7 +1431,7 @@ function apiUpdatePermissions(body, query) {
 // Load HTML at startup (re-read on each request in dev for hot-reload)
 let htmlContent = fs.readFileSync(HTML_FILE, 'utf8');
 
-const MAX_BODY = 1 * 1024 * 1024; // 1 MB
+const MAX_BODY = 15 * 1024 * 1024; // 15 MB (supports base64 image attachments)
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -1842,8 +1694,8 @@ const server = http.createServer(async (req, res) => {
       const html = fs.readFileSync(HTML_FILE, 'utf8');
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
-        'X-Frame-Options': 'DENY',
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'",
+        'X-Frame-Options': 'SAMEORIGIN',
         'X-Content-Type-Options': 'nosniff',
         'Referrer-Policy': 'no-referrer',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -1851,6 +1703,47 @@ const server = http.createServer(async (req, res) => {
         'Expires': '0'
       });
       res.end(html);
+    }
+    // --- Assistant private messages API ---
+    else if (url.pathname === '/api/assistant/messages' && req.method === 'GET') {
+      const projectPath = url.searchParams.get('project') || null;
+      const dataDir = resolveDataDir(projectPath);
+      const assistantMsgFile = path.join(dataDir, 'assistant-messages.jsonl');
+      const assistantRepliesFile = path.join(dataDir, 'assistant-replies.jsonl');
+      const limit = parseInt(url.searchParams.get('limit') || '100', 10);
+      let messages = [];
+      // Read Dashboard→Assistant messages
+      if (fs.existsSync(assistantMsgFile)) {
+        const lines = fs.readFileSync(assistantMsgFile, 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try { messages.push(JSON.parse(line)); } catch {}
+        }
+      }
+      // Read Assistant→Dashboard replies
+      if (fs.existsSync(assistantRepliesFile)) {
+        const lines = fs.readFileSync(assistantRepliesFile, 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try { messages.push(JSON.parse(line)); } catch {}
+        }
+      }
+      // Sort by timestamp and return last N
+      messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      if (messages.length > limit) messages = messages.slice(-limit);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ messages, total: messages.length }));
+    }
+    // Clear assistant chat
+    else if (url.pathname === '/api/assistant/clear' && req.method === 'POST') {
+      const projectPath = url.searchParams.get('project') || null;
+      const dataDir = resolveDataDir(projectPath);
+      const assistantMsgFile = path.join(dataDir, 'assistant-messages.jsonl');
+      const assistantRepliesFile = path.join(dataDir, 'assistant-replies.jsonl');
+      const consumedFile = path.join(dataDir, 'consumed-assistant-private.json');
+      try { fs.writeFileSync(assistantMsgFile, ''); } catch {}
+      try { fs.writeFileSync(assistantRepliesFile, ''); } catch {}
+      try { fs.writeFileSync(consumedFile, '[]'); } catch {}
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
     }
     // Existing APIs (now with ?project= param support)
     else if (url.pathname === '/api/history' && req.method === 'GET') {
@@ -1867,7 +1760,13 @@ const server = http.createServer(async (req, res) => {
     }
     else if (url.pathname === '/api/decisions' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
-      const decisions = readJson(filePath('decisions.json', projectPath));
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
+      const decisions = getCanonicalState(projectPath).listDecisions({ branch: branchResult.branch });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(decisions || []));
     }
@@ -1917,11 +1816,19 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const projectPath = url.searchParams.get('project') || null;
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
+      const branch = branchResult.branch;
       const dataDir = resolveDataDir(projectPath);
-      const agents = readJson(filePath('agents.json', projectPath));
-      const profiles = readJson(filePath('profiles.json', projectPath));
-      const tasks = readJson(filePath('tasks.json', projectPath));
-      const config = readJson(filePath('config.json', projectPath));
+      const canonicalState = getCanonicalState(projectPath);
+      const agents = canonicalState.listAgents();
+      const profiles = canonicalState.listProfiles();
+      const tasks = canonicalState.listTasks({ branch });
+      const config = canonicalState.getConversationConfigView({ branch });
 
       if (!agents[agentName]) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -1929,9 +1836,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Gather recovery snapshot if exists
-      const recoveryFile = path.join(dataDir, 'recovery-' + agentName + '.json');
-      const recovery = fs.existsSync(recoveryFile) ? readJson(recoveryFile) : null;
+      // Gather recovery snapshot if it belongs to the selected branch
+      let recovery = null;
+      const latestSessionSummary = canonicalState.getLatestSessionSummaryForAgent({ agentName, branch });
+      const recoveryCandidates = [
+        latestSessionSummary && latestSessionSummary.recovery_snapshot_file,
+        `recovery-${agentName}.json`,
+      ].filter((value, index, values) => typeof value === 'string' && value && values.indexOf(value) === index);
+
+      for (const recoveryCandidate of recoveryCandidates) {
+        const recoveryPath = path.join(dataDir, path.basename(recoveryCandidate));
+        const snapshot = canonicalState.readJson(recoveryPath, null);
+        if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) continue;
+        const snapshotBranch = typeof snapshot.branch === 'string' && BRANCH_NAME_RE.test(snapshot.branch)
+          ? snapshot.branch
+          : 'main';
+        if (snapshotBranch !== branch) continue;
+        recovery = snapshot;
+        break;
+      }
 
       // Gather profile
       const profile = profiles[agentName] || {};
@@ -1942,7 +1865,10 @@ const server = http.createServer(async (req, res) => {
       const completedTasks = taskList.filter(t => t.assignee === agentName && t.status === 'done').slice(-5);
 
       // Gather recent history context (last 15 messages)
-      const history = readJsonl(filePath('history.jsonl', projectPath));
+      const historyView = canonicalState.getHistoryView({ branch, limit: 15 });
+      const history = Array.isArray(historyView)
+        ? historyView
+        : (historyView && Array.isArray(historyView.messages) ? historyView.messages : []);
       const recentHistory = history.slice(-15).map(m => `[${m.from}→${m.to}]: ${(m.content || '').substring(0, 150)}`).join('\n');
 
       // Gather who's online
@@ -1951,14 +1877,8 @@ const server = http.createServer(async (req, res) => {
         .map(([n]) => n);
 
       // Gather workspace status
-      let workspaceStatus = '';
-      try {
-        const wsPath = path.join(dataDir, 'workspaces', agentName + '.json');
-        if (fs.existsSync(wsPath)) {
-          const ws = JSON.parse(fs.readFileSync(wsPath, 'utf8'));
-          if (ws._status) workspaceStatus = ws._status;
-        }
-      } catch {}
+      const workspace = canonicalState.readWorkspace(agentName, { branch });
+      const workspaceStatus = workspace && typeof workspace._status === 'string' ? workspace._status : '';
 
       // Build the respawn prompt
       const mode = config.conversation_mode || 'group';
@@ -2059,8 +1979,9 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Destructive action requires { "confirm": true } in request body' }));
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(apiClearMessages(url.searchParams)));
+      const result = apiClearMessages(url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/new-conversation' && req.method === 'POST') {
       const body = await parseBody(req).catch(() => ({}));
@@ -2104,18 +2025,20 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(apiTimeline(url.searchParams)));
     }
     else if (url.pathname === '/api/tasks' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(apiTasks(url.searchParams)));
+      const result = apiTasks(url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/tasks' && req.method === 'POST') {
       const body = await parseBody(req);
       const result = apiUpdateTask(body, url.searchParams);
-      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.writeHead(result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/rules' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(apiRules(url.searchParams)));
+      const result = apiRules(url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/rules' && req.method === 'POST') {
       const body = await parseBody(req);
@@ -2129,56 +2052,30 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/search' && req.method === 'GET') {
-      const projectPath = url.searchParams.get('project') || null;
-      const query = (url.searchParams.get('q') || '').trim();
-      const from = url.searchParams.get('from') || null;
-      const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)), 100);
-      if (query.length < 2) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Query must be at least 2 characters' }));
-        return;
-      }
-      // Search general history + all channel histories
-      let allHistory = readJsonl(filePath('history.jsonl', projectPath));
-      const dataDir = resolveDataDir(projectPath);
-      try {
-        const files = fs.readdirSync(dataDir);
-        for (const f of files) {
-          if (f.startsWith('channel-') && f.endsWith('-history.jsonl')) {
-            allHistory = allHistory.concat(readJsonl(path.join(dataDir, f)));
-          }
-        }
-      } catch {}
-      const queryLower = query.toLowerCase();
-      const results = [];
-      for (let i = allHistory.length - 1; i >= 0 && results.length < limit; i--) {
-        const m = allHistory[i];
-        if (from && m.from !== from) continue;
-        if (m.content && m.content.toLowerCase().includes(queryLower)) {
-          results.push({
-            id: m.id, from: m.from, to: m.to,
-            preview: m.content.substring(0, 200),
-            timestamp: m.timestamp,
-            ...(m.channel && { channel: m.channel }),
-          });
-        }
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ query, results_count: results.length, results }));
+      const result = apiSearch(url.searchParams);
+      res.writeHead(result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/export-json' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
-      const history = apiHistory(url.searchParams);
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
+      const canonicalState = getCanonicalState(projectPath);
+      const history = canonicalState.getConversationMessages({ branch: branchResult.branch });
       const agents = apiAgents(url.searchParams);
-      const decisions = readJson(filePath('decisions.json', projectPath)) || [];
-      const tasksRaw = readJson(filePath('tasks.json', projectPath));
-      const tasks = Array.isArray(tasksRaw) ? tasksRaw : (tasksRaw && tasksRaw.tasks ? tasksRaw.tasks : []);
-      const channels = apiChannels(url.searchParams);
+      const decisions = canonicalState.listDecisions({ branch: branchResult.branch });
+      const tasks = canonicalState.listTasks({ branch: branchResult.branch });
+      const channels = canonicalState.getChannelsView({ branch: branchResult.branch });
       const pkg = readJson(path.join(__dirname, 'package.json')) || {};
       const result = {
         export_version: 1,
         exported_at: new Date().toISOString(),
-        project: projectPath || process.cwd(),
+        project: projectPath || DEFAULT_PROJECT_ROOT,
+        branch: branchResult.branch,
         version: pkg.version || 'unknown',
         summary: {
           message_count: history.length,
@@ -2204,7 +2101,13 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result, null, 2));
     }
     else if (url.pathname === '/api/export' && req.method === 'GET') {
-      const html = apiExportHtml(url.searchParams);
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
+      const html = apiExportHtml(url.searchParams, branchResult.branch);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Disposition': 'attachment; filename="conversation-' + new Date().toISOString().slice(0, 10) + '.html"',
@@ -2252,23 +2155,37 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/profiles' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(readJson(filePath('profiles.json', projectPath))));
+      res.end(JSON.stringify(getCanonicalState(projectPath).listProfiles()));
     }
     else if (url.pathname === '/api/profiles' && req.method === 'POST') {
       const body = await parseBody(req);
       const projectPath = url.searchParams.get('project') || null;
-      const profilesFile = filePath('profiles.json', projectPath);
-      const profiles = readJson(profilesFile);
       if (!body.agent || !/^[a-zA-Z0-9_-]{1,20}$/.test(body.agent)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid agent name' })); return; }
-      if (!profiles[body.agent]) profiles[body.agent] = {};
-      if (body.display_name) profiles[body.agent].display_name = body.display_name.substring(0, 30);
-      if (body.avatar) {
-        if (body.avatar.length > 65536) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Avatar too large (max 64KB)' })); return; }
-        profiles[body.agent].avatar = body.avatar;
+      if (body.display_name !== undefined) {
+        if (body.display_name !== null && typeof body.display_name !== 'string') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'display_name must be a string' })); return; }
       }
-      if (body.bio !== undefined) profiles[body.agent].bio = (body.bio || '').substring(0, 200);
-      if (body.role !== undefined) profiles[body.agent].role = (body.role || '').substring(0, 30);
-      if (body.appearance !== undefined && typeof body.appearance === 'object') {
+      if (body.avatar !== undefined) {
+        if (body.avatar !== null && typeof body.avatar !== 'string') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'avatar must be a string' })); return; }
+        if (body.avatar && body.avatar.length > 65536) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Avatar too large (max 64KB)' })); return; }
+      }
+      if (body.bio !== undefined) {
+        if (body.bio !== null && typeof body.bio !== 'string') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'bio must be a string' })); return; }
+      }
+      if (body.role !== undefined) {
+        if (body.role !== null && typeof body.role !== 'string') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'role must be a string' })); return; }
+      }
+      const contractPatch = sanitizeContractProfilePatch({
+        archetype: body.archetype,
+        skills: body.skills,
+        contract_mode: body.contract_mode,
+      });
+      if (!contractPatch.valid) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: contractPatch.errors.join('; ') }));
+        return;
+      }
+      let cleanedAppearance;
+      if (body.appearance && typeof body.appearance === 'object') {
         const validKeys = ['head_color', 'hair_style', 'hair_color', 'eye_style', 'mouth_style', 'shirt_color', 'pants_color', 'shoe_color', 'glasses', 'glasses_color', 'headwear', 'headwear_color', 'neckwear', 'neckwear_color'];
         const enumValidation = {
           hair_style: ['none', 'short', 'spiky', 'long', 'ponytail', 'bob'],
@@ -2278,73 +2195,86 @@ const server = http.createServer(async (req, res) => {
           headwear: ['none', 'beanie', 'cap', 'headphones', 'headband'],
           neckwear: ['none', 'tie', 'bowtie', 'lanyard'],
         };
-        const cleaned = {};
+        cleanedAppearance = {};
         for (const [k, v] of Object.entries(body.appearance)) {
           if (!validKeys.includes(k) || typeof v !== 'string' || v.length > 20) continue;
           if (enumValidation[k] && !enumValidation[k].includes(v)) continue;
-          cleaned[k] = v;
+          cleanedAppearance[k] = v;
         }
-        profiles[body.agent].appearance = Object.assign(profiles[body.agent].appearance || {}, cleaned);
       }
-      profiles[body.agent].updated_at = new Date().toISOString();
-      fs.writeFileSync(profilesFile, JSON.stringify(profiles, null, 2));
+      const canonicalState = getCanonicalState(projectPath);
+      canonicalState.upsertProfile({
+        name: body.agent,
+        displayName: body.display_name,
+        avatar: body.avatar,
+        bio: body.bio,
+        role: body.role,
+        appearance: cleanedAppearance,
+        ...(Object.prototype.hasOwnProperty.call(contractPatch.normalized, 'archetype') ? { archetype: contractPatch.normalized.archetype } : {}),
+        ...(Object.prototype.hasOwnProperty.call(contractPatch.normalized, 'skills') ? { skills: contractPatch.normalized.skills } : {}),
+        ...(Object.prototype.hasOwnProperty.call(contractPatch.normalized, 'contract_mode') ? { contractMode: contractPatch.normalized.contract_mode } : {}),
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
     }
     else if (url.pathname === '/api/workspaces' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const agentParam = url.searchParams.get('agent');
       if (agentParam && !/^[a-zA-Z0-9_-]{1,20}$/.test(agentParam)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid agent name' }));
         return;
       }
-      const dataDir = resolveDataDir(projectPath);
-      const wsDir = path.join(dataDir, 'workspaces');
+      const canonicalState = getCanonicalState(projectPath);
       const result = {};
       if (agentParam) {
-        const wsFile = path.join(wsDir, agentParam + '.json');
-        result[agentParam] = fs.existsSync(wsFile) ? readJson(wsFile) : {};
-      } else if (fs.existsSync(wsDir)) {
-        for (const f of fs.readdirSync(wsDir).filter(x => x.endsWith('.json'))) {
-          const name = f.replace('.json', '');
-          result[name] = readJson(path.join(wsDir, f));
+        result[agentParam] = canonicalState.readWorkspace(agentParam, { branch: branchResult.branch });
+      } else {
+        for (const workspace of canonicalState.listWorkspaces({ branch: branchResult.branch })) {
+          result[workspace.agent] = workspace.data;
         }
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
     else if (url.pathname === '/api/workflows' && req.method === 'GET') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(fs.existsSync(wfFile) ? JSON.parse(fs.readFileSync(wfFile, 'utf8')) : []));
+      res.end(JSON.stringify(getCanonicalState(projectPath).listWorkflows({ branch: branchResult.branch })));
     }
     else if (url.pathname === '/api/workflows' && req.method === 'POST') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const body = await parseBody(req);
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const canonicalState = getCanonicalState(projectPath);
       if (body.action === 'advance' && body.workflow_id) {
-        const wf = workflows.find(w => w.id === body.workflow_id);
-        if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
-        const curr = wf.steps.find(s => s.status === 'in_progress');
-        if (curr) { curr.status = 'done'; curr.completed_at = new Date().toISOString(); if (body.notes) curr.notes = body.notes; }
-        const next = wf.steps.find(s => s.status === 'pending');
-        if (next) { next.status = 'in_progress'; next.started_at = new Date().toISOString(); } else { wf.status = 'completed'; }
-        wf.updated_at = new Date().toISOString();
-        fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+        const result = canonicalState.advanceWorkflow({ workflowId: body.workflow_id, notes: body.notes, branch: branchResult.branch });
+        if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return; }
       } else if (body.action === 'skip' && body.workflow_id && body.step_id) {
-        const wf = workflows.find(w => w.id === body.workflow_id);
-        if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
-        const step = wf.steps.find(s => s.id === body.step_id);
-        if (step) { step.status = 'done'; step.notes = 'Skipped from dashboard'; step.completed_at = new Date().toISOString(); }
-        const next = wf.steps.find(s => s.status === 'pending');
-        if (next && !wf.steps.find(s => s.status === 'in_progress')) { next.status = 'in_progress'; next.started_at = new Date().toISOString(); }
-        if (!wf.steps.find(s => s.status === 'pending' || s.status === 'in_progress')) wf.status = 'completed';
-        wf.updated_at = new Date().toISOString();
-        fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+        const result = canonicalState.skipWorkflowStep({
+          workflowId: body.workflow_id,
+          stepId: body.step_id,
+          note: 'Skipped from dashboard',
+          branch: branchResult.branch,
+        });
+        if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return; }
       } else {
         res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid action' })); return;
       }
@@ -2354,297 +2284,169 @@ const server = http.createServer(async (req, res) => {
     // ========== Plan Control API (v5.0 Autonomy Engine) ==========
 
     else if (url.pathname === '/api/plan/status' && req.method === 'GET') {
-      const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      const agentsFile = filePath('agents.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      const agents = fs.existsSync(agentsFile) ? readJson(agentsFile) : {};
-
-      // Find the active autonomous workflow (most recent)
-      const activeWf = workflows.filter(w => w.status === 'active' && w.autonomous).pop()
-                    || workflows.filter(w => w.status === 'active').pop();
-
-      if (!activeWf) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ active: false, message: 'No active plan' }));
-        return;
-      }
-
-      const doneSteps = activeWf.steps.filter(s => s.status === 'done').length;
-      const totalSteps = activeWf.steps.length;
-      const elapsed = Date.now() - new Date(activeWf.created_at).getTime();
-      const activeAgents = Object.entries(agents).filter(([, a]) => {
-        const idle = Date.now() - new Date(a.last_activity || 0).getTime();
-        return idle < 120000;
-      }).length;
-
-      const retryCount = activeWf.steps.filter(s => s.flagged).length;
-      const avgConfidence = activeWf.steps.filter(s => s.verification && s.verification.confidence)
-        .reduce((sum, s, _, arr) => sum + s.verification.confidence / arr.length, 0);
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        active: true,
-        workflow_id: activeWf.id,
-        name: activeWf.name,
-        status: activeWf.status,
-        autonomous: !!activeWf.autonomous,
-        parallel: !!activeWf.parallel,
-        paused: !!activeWf.paused,
-        progress: { done: doneSteps, total: totalSteps, percent: Math.round((doneSteps / totalSteps) * 100) },
-        elapsed_ms: elapsed,
-        elapsed_human: Math.round(elapsed / 60000) + 'm',
-        agents_active: activeAgents,
-        steps: activeWf.steps.map(s => ({
-          id: s.id, description: s.description, assignee: s.assignee,
-          status: s.status, depends_on: s.depends_on || [],
-          started_at: s.started_at, completed_at: s.completed_at,
-          flagged: !!s.flagged, flag_reason: s.flag_reason || null,
-          confidence: s.verification ? s.verification.confidence : null,
-          verification: s.verification || null,
-        })),
-        retries: retryCount,
-        avg_confidence: Math.round(avgConfidence) || null,
-        created_at: activeWf.created_at,
-      }));
+      const result = apiPlanStatus(url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
 
     else if (url.pathname === '/api/plan/pause' && req.method === 'POST') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      const activeWf = workflows.find(w => w.status === 'active' && w.autonomous);
-      if (!activeWf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No active autonomous plan' })); return; }
-      activeWf.paused = true;
-      activeWf.paused_at = new Date().toISOString();
-      activeWf.updated_at = new Date().toISOString();
-      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      const result = getCanonicalState(projectPath).pausePlan({ branch: branchResult.branch });
+      if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return; }
       // Notify agents
-      apiInjectMessage({ to: '__all__', content: `[PLAN PAUSED] "${activeWf.name}" has been paused by the dashboard. Finish your current step, then wait for resume.` }, url.searchParams);
+      apiInjectMessage({ to: '__all__', content: `[PLAN PAUSED] "${result.name}" has been paused by the dashboard. Finish your current step, then wait for resume.` }, url.searchParams);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: 'Plan paused', workflow_id: activeWf.id }));
+      res.end(JSON.stringify({ success: true, message: 'Plan paused', workflow_id: result.workflow_id }));
     }
 
     else if (url.pathname === '/api/plan/resume' && req.method === 'POST') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      const pausedWf = workflows.find(w => w.status === 'active' && w.paused);
-      if (!pausedWf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No paused plan' })); return; }
-      pausedWf.paused = false;
-      delete pausedWf.paused_at;
-      pausedWf.updated_at = new Date().toISOString();
-      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
-      apiInjectMessage({ to: '__all__', content: `[PLAN RESUMED] "${pausedWf.name}" has been resumed. Call get_work() to continue.` }, url.searchParams);
+      const result = getCanonicalState(projectPath).resumePlan({ branch: branchResult.branch });
+      if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return; }
+      apiInjectMessage({ to: '__all__', content: `[PLAN RESUMED] "${result.name}" has been resumed. Call get_work() to continue.` }, url.searchParams);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: 'Plan resumed', workflow_id: pausedWf.id }));
+      res.end(JSON.stringify({ success: true, message: 'Plan resumed', workflow_id: result.workflow_id }));
     }
 
     else if (url.pathname === '/api/plan/stop' && req.method === 'POST') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      const activeWf = workflows.find(w => w.status === 'active');
-      if (!activeWf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No active plan' })); return; }
-      activeWf.status = 'stopped';
-      activeWf.stopped_at = new Date().toISOString();
-      activeWf.updated_at = new Date().toISOString();
-      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
-      apiInjectMessage({ to: '__all__', content: `[PLAN STOPPED] "${activeWf.name}" has been stopped by the dashboard. All work on this plan should cease.` }, url.searchParams);
+      const result = getCanonicalState(projectPath).stopPlan({ branch: branchResult.branch });
+      if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return; }
+      apiInjectMessage({ to: '__all__', content: `[PLAN STOPPED] "${result.name}" has been stopped by the dashboard. All work on this plan should cease.` }, url.searchParams);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: 'Plan stopped', workflow_id: activeWf.id }));
+      res.end(JSON.stringify({ success: true, message: 'Plan stopped', workflow_id: result.workflow_id }));
     }
 
     else if (url.pathname.startsWith('/api/plan/skip/') && req.method === 'POST') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const stepId = parseInt(url.pathname.split('/').pop(), 10);
       const body = await parseBody(req);
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      const wfId = body.workflow_id;
-      const wf = wfId ? workflows.find(w => w.id === wfId) : workflows.find(w => w.status === 'active');
-      if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
-      const step = wf.steps.find(s => s.id === stepId);
-      if (!step) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Step not found: ' + stepId })); return; }
-      step.status = 'done';
-      step.notes = (step.notes || '') + ' [Skipped from dashboard]';
-      step.completed_at = new Date().toISOString();
-      step.skipped = true;
-      // Start any newly ready steps
-      const readySteps = wf.steps.filter(s => {
-        if (s.status !== 'pending') return false;
-        if (!s.depends_on || s.depends_on.length === 0) return true;
-        return s.depends_on.every(depId => { const d = wf.steps.find(x => x.id === depId); return d && d.status === 'done'; });
+      const canonicalState = getCanonicalState(projectPath);
+      const workflows = canonicalState.listWorkflows({ branch: branchResult.branch });
+      const wfId = body.workflow_id || ((workflows.find(w => w.status === 'active') || {}).id);
+      const result = canonicalState.skipWorkflowStep({
+        workflowId: wfId,
+        stepId,
+        note: ' [Skipped from dashboard]',
+        appendNote: true,
+        markSkipped: true,
+        dependencyAware: true,
+        branch: branchResult.branch,
       });
-      for (const rs of readySteps) { rs.status = 'in_progress'; rs.started_at = new Date().toISOString(); }
-      if (!wf.steps.find(s => s.status === 'pending' || s.status === 'in_progress')) wf.status = 'completed';
-      wf.updated_at = new Date().toISOString();
-      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
+      if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: result.error === 'Step not found' ? `Step not found: ${stepId}` : result.error })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, skipped_step: stepId, ready_steps: readySteps.map(s => s.id) }));
+      res.end(JSON.stringify({ success: true, skipped_step: stepId, ready_steps: result.ready_steps }));
     }
 
     else if (url.pathname.startsWith('/api/plan/reassign/') && req.method === 'POST') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const stepId = parseInt(url.pathname.split('/').pop(), 10);
       const body = await parseBody(req);
       const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
       if (!body.new_assignee) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'new_assignee required' })); return; }
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
+      const canonicalState = getCanonicalState(projectPath);
       const wfId = body.workflow_id;
-      const wf = wfId ? workflows.find(w => w.id === wfId) : workflows.find(w => w.status === 'active');
-      if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
-      const step = wf.steps.find(s => s.id === stepId);
-      if (!step) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Step not found: ' + stepId })); return; }
-      const oldAssignee = step.assignee;
-      step.assignee = body.new_assignee;
-      wf.updated_at = new Date().toISOString();
-      fs.writeFileSync(wfFile, JSON.stringify(workflows, null, 2));
-      apiInjectMessage({ to: body.new_assignee, content: `[REASSIGNED] Step ${stepId} "${step.description}" has been reassigned from ${oldAssignee || 'unassigned'} to you. ${step.status === 'in_progress' ? 'This step is IN PROGRESS — pick it up now.' : 'This step is ' + step.status + '.'}` }, url.searchParams);
+      const workflows = canonicalState.listWorkflows({ branch: branchResult.branch });
+      const workflow = wfId ? workflows.find(w => w.id === wfId) : workflows.find(w => w.status === 'active');
+      if (!workflow) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Workflow not found' })); return; }
+      const result = canonicalState.reassignWorkflowStep({
+        workflowId: workflow.id,
+        stepId,
+        newAssignee: body.new_assignee,
+        branch: branchResult.branch,
+      });
+      if (result.error) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: result.error === 'Step not found' ? `Step not found: ${stepId}` : result.error })); return; }
+      const updatedStep = result.step || {};
+      apiInjectMessage({ to: body.new_assignee, content: `[REASSIGNED] Step ${stepId} "${updatedStep.description || 'Unknown step'}" has been reassigned from ${result.old_assignee || 'unassigned'} to you. ${updatedStep.status === 'in_progress' ? 'This step is IN PROGRESS — pick it up now.' : 'This step is ' + (updatedStep.status || 'pending') + '.'}` }, url.searchParams);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, step_id: stepId, old_assignee: oldAssignee, new_assignee: body.new_assignee }));
+      res.end(JSON.stringify({ success: true, step_id: stepId, old_assignee: result.old_assignee, new_assignee: body.new_assignee }));
     }
 
     else if (url.pathname === '/api/plan/inject' && req.method === 'POST') {
       const body = await parseBody(req);
       if (!body.content) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'content required' })); return; }
       const result = apiInjectMessage({ to: body.to || '__all__', content: body.content }, url.searchParams);
-      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.writeHead(result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
 
     else if (url.pathname === '/api/plan/report' && req.method === 'GET') {
-      const projectPath = url.searchParams.get('project') || null;
-      const wfFile = filePath('workflows.json', projectPath);
-      const kbFile = filePath('kb.json', projectPath);
-      let workflows = [];
-      if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      // Get most recent completed or active workflow
-      const wf = workflows.filter(w => w.status === 'completed').pop() || workflows.filter(w => w.status === 'active').pop();
-      if (!wf) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No plan found' })); return; }
-
-      const doneSteps = wf.steps.filter(s => s.status === 'done');
-      const flaggedSteps = wf.steps.filter(s => s.flagged);
-      const duration = wf.completed_at ? new Date(wf.completed_at) - new Date(wf.created_at) : Date.now() - new Date(wf.created_at).getTime();
-      const avgConf = doneSteps.filter(s => s.verification && s.verification.confidence)
-        .reduce((sum, s, _, arr) => sum + s.verification.confidence / arr.length, 0);
-
-      // Count skills learned during this plan
-      let skillCount = 0;
-      if (fs.existsSync(kbFile)) {
-        try {
-          const kb = JSON.parse(fs.readFileSync(kbFile, 'utf8'));
-          skillCount = Object.keys(kb).filter(k => k.startsWith('skill_') || k.startsWith('lesson_')).length;
-        } catch {}
-      }
-
-      // Agent-level performance analytics
-      const agentStats = {};
-      for (const s of wf.steps) {
-        if (!s.assignee) continue;
-        if (!agentStats[s.assignee]) agentStats[s.assignee] = { steps: 0, completed: 0, flagged: 0, total_ms: 0, confidences: [] };
-        agentStats[s.assignee].steps++;
-        if (s.status === 'done') {
-          agentStats[s.assignee].completed++;
-          if (s.completed_at && s.started_at) agentStats[s.assignee].total_ms += new Date(s.completed_at) - new Date(s.started_at);
-          if (s.verification && s.verification.confidence) agentStats[s.assignee].confidences.push(s.verification.confidence);
-        }
-        if (s.flagged) agentStats[s.assignee].flagged++;
-      }
-      const agentPerformance = Object.entries(agentStats).map(([name, stats]) => ({
-        agent: name, steps_assigned: stats.steps, steps_completed: stats.completed, steps_flagged: stats.flagged,
-        avg_duration_ms: stats.completed > 0 ? Math.round(stats.total_ms / stats.completed) : null,
-        avg_confidence: stats.confidences.length > 0 ? Math.round(stats.confidences.reduce((a, b) => a + b, 0) / stats.confidences.length) : null,
-      }));
-
-      // Slowest/fastest steps
-      const stepsWithDuration = wf.steps.filter(s => s.completed_at && s.started_at)
-        .map(s => ({ id: s.id, description: s.description, assignee: s.assignee, duration_ms: new Date(s.completed_at) - new Date(s.started_at) }))
-        .sort((a, b) => b.duration_ms - a.duration_ms);
-
-      // Retry count from workspace data
-      let retryCount = 0;
-      const wsDir = path.join(resolveDataDir(projectPath), 'workspaces');
-      if (fs.existsSync(wsDir)) {
-        for (const file of fs.readdirSync(wsDir)) {
-          try {
-            const ws = JSON.parse(fs.readFileSync(path.join(wsDir, file), 'utf8'));
-            if (ws.retry_history) {
-              const history = typeof ws.retry_history === 'string' ? JSON.parse(ws.retry_history) : ws.retry_history;
-              if (Array.isArray(history)) retryCount += history.length;
-            }
-          } catch {}
-        }
-      }
-
+      const result = apiPlanReport(url.searchParams);
+      if (result && result.error) { res.writeHead(getRouteErrorStatus(result), { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return; }
+      if (!result) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No plan found' })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        name: wf.name,
-        status: wf.status,
-        steps_done: doneSteps.length,
-        steps_total: wf.steps.length,
-        duration_ms: duration,
-        duration_human: Math.round(duration / 60000) + 'm',
-        avg_confidence: Math.round(avgConf) || null,
-        flagged_steps: flaggedSteps.map(s => ({ id: s.id, description: s.description, reason: s.flag_reason })),
-        skills_learned: skillCount,
-        retries: retryCount,
-        agent_performance: agentPerformance,
-        slowest_step: stepsWithDuration[0] || null,
-        fastest_step: stepsWithDuration[stepsWithDuration.length - 1] || null,
-        steps: wf.steps.map(s => ({
-          id: s.id, description: s.description, assignee: s.assignee,
-          status: s.status, confidence: s.verification ? s.verification.confidence : null,
-          duration_ms: s.completed_at && s.started_at ? new Date(s.completed_at) - new Date(s.started_at) : null,
-          flagged: !!s.flagged, skipped: !!s.skipped,
-        })),
-        created_at: wf.created_at,
-        completed_at: wf.completed_at || null,
-      }));
+      res.end(JSON.stringify(result));
     }
 
     else if (url.pathname === '/api/plan/skills' && req.method === 'GET') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const projectPath = url.searchParams.get('project') || null;
-      const kbFile = filePath('kb.json', projectPath);
+      const kb = getCanonicalState(projectPath).readKnowledgeBase({ branch: branchResult.branch });
       let skills = [];
-      if (fs.existsSync(kbFile)) {
-        try {
-          const kb = JSON.parse(fs.readFileSync(kbFile, 'utf8'));
-          for (const [key, val] of Object.entries(kb)) {
-            if (key.startsWith('skill_') || key.startsWith('lesson_')) {
-              skills.push({ key, content: val.content, learned_by: val.updated_by, learned_at: val.updated_at });
-            }
-          }
-        } catch {}
+      for (const [key, val] of Object.entries(kb || {})) {
+        if (key.startsWith('skill_') || key.startsWith('lesson_')) {
+          skills.push({ key, content: val.content, learned_by: val.updated_by, learned_at: val.updated_at });
+        }
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ count: skills.length, skills }));
     }
 
     else if (url.pathname === '/api/plan/retries' && req.method === 'GET') {
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const projectPath = url.searchParams.get('project') || null;
-      const dataDir = resolveDataDir(projectPath);
-      const wsDir = path.join(dataDir, 'workspaces');
+      const canonicalState = getCanonicalState(projectPath);
       let retries = [];
-      if (fs.existsSync(wsDir)) {
-        for (const file of fs.readdirSync(wsDir)) {
-          try {
-            const ws = JSON.parse(fs.readFileSync(path.join(wsDir, file), 'utf8'));
-            if (ws.retry_history) {
-              const agent = file.replace('.json', '');
-              const history = typeof ws.retry_history === 'string' ? JSON.parse(ws.retry_history) : ws.retry_history;
-              if (Array.isArray(history)) {
-                for (const entry of history) { retries.push({ agent, ...entry }); }
-              }
+      for (const workspace of canonicalState.listWorkspaces({ branch: branchResult.branch })) {
+        try {
+          if (workspace.data && workspace.data.retry_history) {
+            const history = typeof workspace.data.retry_history === 'string'
+              ? JSON.parse(workspace.data.retry_history)
+              : workspace.data.retry_history;
+            if (Array.isArray(history)) {
+              for (const entry of history) { retries.push({ agent: workspace.agent, ...entry }); }
             }
-          } catch {}
-        }
+          }
+        } catch {}
       }
       retries.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2686,15 +2488,13 @@ const server = http.createServer(async (req, res) => {
 
       // Monitor intervention log from workspace
       let interventions = [];
-      const wsDir = path.join(dataDir, 'workspaces');
-      if (monitorName && fs.existsSync(wsDir)) {
-        const monFile = path.join(wsDir, monitorName[0] + '.json');
-        if (fs.existsSync(monFile)) {
-          try {
-            const ws = JSON.parse(fs.readFileSync(monFile, 'utf8'));
-            if (ws._monitor_log) interventions = typeof ws._monitor_log === 'string' ? JSON.parse(ws._monitor_log) : ws._monitor_log;
-          } catch {}
-        }
+      if (monitorName) {
+        try {
+          const canonicalState = getCanonicalState(projectPath);
+          const monitorBranch = (agents[monitorName[0]] && agents[monitorName[0]].branch) || 'main';
+          const ws = canonicalState.readWorkspace(monitorName[0], { branch: monitorBranch });
+          if (ws._monitor_log) interventions = typeof ws._monitor_log === 'string' ? JSON.parse(ws._monitor_log) : ws._monitor_log;
+        } catch {}
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2749,18 +2549,21 @@ const server = http.createServer(async (req, res) => {
 
     else if (url.pathname === '/api/stats' && req.method === 'GET') {
       const projectPath = url.searchParams.get('project') || null;
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const dataDir = resolveDataDir(projectPath);
       const agentsFile = filePath('agents.json', projectPath);
-      const wfFile = filePath('workflows.json', projectPath);
-      const tasksFile = filePath('tasks.json', projectPath);
-      const histFile = path.join(dataDir, 'history.jsonl');
-      const kbFile = filePath('kb.json', projectPath);
+      const canonicalState = getCanonicalState(projectPath);
 
       const agents = fs.existsSync(agentsFile) ? readJson(agentsFile) : {};
-      let workflows = []; if (fs.existsSync(wfFile)) try { workflows = JSON.parse(fs.readFileSync(wfFile, 'utf8')); } catch {}
-      let tasks = []; if (fs.existsSync(tasksFile)) try { tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')); } catch {}
-      let msgCount = 0; if (fs.existsSync(histFile)) { try { const c = fs.readFileSync(histFile, 'utf8').trim(); if (c) msgCount = c.split(/\r?\n/).filter(l => l.trim()).length; } catch {} }
-      let kbKeys = 0; if (fs.existsSync(kbFile)) try { kbKeys = Object.keys(JSON.parse(fs.readFileSync(kbFile, 'utf8'))).length; } catch {}
+      const workflows = canonicalState.listWorkflows({ branch: branchResult.branch });
+      const tasks = canonicalState.listTasks({ branch: branchResult.branch });
+      const msgCount = canonicalState.getConversationMessages({ branch: branchResult.branch }).length;
+      const kbKeys = Object.keys(canonicalState.readKnowledgeBase({ branch: branchResult.branch }) || {}).length;
 
       const aliveCount = Object.values(agents).filter(a => { const idle = Date.now() - new Date(a.last_activity || 0).getTime(); return idle < 120000; }).length;
       const activeWf = workflows.filter(w => w.status === 'active');
@@ -2787,60 +2590,45 @@ const server = http.createServer(async (req, res) => {
     // ========== Rules API ==========
 
     else if (url.pathname === '/api/rules' && req.method === 'GET') {
-      const projectPath = url.searchParams.get('project') || null;
-      const rulesFile = filePath('rules.json', projectPath);
-      const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(Array.isArray(rules) ? rules : []));
+      const result = apiRules(url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
 
     else if (url.pathname === '/api/rules' && req.method === 'POST') {
-      const projectPath = url.searchParams.get('project') || null;
-      const rulesFile = filePath('rules.json', projectPath);
       try {
         const body = await parseBody(req);
-        const { text, category } = body;
-        if (!text || !text.trim()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Rule text required' })); return; }
-        const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
-        const rule = {
-          id: 'rule_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          text: text.trim(),
-          category: category || 'custom',
-          created_by: 'dashboard',
-          created_at: new Date().toISOString(),
-          active: true,
-        };
-        rules.push(rule);
-        fs.writeFileSync(rulesFile, JSON.stringify(rules));
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(rule));
+        const result = apiAddRule(body, url.searchParams);
+        res.writeHead(result && result.error ? getRouteErrorStatus(result) : 201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result && result.rule ? result.rule : result));
       } catch (e) { res.writeHead(400); res.end(JSON.stringify({ error: e.message })); }
     }
 
     else if (url.pathname.startsWith('/api/rules/') && req.method === 'DELETE') {
-      const projectPath = url.searchParams.get('project') || null;
-      const rulesFile = filePath('rules.json', projectPath);
       const ruleId = url.pathname.split('/api/rules/')[1];
-      const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
-      const idx = rules.findIndex(r => r.id === ruleId);
-      if (idx === -1) { res.writeHead(404); res.end(JSON.stringify({ error: 'Rule not found' })); return; }
-      rules.splice(idx, 1);
-      fs.writeFileSync(rulesFile, JSON.stringify(rules));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
+      const result = apiDeleteRule({ rule_id: ruleId }, url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
     }
 
     else if (url.pathname.startsWith('/api/rules/') && url.pathname.endsWith('/toggle') && req.method === 'POST') {
       const projectPath = url.searchParams.get('project') || null;
-      const rulesFile = filePath('rules.json', projectPath);
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
       const ruleId = url.pathname.split('/api/rules/')[1].replace('/toggle', '');
-      const rules = fs.existsSync(rulesFile) ? readJson(rulesFile) : [];
-      const rule = rules.find(r => r.id === ruleId);
-      if (!rule) { res.writeHead(404); res.end(JSON.stringify({ error: 'Rule not found' })); return; }
-      rule.active = !rule.active;
-      fs.writeFileSync(rulesFile, JSON.stringify(rules));
+      const toggled = getCanonicalState(projectPath).toggleRule({
+        ruleId,
+        actor: 'Dashboard',
+        branch: branchResult.branch,
+        correlationId: ruleId,
+      });
+      if (toggled.error) { res.writeHead(404); res.end(JSON.stringify({ error: toggled.error })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(rule));
+      res.end(JSON.stringify(toggled.rule));
     }
 
     // ========== End Rules API ==========
@@ -2986,7 +2774,13 @@ const server = http.createServer(async (req, res) => {
     }
     // --- v3.4: Replay Export ---
     else if (url.pathname === '/api/export-replay' && req.method === 'GET') {
-      const html = apiExportReplay(url.searchParams);
+      const branchResult = getValidatedBranch(url.searchParams);
+      if (branchResult.error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(branchResult));
+        return;
+      }
+      const html = apiExportReplay(url.searchParams, branchResult.branch);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Disposition': 'attachment; filename="replay-' + new Date().toISOString().slice(0, 10) + '.html"',
@@ -3279,6 +3073,82 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ hours, minutes, period, game_minutes: gameMinutes, speed, formatted: `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}` }));
     }
+    // ==================== API AGENTS ====================
+    else if (url.pathname === '/api/api-agents' && req.method === 'GET') {
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(engine.list()));
+    }
+    else if (url.pathname === '/api/api-agents' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const result = engine.create(body.name, body.provider, {
+        model: body.model,
+        endpoint: body.endpoint,
+        apiKey: body.apiKey,
+        providerOptions: body.options,
+      });
+      sseNotifyAll('agents');
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    else if (url.pathname.match(/^\/api\/api-agents\/[^/]+$/) && req.method === 'DELETE') {
+      const name = decodeURIComponent(url.pathname.split('/').pop());
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const result = engine.remove(name);
+      sseNotifyAll('agents');
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    else if (url.pathname.match(/^\/api\/api-agents\/[^/]+\/start$/) && req.method === 'POST') {
+      const name = decodeURIComponent(url.pathname.split('/')[3]);
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const result = engine.start(name);
+      sseNotifyAll('agents');
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    else if (url.pathname.match(/^\/api\/api-agents\/[^/]+\/stop$/) && req.method === 'POST') {
+      const name = decodeURIComponent(url.pathname.split('/')[3]);
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const result = engine.stop(name);
+      sseNotifyAll('agents');
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    // ==================== MEDIA ====================
+    else if (url.pathname === '/api/media' && req.method === 'GET') {
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const media = engine.getMedia({
+        type: url.searchParams.get('type'),
+        agent: url.searchParams.get('agent'),
+        page: parseInt(url.searchParams.get('page') || '1', 10),
+        limit: parseInt(url.searchParams.get('limit') || '20', 10),
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(media));
+    }
+    else if (url.pathname.match(/^\/api\/media\/[^/]+\/file$/) && req.method === 'GET') {
+      const id = decodeURIComponent(url.pathname.split('/')[3]);
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const filep = engine.getMediaFilePath(id);
+      if (filep) {
+        const ext = path.extname(filep).toLowerCase();
+        const mimeTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.mp4': 'video/mp4' };
+        res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
+        fs.createReadStream(filep).pipe(res);
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Media not found' }));
+      }
+    }
+    else if (url.pathname.match(/^\/api\/media\/[^/]+$/) && req.method === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.split('/').pop());
+      const engine = getApiAgentEngine(url.searchParams.get('project'));
+      const result = engine.deleteMedia(id);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
     else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -3365,12 +3235,28 @@ function startFileWatcher() {
 
 startFileWatcher();
 
+// Initialize API Agent Engine
+let apiAgentEngine = null;
+function getApiAgentEngine(projectPath) {
+  const dataDir = resolveDataDir(projectPath);
+  if (!apiAgentEngine || apiAgentEngine.dataDir !== dataDir) {
+    if (apiAgentEngine) apiAgentEngine.stopAll();
+    apiAgentEngine = new ApiAgentEngine(dataDir);
+  }
+  return apiAgentEngine;
+}
+
+// Clean up on exit
+process.on('exit', () => { if (apiAgentEngine) apiAgentEngine.stopAll(); });
+process.on('SIGINT', () => { if (apiAgentEngine) apiAgentEngine.stopAll(); process.exit(); });
+process.on('SIGTERM', () => { if (apiAgentEngine) apiAgentEngine.stopAll(); process.exit(); });
+
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n  Error: Port ${PORT} is already in use.`);
     console.error(`  Another dashboard may be running. Try:`);
     console.error(`    - Kill it: npx kill-port ${PORT}`);
-    console.error(`    - Or use a different port: AGENT_BRIDGE_PORT=3001 npx let-them-talk dashboard\n`);
+    console.error(`    - Or use a different port: AGENT_BRIDGE_PORT=3001 node .agent-bridge/launch.js\n`);
     process.exit(1);
   }
   throw err;
@@ -3380,7 +3266,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v3.5.1');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v5.3.0');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

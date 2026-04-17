@@ -6,6 +6,8 @@ import { initScene } from './scene.js';
 import { buildEnvironment, updateTVScreen } from './environment.js';
 import { updateAgent } from './animation.js';
 import { syncAgents, processMessages, walkTo, navigateTo, showBubble } from './agents.js';
+import { tickGallery, updateGalleryScreens } from './gallery.js';
+import { updateRobotAnimation } from './robot-character.js';
 // Side-effect: registers window.officeGetAppearance
 import './appearance.js';
 import { spawnPlayer, despawnPlayer, isPlayerMode, updatePlayer, savePlayerAppearance, getPlayerAppearance, getPlayer, invalidateColliders } from './player.js';
@@ -28,6 +30,11 @@ function getCityMods() {
 }
 function isDriving() { return _cityMods && _cityMods.vehicle && _cityMods.vehicle.isDriving(); }
 function isConnected() { return false; }
+
+function scopedOfficeApiUrl(path, options) {
+  if (typeof window.scopedApiUrl === 'function') return window.scopedApiUrl(path, null, options);
+  return path;
+}
 
 // Expose createCharacter + resolveAppearance for the character designer (Phase 3)
 export { createCharacter } from './character.js';
@@ -316,7 +323,7 @@ function executeCommand(agentName, action) {
       showInputOverlay('Send message to ' + agentName + ':', 'Type your message...', function(msg) {
         if (msg && msg.trim()) {
           showBubble(agent, 'Message incoming...');
-          fetch('/api/inject' + (window.activeProject ? '?project=' + encodeURIComponent(window.activeProject) : ''), {
+          fetch(scopedOfficeApiUrl('/api/inject'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-LTT-Request': '1' },
             body: JSON.stringify({ to: agentName, content: msg.trim() })
@@ -329,7 +336,7 @@ function executeCommand(agentName, action) {
       showInputOverlay('New task for ' + agentName + ':', 'Task title...', function(title) {
         if (title && title.trim()) {
           showBubble(agent, 'New task assigned!');
-          fetch('/api/tasks' + (window.activeProject ? '?project=' + encodeURIComponent(window.activeProject) : ''), {
+          fetch(scopedOfficeApiUrl('/api/tasks'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-LTT-Request': '1' },
             body: JSON.stringify({ title: title.trim(), assignee: agentName, status: 'pending' })
@@ -350,7 +357,7 @@ function executeCommand(agentName, action) {
 
     case 'nudge':
       showBubble(agent, 'Hey! Wake up!');
-      fetch('/api/inject' + (window.activeProject ? '?project=' + encodeURIComponent(window.activeProject) : ''), {
+      fetch(scopedOfficeApiUrl('/api/inject'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-LTT-Request': '1' },
         body: JSON.stringify({ to: agentName, content: 'Hey ' + agentName + ', the user is waiting for you. Please check for new messages and continue your work.' })
@@ -398,8 +405,14 @@ function animate() {
   var time = S.clock.getElapsedTime();
 
   for (var name in S.agents3d) {
-    updateAgent(S.agents3d[name], dt, time);
+    var ag = S.agents3d[name];
+    if (!ag) continue;
+    updateAgent(ag, dt, time);
+    if (ag.isApiAgent && S.agents3d[name]) updateRobotAnimation(ag, dt, time);
   }
+
+  // Gallery slideshow tick
+  if (S.currentEnv === 'campus') tickGallery(dt);
 
   // Player avatar mode — skip when driving (vehicle takes over)
   if (isPlayerMode() && S.controls && S.controls.keys && !isDriving()) {
@@ -757,6 +770,13 @@ window.office3dStart = function() {
       syncAgents();
       processMessages();
       updateTVScreen(S.clock.getElapsedTime());
+      // Fetch media for gallery screens
+      if (S.galleryScreens) {
+        var pq = window.currentProjectPath ? '?project=' + encodeURIComponent(window.currentProjectPath) : '';
+        fetch('/api/media' + pq).then(function(r) { return r.json(); }).then(function(media) {
+          if (Array.isArray(media) && media.length > 0) updateGalleryScreens(media);
+        }).catch(function() {});
+      }
     }
   }, 2000);
 };
@@ -800,9 +820,19 @@ window.office3dSetEnvironment = function(env) {
   // Load city modules on demand
   if (env === 'city') getCityMods();
   if (S.scene) {
-    // Remove all existing agents so they get recreated with proper desk assignments
+    // Remove all existing agents — including CSS2D label DOM elements
     for (var name in S.agents3d) {
       var agent = S.agents3d[name];
+      // Remove CSS2D label DOM elements explicitly
+      if (agent.parts.labelDiv && agent.parts.labelDiv.parentElement) agent.parts.labelDiv.remove();
+      if (agent.parts.bubbleDiv && agent.parts.bubbleDiv.parentElement) agent.parts.bubbleDiv.remove();
+      if (agent.parts.taskDiv && agent.parts.taskDiv.parentElement) agent.parts.taskDiv.remove();
+      // Remove all CSS2DObject DOM nodes from the group tree
+      agent.parts.group.traverse(function(child) {
+        if (child.isCSS2DObject && child.element && child.element.parentElement) {
+          child.element.remove();
+        }
+      });
       S.scene.remove(agent.parts.group);
       agent.parts.group.traverse(function(child) {
         if (child.geometry) child.geometry.dispose();
@@ -813,6 +843,8 @@ window.office3dSetEnvironment = function(env) {
       });
     }
     S.agents3d = {};
+    // Also release any claimed gallery seats
+    window._gallerySeatsReset = true;
     S._tvScreen = null;
     S._roofGroup = null;
     S._managerDoor = null;
@@ -821,6 +853,7 @@ window.office3dSetEnvironment = function(env) {
     S._managerOfficePos = null;
     S._campusDeskPositions = null;
     S.lastProcessedMsg = 0;
+    window._lastProcessedMsg = 0;
     invalidateColliders();
     buildEnvironment();
     // syncAgents will recreate all agents with correct desk assignments
@@ -885,49 +918,120 @@ if (window.activeView === 'office') {
   window.office3dStart();
 }
 
-// ===================== INTERACTIVE IFRAME MONITOR (Phase 2) =====================
-var activeIframe = null;
+// ===================== INTERACTIVE MONITOR — Dashboard + ComfyUI tabs =====================
+var _monitorOverlay = null;
+var _monitorActiveTab = 'dashboard';
 
 window.onPlayerSit = function(deskIdx) {
-  if (activeIframe) return;
-  var container = document.getElementById('office-3d-container') || document.getElementById('office-area');
+  if (_monitorOverlay) return;
+
+  // Release pointer lock so mouse works in iframe
+  if (document.pointerLockElement) document.exitPointerLock();
+
+  // Use office-area as parent (it has proper positioning)
+  var container = document.getElementById('office-area');
+  if (!container) container = document.getElementById('office-3d-container');
   if (!container) return;
 
-  // Create iframe overlay positioned over the 3D canvas
+  // Overlay
   var overlay = document.createElement('div');
-  overlay.id = 'office-iframe-overlay';
-  overlay.style.cssText = 'position:absolute;top:5%;left:10%;width:80%;height:85%;z-index:200;background:#000;border-radius:8px;box-shadow:0 0 40px rgba(88,166,255,0.3);overflow:hidden;display:flex;flex-direction:column';
+  overlay.id = 'office-monitor-overlay';
+  overlay.style.cssText = 'position:fixed;top:3%;left:5%;width:90%;height:92%;z-index:99999;background:#0a0c14;border-radius:10px;box-shadow:0 0 60px rgba(88,166,255,0.3),0 0 0 1px #30363d;overflow:hidden;display:flex;flex-direction:column;';
 
-  // Header bar (mimics monitor bezel)
+  // Header bar with tabs + close
   var header = document.createElement('div');
-  header.style.cssText = 'background:#1a1f36;padding:6px 12px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0';
-  header.innerHTML = '<div style="display:flex;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:#ff5f57"></span><span style="width:10px;height:10px;border-radius:50%;background:#ffbd2e"></span><span style="width:10px;height:10px;border-radius:50%;background:#28c840"></span></div><span style="color:#8892b0;font-size:11px;font-family:monospace">Let Them Talk Dashboard</span><button id="office-leave-btn" style="background:#ff5f57;color:#fff;border:none;border-radius:4px;padding:3px 12px;font-size:11px;font-weight:bold;cursor:pointer;font-family:monospace">LEAVE</button>';
-  header.querySelector('#office-leave-btn').addEventListener('click', function() {
-    if (typeof window.onPlayerStand === 'function') window.onPlayerStand();
-    // Also trigger player stand-up in player.js
-    if (typeof window.playerForceStand === 'function') window.playerForceStand();
-  });
+  header.style.cssText = 'background:#141824;padding:0 12px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;height:36px;border-bottom:1px solid #30363d;';
+
+  // Tab buttons
+  var tabsHtml = '<div style="display:flex;gap:0;">';
+  tabsHtml += '<button id="mon-tab-dashboard" style="padding:8px 16px;font-size:11px;font-family:monospace;border:none;cursor:pointer;border-bottom:2px solid #58a6ff;background:transparent;color:#58a6ff;">Dashboard</button>';
+  tabsHtml += '<button id="mon-tab-comfyui" style="padding:8px 16px;font-size:11px;font-family:monospace;border:none;cursor:pointer;border-bottom:2px solid transparent;background:transparent;color:#8892b0;">ComfyUI</button>';
+  tabsHtml += '</div>';
+
+  var closeHtml = '<button id="mon-close-btn" style="background:#ff5f57;color:#fff;border:none;border-radius:4px;padding:3px 14px;font-size:11px;font-weight:bold;cursor:pointer;font-family:monospace;">ESC to Leave</button>';
+
+  header.innerHTML = tabsHtml + closeHtml;
   overlay.appendChild(header);
 
+  // Iframe container
+  var iframeWrap = document.createElement('div');
+  iframeWrap.style.cssText = 'flex:1;position:relative;';
+
   // Dashboard iframe
-  var iframe = document.createElement('iframe');
-  iframe.src = window.location.origin || 'http://localhost:3000';
-  iframe.style.cssText = 'flex:1;border:none;width:100%;background:#0d1117';
-  iframe.allow = 'clipboard-read; clipboard-write';
-  overlay.appendChild(iframe);
+  var dashIframe = document.createElement('iframe');
+  dashIframe.id = 'mon-iframe-dashboard';
+  dashIframe.src = window.location.origin || 'http://localhost:3000';
+  dashIframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#0d1117;';
+  dashIframe.allow = 'clipboard-read; clipboard-write';
+  iframeWrap.appendChild(dashIframe);
 
-  container.style.position = 'relative';
-  container.appendChild(overlay);
-  activeIframe = overlay;
+  // ComfyUI iframe (hidden initially)
+  var comfyIframe = document.createElement('iframe');
+  comfyIframe.id = 'mon-iframe-comfyui';
+  comfyIframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#1a1a2e;display:none;';
+  comfyIframe.allow = 'clipboard-read; clipboard-write';
+  // Don't load ComfyUI until tab is clicked (saves resources)
+  iframeWrap.appendChild(comfyIframe);
 
-  // Focus iframe for keyboard input
-  iframe.addEventListener('load', function() { iframe.focus(); });
+  overlay.appendChild(iframeWrap);
+  document.body.appendChild(overlay);
+  _monitorOverlay = overlay;
+  _monitorActiveTab = 'dashboard';
+
+  // Tab switching
+  function switchTab(tab) {
+    _monitorActiveTab = tab;
+    var dIframe = document.getElementById('mon-iframe-dashboard');
+    var cIframe = document.getElementById('mon-iframe-comfyui');
+    var dTab = document.getElementById('mon-tab-dashboard');
+    var cTab = document.getElementById('mon-tab-comfyui');
+
+    if (tab === 'dashboard') {
+      if (dIframe) dIframe.style.display = 'block';
+      if (cIframe) cIframe.style.display = 'none';
+      if (dTab) { dTab.style.color = '#58a6ff'; dTab.style.borderBottomColor = '#58a6ff'; }
+      if (cTab) { cTab.style.color = '#8892b0'; cTab.style.borderBottomColor = 'transparent'; }
+    } else {
+      if (dIframe) dIframe.style.display = 'none';
+      if (cIframe) {
+        cIframe.style.display = 'block';
+        // Lazy-load ComfyUI on first switch
+        if (!cIframe.src || cIframe.src === 'about:blank' || cIframe.src === '') {
+          cIframe.src = 'http://127.0.0.1:8188';
+        }
+      }
+      if (dTab) { dTab.style.color = '#8892b0'; dTab.style.borderBottomColor = 'transparent'; }
+      if (cTab) { cTab.style.color = '#ff6b35'; cTab.style.borderBottomColor = '#ff6b35'; }
+    }
+  }
+
+  overlay.querySelector('#mon-tab-dashboard').addEventListener('click', function() { switchTab('dashboard'); });
+  overlay.querySelector('#mon-tab-comfyui').addEventListener('click', function() { switchTab('comfyui'); });
+
+  // Close button
+  overlay.querySelector('#mon-close-btn').addEventListener('click', function() {
+    if (typeof window.playerForceStand === 'function') window.playerForceStand();
+    window.onPlayerStand();
+  });
+
+  // ESC key closes overlay
+  overlay._escHandler = function(e) {
+    if (e.code === 'Escape' && _monitorOverlay) {
+      if (typeof window.playerForceStand === 'function') window.playerForceStand();
+      window.onPlayerStand();
+    }
+  };
+  document.addEventListener('keydown', overlay._escHandler);
+
+  // Focus dashboard iframe
+  dashIframe.addEventListener('load', function() { dashIframe.focus(); });
 };
 
 window.onPlayerStand = function() {
-  if (activeIframe) {
-    activeIframe.remove();
-    activeIframe = null;
+  if (_monitorOverlay) {
+    if (_monitorOverlay._escHandler) document.removeEventListener('keydown', _monitorOverlay._escHandler);
+    _monitorOverlay.remove();
+    _monitorOverlay = null;
   }
 };
 
