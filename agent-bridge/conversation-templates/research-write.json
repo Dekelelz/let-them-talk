@@ -3,19 +3,67 @@
   "name": "Research & Write",
   "description": "Researcher gathers info, Writer creates content, and Editor polishes it through the current autonomous loop with evidence-backed completion.",
   "agents": [
-    { "name": "Researcher", "role": "Researcher", "skills": ["research", "analysis", "data"], "prompt": "Register as \"Researcher\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Gather information on the given topic and organize findings into a structured research brief. Respect any required_capabilities or preferred_capabilities attached to work before continuing it. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence." },
-    { "name": "Writer", "role": "Writer", "skills": ["writing", "content", "structure"], "prompt": "Register as \"Writer\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Write clear, well-structured content based on the research findings. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. If the editor requests changes, use retry_with_improvement()." },
-    { "name": "Editor", "role": "Editor", "skills": ["editing", "style", "accuracy"], "prompt": "Register as \"Editor\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Review and polish content. Check for clarity, accuracy, and style. Use submit_review() to approve or request revisions. When your review step is complete, call verify_and_advance() with summary, verification, files_changed, and confidence." }
+    {
+      "name": "Researcher",
+      "role": "Researcher",
+      "skills": [
+        "research",
+        "analysis",
+        "data"
+      ],
+      "prompt": "Register as \"Researcher\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Gather information on the given topic and organize findings into a structured research brief. Respect any required_capabilities or preferred_capabilities attached to work before continuing it. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Writer",
+      "role": "Writer",
+      "skills": [
+        "writing",
+        "content",
+        "structure"
+      ],
+      "prompt": "Register as \"Writer\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Write clear, well-structured content based on the research findings. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. If the editor requests changes, use retry_with_improvement().\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Editor",
+      "role": "Editor",
+      "skills": [
+        "editing",
+        "style",
+        "accuracy"
+      ],
+      "prompt": "Register as \"Editor\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Review and polish content. Check for clarity, accuracy, and style. Use submit_review() to approve or request revisions. When your review step is complete, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    }
   ],
   "workflow": {
     "name": "Content Pipeline",
     "autonomous": true,
     "parallel": false,
     "steps": [
-      { "description": "Research topic and compile findings", "assignee": "Researcher" },
-      { "description": "Draft content from research", "assignee": "Writer", "depends_on": [1] },
-      { "description": "Edit and polish content", "assignee": "Editor", "depends_on": [2] },
-      { "description": "Finalize content and record completion", "assignee": "Writer", "depends_on": [3] }
+      {
+        "description": "Research topic and compile findings",
+        "assignee": "Researcher"
+      },
+      {
+        "description": "Draft content from research",
+        "assignee": "Writer",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "description": "Edit and polish content",
+        "assignee": "Editor",
+        "depends_on": [
+          2
+        ]
+      },
+      {
+        "description": "Finalize content and record completion",
+        "assignee": "Writer",
+        "depends_on": [
+          3
+        ]
+      }
     ]
   }
 }

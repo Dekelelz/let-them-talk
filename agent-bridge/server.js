@@ -1889,6 +1889,7 @@ function buildGuide(level = 'standard') {
   // Tier 0 — THE one rule (always included at every level)
   const listenCmd = isManagedMode() ? 'listen()' : (mode === 'group' ? 'listen_group()' : 'listen()');
   rules.push(`AFTER EVERY ACTION, call ${listenCmd}. This is how you receive messages. NEVER skip this. NEVER use sleep(). NEVER poll with check_messages(). ${listenCmd} is your ONLY way to receive messages.`);
+  rules.push(`EMPTY-RETURN RULE: When ${listenCmd} returns no messages, that is NORMAL — it means "no messages yet", NOT a failure. Call ${listenCmd} again immediately. Codex CLI may terminate the call near 120s due to its own tool-call timeout; that is the host's limit, not an error. The loop never ends.`);
 
   // Minimal level: Tier 0 only — for experienced agents refreshing rules
   if (level === 'minimal') {
@@ -3780,7 +3781,9 @@ async function toolListenGroup() {
           messages: [],
           message_count: 0,
           retry: true,
-          batch_summary: isManagedMode() ? 'No new messages — call listen() again immediately to keep waiting.' : 'No new messages — call listen_group() again to keep listening.',
+          batch_summary: isManagedMode()
+            ? 'No new messages — this is NORMAL, not an error. Call listen() again immediately to keep waiting. Codex CLI may end the call near 120s; that is the host limit, not a failure.'
+            : 'No new messages — this is NORMAL, not an error. Call listen_group() again immediately to keep listening. Codex CLI may end the call near 120s; that is the host limit, not a failure.',
         });
       }
     };

@@ -3,19 +3,67 @@
   "name": "Feature Development",
   "description": "Architect designs, Builder implements, and Reviewer approves through the current autonomous loop with evidence-backed completion.",
   "agents": [
-    { "name": "Architect", "role": "Software Architect", "skills": ["design", "interfaces", "architecture"], "prompt": "Register as \"Architect\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Design the feature architecture, define interfaces, and create the implementation plan. Respect any required_capabilities or preferred_capabilities attached to work before continuing it. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence." },
-    { "name": "Builder", "role": "Developer", "skills": ["code", "implementation", "testing"], "prompt": "Register as \"Builder\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement the feature following the architecture design and write tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence." },
-    { "name": "Reviewer", "role": "Senior Reviewer", "skills": ["review", "quality", "standards"], "prompt": "Register as \"Reviewer\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Review implementations against the architecture. Use submit_review() to approve or request changes. When your review step is complete, call verify_and_advance() with summary, verification, files_changed, and confidence." }
+    {
+      "name": "Architect",
+      "role": "Software Architect",
+      "skills": [
+        "design",
+        "interfaces",
+        "architecture"
+      ],
+      "prompt": "Register as \"Architect\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Design the feature architecture, define interfaces, and create the implementation plan. Respect any required_capabilities or preferred_capabilities attached to work before continuing it. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Builder",
+      "role": "Developer",
+      "skills": [
+        "code",
+        "implementation",
+        "testing"
+      ],
+      "prompt": "Register as \"Builder\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement the feature following the architecture design and write tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Reviewer",
+      "role": "Senior Reviewer",
+      "skills": [
+        "review",
+        "quality",
+        "standards"
+      ],
+      "prompt": "Register as \"Reviewer\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Review implementations against the architecture. Use submit_review() to approve or request changes. When your review step is complete, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    }
   ],
   "workflow": {
     "name": "Feature Dev",
     "autonomous": true,
     "parallel": false,
     "steps": [
-      { "description": "Design architecture and interfaces", "assignee": "Architect" },
-      { "description": "Implement feature following design", "assignee": "Builder", "depends_on": [1] },
-      { "description": "Review implementation", "assignee": "Reviewer", "depends_on": [2] },
-      { "description": "Address review feedback and record completion", "assignee": "Builder", "depends_on": [3] }
+      {
+        "description": "Design architecture and interfaces",
+        "assignee": "Architect"
+      },
+      {
+        "description": "Implement feature following design",
+        "assignee": "Builder",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "description": "Review implementation",
+        "assignee": "Reviewer",
+        "depends_on": [
+          2
+        ]
+      },
+      {
+        "description": "Address review feedback and record completion",
+        "assignee": "Builder",
+        "depends_on": [
+          3
+        ]
+      }
     ]
   }
 }

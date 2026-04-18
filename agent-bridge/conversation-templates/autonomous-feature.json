@@ -3,20 +3,81 @@
   "name": "Autonomous Feature Build",
   "description": "Full autonomous feature build using the current get_work and verify_and_advance loop, with evidence-backed completion.",
   "agents": [
-    { "name": "Architect", "role": "Software Architect", "skills": ["design", "interfaces", "architecture"], "prompt": "Register as \"Architect\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Design the feature architecture with clear interfaces. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it." },
-    { "name": "Backend", "role": "Backend Developer", "skills": ["api", "database", "server", "backend"], "prompt": "Register as \"Backend\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement server-side logic, APIs, and data models. Write unit tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it." },
-    { "name": "Frontend", "role": "Frontend Developer", "skills": ["ui", "css", "components", "frontend"], "prompt": "Register as \"Frontend\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement UI components, pages, and client-side logic. Write component tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it." },
-    { "name": "Tester", "role": "QA Engineer", "skills": ["testing", "qa", "integration", "verification"], "prompt": "Register as \"Tester\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Write and run integration tests. Verify all components work together. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it." }
+    {
+      "name": "Architect",
+      "role": "Software Architect",
+      "skills": [
+        "design",
+        "interfaces",
+        "architecture"
+      ],
+      "prompt": "Register as \"Architect\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Design the feature architecture with clear interfaces. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Backend",
+      "role": "Backend Developer",
+      "skills": [
+        "api",
+        "database",
+        "server",
+        "backend"
+      ],
+      "prompt": "Register as \"Backend\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement server-side logic, APIs, and data models. Write unit tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Frontend",
+      "role": "Frontend Developer",
+      "skills": [
+        "ui",
+        "css",
+        "components",
+        "frontend"
+      ],
+      "prompt": "Register as \"Frontend\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement UI components, pages, and client-side logic. Write component tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Tester",
+      "role": "QA Engineer",
+      "skills": [
+        "testing",
+        "qa",
+        "integration",
+        "verification"
+      ],
+      "prompt": "Register as \"Tester\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Write and run integration tests. Verify all components work together. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. Respect any required_capabilities or preferred_capabilities attached to work before continuing it.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    }
   ],
   "workflow": {
     "name": "Autonomous Feature",
     "autonomous": true,
     "parallel": true,
     "steps": [
-      { "description": "Design architecture and define interfaces", "assignee": "Architect" },
-      { "description": "Implement backend API and data layer", "assignee": "Backend", "depends_on": [1] },
-      { "description": "Implement frontend UI and components", "assignee": "Frontend", "depends_on": [1] },
-      { "description": "Write and run integration tests", "assignee": "Tester", "depends_on": [2, 3] }
+      {
+        "description": "Design architecture and define interfaces",
+        "assignee": "Architect"
+      },
+      {
+        "description": "Implement backend API and data layer",
+        "assignee": "Backend",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "description": "Implement frontend UI and components",
+        "assignee": "Frontend",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "description": "Write and run integration tests",
+        "assignee": "Tester",
+        "depends_on": [
+          2,
+          3
+        ]
+      }
     ]
   }
 }

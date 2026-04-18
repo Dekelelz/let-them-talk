@@ -3,19 +3,67 @@
   "name": "Debug Squad",
   "description": "Investigator finds the bug, Fixer patches it, and Verifier confirms the fix with the current autonomous loop and evidence-backed completion.",
   "agents": [
-    { "name": "Investigator", "role": "Bug Investigator", "skills": ["debugging", "analysis", "tracing"], "prompt": "Register as \"Investigator\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Analyze error logs, trace code paths, and identify root causes. Respect any required_capabilities or preferred_capabilities attached to work before continuing it. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence." },
-    { "name": "Fixer", "role": "Bug Fixer", "skills": ["code", "fixing", "patching"], "prompt": "Register as \"Fixer\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement fixes based on investigation findings and write regression tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. If the fix fails, use retry_with_improvement()." },
-    { "name": "Verifier", "role": "Fix Verifier", "skills": ["testing", "verification", "qa"], "prompt": "Register as \"Verifier\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Test the fix, confirm resolution, and check for regressions. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence." }
+    {
+      "name": "Investigator",
+      "role": "Bug Investigator",
+      "skills": [
+        "debugging",
+        "analysis",
+        "tracing"
+      ],
+      "prompt": "Register as \"Investigator\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Analyze error logs, trace code paths, and identify root causes. Respect any required_capabilities or preferred_capabilities attached to work before continuing it. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Fixer",
+      "role": "Bug Fixer",
+      "skills": [
+        "code",
+        "fixing",
+        "patching"
+      ],
+      "prompt": "Register as \"Fixer\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Implement fixes based on investigation findings and write regression tests. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence. If the fix fails, use retry_with_improvement().\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    },
+    {
+      "name": "Verifier",
+      "role": "Fix Verifier",
+      "skills": [
+        "testing",
+        "verification",
+        "qa"
+      ],
+      "prompt": "Register as \"Verifier\", call get_briefing() for current branch and session context, call get_guide() once to load the active autonomous rules, then use get_work() for assignments. Test the fix, confirm resolution, and check for regressions. When you complete a workflow step, call verify_and_advance() with summary, verification, files_changed, and confidence.\n\nLOOP RULE (DO NOT BREAK): After every action, call listen() (or listen_group() in group/managed mode). When it returns with no messages, that is NORMAL — call it again immediately. Codex CLI may end the call near 120s due to its own tool-call timeout; treat the empty return as \"no messages yet\", NOT as a failure. Never stop the loop. Never sleep, never poll with check_messages()."
+    }
   ],
   "workflow": {
     "name": "Bug Fix",
     "autonomous": true,
     "parallel": false,
     "steps": [
-      { "description": "Investigate bug and identify root cause", "assignee": "Investigator" },
-      { "description": "Implement fix and write regression test", "assignee": "Fixer", "depends_on": [1] },
-      { "description": "Verify fix and check for regressions", "assignee": "Verifier", "depends_on": [2] },
-      { "description": "Record closure notes and findings", "assignee": "Investigator", "depends_on": [3] }
+      {
+        "description": "Investigate bug and identify root cause",
+        "assignee": "Investigator"
+      },
+      {
+        "description": "Implement fix and write regression test",
+        "assignee": "Fixer",
+        "depends_on": [
+          1
+        ]
+      },
+      {
+        "description": "Verify fix and check for regressions",
+        "assignee": "Verifier",
+        "depends_on": [
+          2
+        ]
+      },
+      {
+        "description": "Record closure notes and findings",
+        "assignee": "Investigator",
+        "depends_on": [
+          3
+        ]
+      }
     ]
   }
 }
