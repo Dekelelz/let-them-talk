@@ -65,12 +65,26 @@ function repairBranch(branchDir, opts) {
 
   const kept = [];
   const orphans = [];
+  const duplicateRedactions = [];
+  const seenRedactedIds = new Set();
   for (const ev of events) {
     if (ev && (ev.type === 'message.redacted' || ev.type === 'message.corrected')) {
       const msgId = ev.payload && ev.payload.message_id;
+      // Orphan: no corresponding message.sent ancestor.
       if (msgId && !sentIds.has(msgId)) {
         orphans.push(ev);
         continue;
+      }
+      // Duplicate redaction: same message_id already redacted earlier in the
+      // stream. Keep the first, drop subsequent ones. Pre-v5.5.4 the replay
+      // threw on the second redaction; now it tolerates duplicates, but we
+      // still want to prune the log so it's clean.
+      if (ev.type === 'message.redacted' && msgId) {
+        if (seenRedactedIds.has(msgId)) {
+          duplicateRedactions.push(ev);
+          continue;
+        }
+        seenRedactedIds.add(msgId);
       }
     }
     kept.push(ev);
@@ -82,6 +96,7 @@ function repairBranch(branchDir, opts) {
     message_sent_events: sentIds.size,
     orphan_redacted: orphans.filter((o) => o.type === 'message.redacted').length,
     orphan_corrected: orphans.filter((o) => o.type === 'message.corrected').length,
+    duplicate_redacted: duplicateRedactions.length,
     kept_events: kept.length,
   };
 
@@ -90,9 +105,9 @@ function repairBranch(branchDir, opts) {
     return result;
   }
 
-  if (orphans.length === 0) {
+  if (orphans.length === 0 && duplicateRedactions.length === 0) {
     result.skipped = true;
-    result.reason = 'no orphan events';
+    result.reason = 'no orphan or duplicate events';
     return result;
   }
 
@@ -151,13 +166,14 @@ function main(argv) {
       console.log('    skipped — ' + r.reason);
     } else {
       console.log(`    ${r.total_events} total events, ${r.message_sent_events} sent messages`);
-      console.log(`    orphan redactions: ${r.orphan_redacted}, orphan corrections: ${r.orphan_corrected}`);
+      console.log(`    orphan redactions: ${r.orphan_redacted}, orphan corrections: ${r.orphan_corrected}, duplicate redactions: ${r.duplicate_redacted}`);
       if (!dryRun) {
         console.log('    [ok] rewrote events.jsonl (' + r.kept_events + ' events kept)');
         console.log('    [ok] backup: ' + r.backup);
         console.log('    [ok] projections cleared — will rebuild on next read');
       } else {
-        console.log('    [dry-run] would drop ' + (r.orphan_redacted + r.orphan_corrected) + ' orphan event(s) and back up the original');
+        const drops = r.orphan_redacted + r.orphan_corrected + r.duplicate_redacted;
+        console.log('    [dry-run] would drop ' + drops + ' bad event(s) and back up the original');
       }
     }
   }

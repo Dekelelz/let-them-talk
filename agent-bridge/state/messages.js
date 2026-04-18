@@ -397,18 +397,15 @@ function createMessagesState(options = {}) {
       case 'message.redacted': {
         const redaction = validateCanonicalMessageRedactionPayload(event);
         const record = findProjectedMessageRecord(projection, redaction.messageId);
-        if (!record) {
-          throw createCanonicalReplayError(
-            CANONICAL_REPLAY_ERROR_CODES.INVALID_SEQUENCE,
-            `Canonical message replay cannot apply ${describeReplayEvent(event)} because message ${redaction.messageId} does not exist in the current branch projection.`,
-            {
-              event_type: event.type,
-              seq: event.seq,
-              branch_id: event.branch_id,
-              message_id: redaction.messageId,
-            }
-          );
-        }
+        // Redaction is idempotent: if the message is already gone from the
+        // projection (e.g. a prior message.redacted for the same id already
+        // ran during this replay), the second redaction is a no-op rather
+        // than a fatal error. The canonical log can legitimately carry
+        // multiple redaction events per id — operators running Clear
+        // Messages repeatedly on the same branch would produce that shape,
+        // and aborting the whole replay over it is worse than ignoring the
+        // duplicate.
+        if (!record) return projection;
 
         if (record.messageIndex >= 0) {
           record.conversation.messages.splice(record.messageIndex, 1);

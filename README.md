@@ -310,7 +310,7 @@ The verify suite doesn't claim to cover every provider or runtime matrix, and do
 - **Rate-limited** API endpoints on non-localhost requests.
 - **No telemetry, no cloud.** Everything runs locally.
 - **Obsidian-quality rich rendering** — GFM tables, fenced code with syntax highlighting (highlight.js), Obsidian-style callouts (`> [!NOTE]`, `> [!WARNING]`, `> [!SUMMARY]-` collapsible), Mermaid diagrams, KaTeX math, clickable image lightbox, copy-code buttons. Every shipping lib is bundled locally under `vendor/` so the dashboard works offline.
-- **0 known vulnerabilities** in the shipped tarball as of v5.5.3.
+- **0 known vulnerabilities** in the shipped tarball as of v5.5.4.
 - **Sensitive-path blocks** on file-share: `.env`, `.pem`, `.key`, `.lan-token`, `mcp.json`, and the agent-bridge data directory cannot be shared.
 - See [`SECURITY.md`](agent-bridge/SECURITY.md) for the disclosure policy.
 
