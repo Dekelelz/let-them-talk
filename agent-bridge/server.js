@@ -1890,7 +1890,9 @@ function buildGuide(level = 'standard') {
   const listenCmd = isManagedMode() ? 'listen()' : (mode === 'group' ? 'listen_group()' : 'listen()');
   rules.push(`AFTER EVERY ACTION, call ${listenCmd}. This is how you receive messages. NEVER skip this. NEVER use sleep(). NEVER poll with check_messages(). ${listenCmd} is your ONLY way to receive messages.`);
   rules.push(`EMPTY-RETURN RULE: When ${listenCmd} returns no messages, that is NORMAL — it means "no messages yet", NOT a failure. Call ${listenCmd} again immediately. Codex CLI may terminate the call near 120s due to its own tool-call timeout; that is the host's limit, not an error. The loop never ends.`);
-  rules.push('DASHBOARD REPLY RULE: When you receive a message from "Dashboard" or "Owner", reply ONLY via send_message(to="Dashboard", content=...). The owner reads your reply in the dashboard Messages tab — NOT your CLI terminal. Do NOT narrate a reply in your terminal output; anything you say there is invisible to the owner. If a message targets another agent (msg.to is not you), do not answer on their behalf — let the addressed agent reply. After send_message, call ' + listenCmd + ' again immediately.');
+  rules.push('DASHBOARD IS YOUR VOICE: Your CLI terminal is invisible to the owner and to other agents. EVERYTHING you want anyone to see — replies to Dashboard/Owner, status updates, questions for teammates, progress reports, "starting work", "done", "blocked on X" — MUST go through send_message() or broadcast(). Talk like humans on a team chat: announce when you start, when you finish, when you need help. Never just narrate in terminal and assume anyone will read it — they cannot.');
+  rules.push('DASHBOARD REPLY RULE: When a message arrives from "Dashboard" or "Owner", reply via send_message(to="Dashboard", content=...). Do NOT narrate the reply in your terminal. If a message targets a different agent (msg.to is not you), do not answer on their behalf — let the addressed agent reply. After send_message, call ' + listenCmd + ' again immediately.');
+  rules.push('TOOL ERROR RECOVERY: If ' + listenCmd + ' itself returns a tool error (e.g. "timed out awaiting tools/call"), that is a transport hiccup — IMMEDIATELY call ' + listenCmd + ' again. Do NOT summarize in terminal, do NOT stop the loop, do NOT treat it as "done". The loop only ends when the owner tells you to stop via send_message.');
 
   // Minimal level: Tier 0 only — for experienced agents refreshing rules
   if (level === 'minimal') {
@@ -3701,6 +3703,11 @@ async function toolListenGroup() {
   // Autonomous mode: cap listen at 30s — agents should use get_work() instead
   const autonomousTimeout = isAutonomousMode() ? 30000 : null;
   const MAX_LISTEN_MS = 300000; // 5 minutes — MCP has no tool timeout, heartbeat keeps agent alive
+  // Codex CLI kills tool calls at ~120s — land inside that window so Codex agents see
+  // a clean empty batch return instead of a "timed out awaiting tools/call" error.
+  const providerRaw = (getRegisteredProvider() || '').toLowerCase();
+  const isCodexProvider = providerRaw.includes('codex');
+  const codexSafeTimeout = isCodexProvider ? 90000 : null;
   const listenStart = Date.now();
 
   // Helper: collect unconsumed messages from all sources (general + channels)
@@ -3844,10 +3851,11 @@ async function toolListenGroup() {
       touchHeartbeat(registeredName);
     }, 15000);
 
-    // Autonomous mode: shorter timeout
-    const effectiveTimeout = autonomousTimeout
-      ? Math.min(autonomousTimeout, MAX_LISTEN_MS)
-      : MAX_LISTEN_MS;
+    // Pick the tightest applicable cap: autonomous (30s) > codex-safe (90s) > default (5min).
+    const candidateTimeouts = [MAX_LISTEN_MS];
+    if (autonomousTimeout) candidateTimeouts.push(autonomousTimeout);
+    if (codexSafeTimeout) candidateTimeouts.push(codexSafeTimeout);
+    const effectiveTimeout = Math.min(...candidateTimeouts);
 
     // Timeout: don't block forever
     const timer = setTimeout(() => done([]), effectiveTimeout);
