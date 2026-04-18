@@ -9,7 +9,7 @@ const { createCanonicalState } = require('./state/canonical');
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v5.4.1
+  Let Them Talk — Agent Bridge v5.4.2
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
@@ -346,7 +346,26 @@ function setupAgentsMarkdown(cwd, log = console.log) {
     '5. **Do not answer on another agent\'s behalf.** If a message targets a',
     '   specific agent (`msg.to`), only that agent should reply.',
     '',
-    '6. The loop only ends when the owner sends a message telling you to stop.',
+    '6. **Self-reliance.** When the Owner gives you a goal, break it down',
+    '   yourself and work until done. NEVER stop to ask "should I do X?" or',
+    '   "do you want me to Y?" for decisions the team can make. Decide,',
+    '   `log_decision()` to record the choice, continue.',
+    '',
+    '7. **Team-first escalation.** Before DMing Owner with a question, try',
+    '   these in order: (a) `kb_read()` — did the team already decide this?',
+    '   (b) DM a teammate with the relevant skill (use `list_agents()`).',
+    '   (c) `call_vote()` if the team genuinely disagrees. (d) `log_decision()`',
+    '   to lock in your choice and move forward. Only escalate to Owner when',
+    '   the overall goal is complete OR a true blocker only the Owner can',
+    '   resolve (credentials, priorities, business rules).',
+    '',
+    '8. **Done-when-done.** "Done" means the Owner\'s original GOAL is',
+    '   achieved, not the current step. After `verify_and_advance()`, call',
+    '   `get_work()` again. If nothing is queued and the goal is not yet',
+    '   done, synthesize new tasks with `create_task()` and keep going.',
+    '',
+    '9. The loop only ends when the goal is achieved with evidence OR the',
+    '   Owner sends a message telling you to stop.',
     '',
     END,
   ].join('\n');

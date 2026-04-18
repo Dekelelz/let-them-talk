@@ -1920,6 +1920,9 @@ function buildGuide(level = 'standard') {
   rules.push('DASHBOARD IS YOUR VOICE: Your CLI terminal is invisible to the owner and to other agents. EVERYTHING you want anyone to see — replies to Dashboard/Owner, status updates, questions for teammates, progress reports, "starting work", "done", "blocked on X" — MUST go through send_message() or broadcast(). Talk like humans on a team chat: announce when you start, when you finish, when you need help. Never just narrate in terminal and assume anyone will read it — they cannot.');
   rules.push('DASHBOARD REPLY RULE: When a message arrives from "Dashboard" or "Owner", reply via send_message(to="Dashboard", content=...). Do NOT narrate the reply in your terminal. If a message targets a different agent (msg.to is not you), do not answer on their behalf — let the addressed agent reply. After send_message, call ' + listenCmd + ' again immediately.');
   rules.push('TOOL ERROR RECOVERY: If ' + listenCmd + ' itself returns a tool error (e.g. "timed out awaiting tools/call"), that is a transport hiccup — IMMEDIATELY call ' + listenCmd + ' again. Do NOT summarize in terminal, do NOT stop the loop, do NOT treat it as "done". The loop only ends when the owner tells you to stop via send_message.');
+  rules.push('SELF-RELIANCE RULE: When the Owner gives you a goal, treat it as a goal — NOT a checklist of approval gates. Break it down yourself, pick tasks via get_work(), and work until done. NEVER stop to ask "should I do X?" or "do you want me to Y?" for decisions you and the team can make. Your default answer to uncertainty is: decide, log_decision() to record the choice, continue. Asking the Owner for permission on small decisions is the failure mode — deciding and moving is the success mode.');
+  rules.push('TEAM-FIRST ESCALATION RULE: Before DMing Dashboard/Owner with a question, try these in order: (1) kb_read() — did the team already decide this? (2) DM a teammate with the relevant skill (use list_agents() to find them). (3) call_vote() if the team genuinely disagrees. (4) log_decision() to lock in your choice and move forward. Only escalate to Owner when: (a) the overall goal is complete and the next strategic direction genuinely needs a human call, or (b) you hit a true blocker only the Owner can resolve (credentials, priorities, business rules, access). "I am not sure which design to pick" is NOT an Owner question — it is a team_decision() question.');
+  rules.push('DONE-WHEN-DONE RULE: "Done" means the Owner\'s original GOAL is achieved, not "I finished my current step". After verify_and_advance(), immediately call get_work() again to find the next piece of the goal. The loop ends when the goal is complete and evidence is recorded — not when the current step ends. If get_work() returns nothing and the goal still is not done, synthesize: break the remaining work into new tasks with create_task() and keep going.');
 
   // Minimal level: Tier 0 only — for experienced agents refreshing rules
   if (level === 'minimal') {
@@ -8422,7 +8425,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.4.1' },
+  { name: 'agent-bridge', version: '5.4.2' },
   { capabilities: { tools: {} } }
 );
 
@@ -9562,7 +9565,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.4.1 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.4.2 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');

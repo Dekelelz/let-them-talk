@@ -850,11 +850,15 @@ function apiInjectMessage(body, query) {
   const fromName = (body.from === 'Owner' || body.from === 'owner') ? 'Owner' : 'Dashboard';
   const now = new Date().toISOString();
 
-  // Broadcast to all agents
+  // Broadcast to all agents. Exclude virtual agents (Dashboard, Owner) from
+  // per-agent inbox copies — they represent the operator UI and read every
+  // message through /api/history, so per-recipient duplication would just
+  // bloat the log.
   if (body.to === '__all__') {
     const agents = readJson(path.join(dataDir, 'agents.json'));
     const ids = [];
     for (const name of Object.keys(agents)) {
+      if (agents[name] && agents[name].is_virtual) continue;
       const msg = {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
         from: fromName,
@@ -3458,7 +3462,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v5.4.1');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v5.4.2');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

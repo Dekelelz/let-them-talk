@@ -309,7 +309,7 @@ The verify suite doesn't claim to cover every provider or runtime matrix, and do
 - **Dashboard binds to `127.0.0.1` by default.** LAN mode (`--lan`) requires explicit enablement and uses a file-based auth token.
 - **Rate-limited** API endpoints on non-localhost requests.
 - **No telemetry, no cloud.** Everything runs locally.
-- **0 known vulnerabilities** in the shipped tarball as of v5.4.1.
+- **0 known vulnerabilities** in the shipped tarball as of v5.4.2.
 - **Sensitive-path blocks** on file-share: `.env`, `.pem`, `.key`, `.lan-token`, `mcp.json`, and the agent-bridge data directory cannot be shared.
 - See [`SECURITY.md`](agent-bridge/SECURITY.md) for the disclosure policy.
 
@@ -325,6 +325,46 @@ Source-of-truth docs:
 - [`docs/architecture/markdown-workspace.md`](docs/architecture/markdown-workspace.md)
 - [`docs/architecture/runtime-migration-hardening.md`](docs/architecture/runtime-migration-hardening.md)
 - [`docs/architecture/upgrade-summary.md`](docs/architecture/upgrade-summary.md) — tour of what shipped in the v5.x upgrade
+
+---
+
+## 🧾 Commands reference
+
+Full CLI surface for copy-paste convenience:
+
+```bash
+# Setup & init
+npx let-them-talk init
+npx let-them-talk init --claude
+npx let-them-talk init --gemini
+npx let-them-talk init --codex
+npx let-them-talk init --all
+npx let-them-talk init --ollama
+npx let-them-talk init --template <name>
+
+# Packaged helpers via npx
+npx let-them-talk dashboard
+npx let-them-talk status
+npx let-them-talk templates
+npx let-them-talk uninstall
+npx let-them-talk help
+
+# After init, local launcher (no re-download)
+node .agent-bridge/launch.js
+node .agent-bridge/launch.js --lan
+node .agent-bridge/launch.js status
+node .agent-bridge/launch.js msg <agent> <text>
+node .agent-bridge/launch.js reset
+node .agent-bridge/launch.js migrate
+
+# Verification (run from repo root)
+npm test
+npm --prefix agent-bridge run verify
+npm --prefix agent-bridge run verify:contracts
+npm --prefix agent-bridge run verify:replay
+npm --prefix agent-bridge run verify:invariants
+npm --prefix agent-bridge run verify:smoke
+```
 
 ---
 
