@@ -3938,6 +3938,7 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
   const result = {
     messages: batch.map(m => {
       const ageSec = Math.round((now - new Date(m.timestamp).getTime()) / 1000);
+      const isOwnerMsg = m.from === 'Dashboard' || m.from === 'Owner' || m.from === 'dashboard' || m.from === 'owner';
       return {
         id: m.id, from: m.from, to: m.to, content: m.content,
         timestamp: m.timestamp,
@@ -3949,6 +3950,10 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
         ...(m.to === '__group__' && {
           addressed_to_you: !m.addressed_to || m.addressed_to.includes(agentName),
           should_respond: !m.addressed_to || m.addressed_to.includes(agentName),
+        }),
+        ...(isOwnerMsg && {
+          from_owner: true,
+          system_instruction: 'OWNER MESSAGE. You MUST reply by calling send_message(to="Dashboard", content="your reply") — the owner reads replies ONLY in the dashboard Messages tab. Any text you write in your CLI terminal is INVISIBLE to the owner and does not count as a reply. After send_message, call listen_group() again immediately.',
         }),
       };
     }),
