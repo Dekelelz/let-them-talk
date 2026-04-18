@@ -309,7 +309,7 @@ The verify suite doesn't claim to cover every provider or runtime matrix, and do
 - **Dashboard binds to `127.0.0.1` by default.** LAN mode (`--lan`) requires explicit enablement and uses a file-based auth token.
 - **Rate-limited** API endpoints on non-localhost requests.
 - **No telemetry, no cloud.** Everything runs locally.
-- **0 known vulnerabilities** in the shipped tarball as of v5.4.0.
+- **0 known vulnerabilities** in the shipped tarball as of v5.4.1.
 - **Sensitive-path blocks** on file-share: `.env`, `.pem`, `.key`, `.lan-token`, `mcp.json`, and the agent-bridge data directory cannot be shared.
 - See [`SECURITY.md`](SECURITY.md) for the disclosure policy.
 
