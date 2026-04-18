@@ -202,7 +202,45 @@ function isRecentlyListening(info) {
   return Date.now() - last < LISTEN_RECENCY_GRACE_MS;
 }
 
+// Virtual-agent helpers. "Dashboard" and "Owner" represent the operator UI,
+// not a real CLI process. Writing them to agents.json lets list_agents and
+// list_channels show them as first-class recipients, so agents can DM the
+// operator via send_message(to="Dashboard") without confusion.
+const VIRTUAL_AGENT_NAMES = ['Dashboard', 'Owner'];
+function ensureVirtualAgents(projectPath) {
+  try {
+    const dataDir = resolveDataDir(projectPath);
+    if (!fs.existsSync(dataDir)) return;
+    const agentsFile = path.join(dataDir, 'agents.json');
+    let agents = {};
+    if (fs.existsSync(agentsFile)) {
+      try { agents = JSON.parse(fs.readFileSync(agentsFile, 'utf8')); } catch {}
+    }
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const name of VIRTUAL_AGENT_NAMES) {
+      if (!agents[name] || !agents[name].is_virtual) {
+        agents[name] = {
+          pid: -1,
+          is_virtual: true,
+          virtual_type: 'owner',
+          timestamp: (agents[name] && agents[name].timestamp) || now,
+          last_activity: now,
+          last_listened_at: now,
+          provider: 'Dashboard',
+          branch: 'main',
+        };
+        changed = true;
+      }
+    }
+    if (changed) {
+      fs.writeFileSync(agentsFile, JSON.stringify(agents, null, 2) + '\n');
+    }
+  } catch {} // best-effort — if agents.json is locked, we'll try again next request
+}
+
 function isPidAlive(pid, lastActivity) {
+  if (pid === -1) return true; // virtual agents (Dashboard, Owner) — always alive
   const STALE_THRESHOLD = 60000; // 60s — if heartbeat updated within this, agent is alive
 
   // PRIORITY 1: Trust heartbeat freshness over PID status
@@ -270,6 +308,9 @@ function apiChannels(query) {
 
 function apiAgents(query) {
   const projectPath = query.get('project') || null;
+  // Make sure the operator virtual agents (Dashboard, Owner) exist so agents
+  // querying list_agents over MCP see them as valid DM recipients.
+  ensureVirtualAgents(projectPath);
   const canonicalState = getCanonicalState(projectPath);
   const agents = canonicalState.listAgents();
   const profiles = canonicalState.listProfiles();

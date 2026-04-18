@@ -567,11 +567,34 @@ function withFileLock(filePath, fn) {
   try { return fn(); } finally { try { fs.unlinkSync(lockPath); } catch {} }
 }
 
+// Virtual operator agents. "Dashboard" and "Owner" represent the operator UI,
+// not a CLI process. Surfacing them here ensures list_agents, broadcast filters,
+// and DM-routing in the broker all agree the operator is a real recipient.
+const VIRTUAL_AGENT_NAMES = ['Dashboard', 'Owner'];
+function _mergeVirtualAgents(agents) {
+  const now = new Date().toISOString();
+  for (const name of VIRTUAL_AGENT_NAMES) {
+    if (!agents[name] || !agents[name].is_virtual) {
+      agents[name] = {
+        pid: -1,
+        is_virtual: true,
+        virtual_type: 'owner',
+        timestamp: (agents[name] && agents[name].timestamp) || now,
+        last_activity: now,
+        last_listened_at: now,
+        provider: 'Dashboard',
+        branch: (agents[name] && agents[name].branch) || 'main',
+      };
+    }
+  }
+  return agents;
+}
+
 function getAgents() {
   return cachedRead('agents', () => {
-    if (!fs.existsSync(AGENTS_FILE)) return {};
+    if (!fs.existsSync(AGENTS_FILE)) return _mergeVirtualAgents({});
     let agents;
-    try { agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')); } catch { return {}; }
+    try { agents = JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')); } catch { return _mergeVirtualAgents({}); }
     // Scale fix: merge per-agent heartbeat files for live activity data
     try {
       const files = fs.readdirSync(DATA_DIR).filter(f => f.startsWith('heartbeat-') && f.endsWith('.json'));
@@ -586,7 +609,7 @@ function getAgents() {
         }
       }
     } catch {}
-    return agents;
+    return _mergeVirtualAgents(agents);
   }, 1500);
 }
 
@@ -616,6 +639,10 @@ function getAcks(branch = currentBranch) {
 // Cache for isPidAlive results — avoids redundant process.kill calls at 100-agent scale
 const _pidAliveCache = {};
 function isPidAlive(pid, lastActivity) {
+  // Virtual agents (Dashboard, Owner) use pid === -1 and are always alive.
+  // They represent the operator UI; liveness is implicit while the broker runs.
+  if (pid === -1) return true;
+
   // Cache with 5s TTL — PID status doesn't change faster than heartbeats
   const cacheKey = `${pid}_${lastActivity}`;
   const cached = _pidAliveCache[cacheKey];
@@ -2765,7 +2792,11 @@ function toolBroadcast(content) {
   if (sizeErr) return sizeErr;
 
   const agents = getAgents();
-  const otherAgents = Object.keys(agents).filter(n => n !== registeredName);
+  // Exclude self and virtual agents (Dashboard, Owner) from broadcast recipients.
+  // Virtual agents represent the operator UI and read from the shared message log
+  // directly; they don't need per-recipient DM copies. Group-mode __group__ writes
+  // are still visible to the UI via /api/history.
+  const otherAgents = Object.keys(agents).filter(n => n !== registeredName && !agents[n].is_virtual);
 
   if (otherAgents.length === 0) {
     return { error: 'No other agents registered' };
