@@ -9,7 +9,7 @@ const { createCanonicalState } = require('./state/canonical');
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v5.5.1
+  Let Them Talk — Agent Bridge v5.5.2
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 

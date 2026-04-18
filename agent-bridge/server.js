@@ -3708,100 +3708,40 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
     return new Date(a.timestamp) - new Date(b.timestamp);
   });
 
-  // Build batch summary for triage
-  const summaryCounts = {};
-  for (const m of batch) {
-    const type = m.system || m.from === '__system__' ? 'system'
-      : m.broadcast ? 'broadcast' : (m.reply_to || m.thread_id) ? 'thread' : 'direct';
-    const key = `${m.from}:${type}`;
-    summaryCounts[key] = (summaryCounts[key] || 0) + 1;
-  }
-  const summaryParts = [];
-  for (const [key, count] of Object.entries(summaryCounts)) {
-    const [from, type] = key.split(':');
-    summaryParts.push(`${count} ${type} from ${from}`);
-  }
-  const batchSummary = `${batch.length} messages: ${summaryParts.join(', ')}`;
-
-  // Agent statuses — lightweight, no history reads. Uses the recency grace
-  // so peers that just briefly returned from listen_group() to process a
-  // batch still read as "listening", not "working".
-  const agents = getAgents();
-  const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
-  const agentStatus = {};
-  for (const n of agentNames) {
-    if (isRecentlyListening(agents[n])) {
-      agentStatus[n] = 'listening';
-    } else {
-      const lastListened = agents[n].last_listened_at;
-      const sinceLastListen = lastListened ? Date.now() - new Date(lastListened).getTime() : Infinity;
-      agentStatus[n] = sinceLastListen > 120000 ? 'unresponsive' : 'working';
-    }
-  }
-
-  const now = Date.now();
+  // LEAN RESPONSE (v5.5.2+): the agent already has every prior message in its
+  // own LLM context, plus the full rule set from get_guide() + AGENTS.md. We
+  // only send the NEW messages + the managed-mode signals needed for
+  // turn-taking. No repeated reminders, no agent rosters, no "next_action"
+  // — agents already know what to do from their guide.
   const result = {
     messages: batch.map(m => {
-      const ageSec = Math.round((now - new Date(m.timestamp).getTime()) / 1000);
       const isOwnerMsg = m.from === 'Dashboard' || m.from === 'Owner' || m.from === 'dashboard' || m.from === 'owner';
       return {
         id: m.id, from: m.from, to: m.to, content: m.content,
         timestamp: m.timestamp,
-        age_seconds: ageSec,
-        ...(ageSec > 30 && { delayed: true }),
         ...(m.reply_to && { reply_to: m.reply_to }),
         ...(m.thread_id && { thread_id: m.thread_id }),
         ...(m.addressed_to && { addressed_to: m.addressed_to }),
-        ...(m.to === '__group__' && {
-          addressed_to_you: !m.addressed_to || m.addressed_to.includes(agentName),
-          should_respond: !m.addressed_to || m.addressed_to.includes(agentName),
-        }),
-        ...(isOwnerMsg && {
-          from_owner: true,
-          system_instruction: 'OWNER MESSAGE. You MUST reply by calling send_message(to="Dashboard", content="your reply") — the owner reads replies ONLY in the dashboard Messages tab. Any text you write in your CLI terminal is INVISIBLE to the owner and does not count as a reply. After send_message, call listen_group() again immediately.',
-        }),
+        ...(isOwnerMsg && { from_owner: true }),
       };
     }),
-    message_count: batch.length,
-    batch_summary: batchSummary,
-    agents_online: agentNames.length,
-    agents_status: agentStatus,
   };
 
-  // Managed mode: add context so agents know whether to respond
+  // Managed mode: minimal turn-taking signal. Managers need to know the
+  // floor/phase to decide next yield_floor(); participants need to know if
+  // they hold the floor. The managed-mode RULE TEXT is already in the guide
+  // so we don't repeat it per call.
   if (isManagedMode()) {
     const managed = getManagedConfig();
-    const youHaveFloor = managed.turn_current === agentName;
-    const youAreManager = managed.manager === agentName;
-
     result.managed_context = {
-      phase: managed.phase, floor: managed.floor, manager: managed.manager,
-      you_have_floor: youHaveFloor, you_are_manager: youAreManager,
+      phase: managed.phase,
+      floor: managed.floor,
+      manager: managed.manager,
+      you_have_floor: managed.turn_current === agentName,
+      you_are_manager: managed.manager === agentName,
       turn_current: managed.turn_current,
     };
-
-    if (youAreManager) {
-      result.should_respond = true;
-      result.instructions = 'You are the MANAGER. Decide who speaks next using yield_floor(), or advance the phase using set_phase().';
-    } else if (youHaveFloor) {
-      result.should_respond = true;
-      result.instructions = 'It is YOUR TURN to speak. Respond now, then the floor will return to the manager.';
-    } else if (managed.floor === 'execution') {
-      result.should_respond = false;
-      result.instructions = `EXECUTION PHASE: Focus on your assigned tasks. Only message the manager (${managed.manager}) if you need help or to report completion.`;
-    } else {
-      result.should_respond = false;
-      result.instructions = 'DO NOT RESPOND. Wait for the manager to give you the floor. Call listen() again to wait.';
-    }
   }
-
-  const fromDashboard = Array.isArray(batch) && batch.some(m => m && (m.from === 'Dashboard' || m.from === 'Owner' || m.from === 'dashboard' || m.from === 'owner'));
-  const dashboardReplyHint = fromDashboard
-    ? ' One of these messages is from Dashboard/Owner — reply via send_message(to="Dashboard") so the owner sees your reply in the dashboard Messages tab. Do NOT narrate the reply in your CLI terminal; terminal output is invisible to the owner.'
-    : '';
-  result.next_action = (isAutonomousMode()
-    ? 'Process these messages, then call get_work() to continue the proactive work loop. Do NOT call listen_group() — use get_work() instead.'
-    : 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.') + dashboardReplyHint;
 
   const listenSurface = isManagedMode() && result.managed_context && result.managed_context.you_are_manager
     ? 'manager_listen'
@@ -8196,7 +8136,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.5.1' },
+  { name: 'agent-bridge', version: '5.5.2' },
   { capabilities: { tools: {} } }
 );
 
@@ -9325,7 +9265,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.5.1 running (65 tools)');
+    console.error('Agent Bridge MCP server v5.5.2 running (65 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
