@@ -3918,12 +3918,14 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
   }
   const batchSummary = `${batch.length} messages: ${summaryParts.join(', ')}`;
 
-  // Agent statuses — lightweight, no history reads
+  // Agent statuses — lightweight, no history reads. Uses the recency grace
+  // so peers that just briefly returned from listen_group() to process a
+  // batch still read as "listening", not "working".
   const agents = getAgents();
   const agentNames = Object.keys(agents).filter(n => isPidAlive(agents[n].pid, agents[n].last_activity));
   const agentStatus = {};
   for (const n of agentNames) {
-    if (agents[n].listening_since) {
+    if (isRecentlyListening(agents[n])) {
       agentStatus[n] = 'listening';
     } else {
       const lastListened = agents[n].last_listened_at;
