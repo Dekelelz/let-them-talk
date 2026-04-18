@@ -76,7 +76,7 @@ Open a third terminal, tell that agent to register as `Bob`, and the two will st
 
 ## ✨ Features
 
-- **66 MCP tools** for the full coordination surface — `register`, `send_message`, `broadcast`, `listen_group`, `get_work`, `verify_and_advance`, `create_task`, `start_plan`, `advance_workflow`, `lock_file`, `log_decision`, `kb_write`, `call_vote`, `submit_review`, `handoff`, and 50+ more.
+- **65 MCP tools** for the full coordination surface — `register`, `send_message`, `broadcast`, `listen_group`, `get_work`, `verify_and_advance`, `create_task`, `start_plan`, `advance_workflow`, `lock_file`, `log_decision`, `kb_write`, `call_vote`, `submit_review`, `handoff`, and 50+ more.
 - **Canonical runtime** — event-backed state under `.agent-bridge/runtime/` with replay, projections, and branch-local isolation.
 - **Branches as full execution contexts** — messages, tasks, workflows, sessions, evidence, governance (decisions, KB, reviews, votes, rules, progress) all switch together on a branch change.
 - **Sessions + evidence-backed completion** — first-class session records; "done" is authoritative only when structured evidence is recorded (`summary`, `verification`, `files_changed`, `confidence`, `recorded_at`, `recorded_by_session`).
@@ -309,7 +309,7 @@ The verify suite doesn't claim to cover every provider or runtime matrix, and do
 - **Dashboard binds to `127.0.0.1` by default.** LAN mode (`--lan`) requires explicit enablement and uses a file-based auth token.
 - **Rate-limited** API endpoints on non-localhost requests.
 - **No telemetry, no cloud.** Everything runs locally.
-- **0 known vulnerabilities** in the shipped tarball as of v5.4.2.
+- **0 known vulnerabilities** in the shipped tarball as of v5.4.3.
 - **Sensitive-path blocks** on file-share: `.env`, `.pem`, `.key`, `.lan-token`, `mcp.json`, and the agent-bridge data directory cannot be shared.
 - See [`SECURITY.md`](agent-bridge/SECURITY.md) for the disclosure policy.
 

@@ -716,69 +716,13 @@ async function assertBranchScopedDashboardReads(baseUrl, fixture, problems) {
   assert(!exportReplayResponse.raw.includes(fixture.mainChannelMessage.content), 'Replay export must exclude main-branch channel content when exporting a feature branch.', problems);
 }
 
-async function assertAssistantInjectRouting(baseUrl, dataDir, eventLog, problems) {
+function captureMessageBaseline(dataDir, eventLog) {
   const messagesFile = path.join(dataDir, 'messages.jsonl');
   const historyFile = path.join(dataDir, 'history.jsonl');
-  const assistantMessagesFile = path.join(dataDir, 'assistant-messages.jsonl');
-
-  const beforeMessages = readJsonl(messagesFile);
-  const beforeHistory = readJsonl(historyFile);
-  const beforeAssistantMessages = readJsonl(assistantMessagesFile);
-  const beforeMessageEvents = readMessageEvents(eventLog);
-
-  const defaultResponse = await requestJson(baseUrl, '/api/inject', {
-    method: 'POST',
-    body: {
-      to: 'Assistant',
-      content: 'Assistant default canonical route validation',
-    },
-  });
-  assert(defaultResponse.status === 200, `POST /api/inject to Assistant without opt-in should return 200, got ${defaultResponse.status}.`, problems);
-  assert(defaultResponse.body && defaultResponse.body.success === true, 'POST /api/inject to Assistant without opt-in should succeed.', problems);
-
-  const afterDefaultMessages = readJsonl(messagesFile);
-  const afterDefaultHistory = readJsonl(historyFile);
-  const afterDefaultAssistantMessages = readJsonl(assistantMessagesFile);
-  const afterDefaultMessageEvents = readMessageEvents(eventLog);
-  const defaultMessageId = defaultResponse.body && defaultResponse.body.messageId;
-  const defaultCanonicalMessage = afterDefaultMessages.find((message) => message.id === defaultMessageId);
-
-  assert(afterDefaultMessages.length === beforeMessages.length + 1, 'Assistant default inject should append to the canonical messages projection.', problems);
-  assert(afterDefaultHistory.length === beforeHistory.length + 1, 'Assistant default inject should append to the canonical history projection.', problems);
-  assert(afterDefaultAssistantMessages.length === beforeAssistantMessages.length, 'Assistant default inject must not write to assistant-messages.jsonl without explicit opt-in.', problems);
-  assert(defaultCanonicalMessage && defaultCanonicalMessage.to === 'Assistant', 'Assistant default inject should keep the Assistant target in canonical projections.', problems);
-  assert(afterDefaultMessageEvents.length === beforeMessageEvents.length + 1, 'Assistant default inject should append one canonical message event.', problems);
-  assert(afterDefaultMessageEvents.some((event) => event.type === 'message.sent' && event.payload && event.payload.message && event.payload.message.id === defaultMessageId), 'Assistant default inject should be recorded in the canonical message event log.', problems);
-
-  const privateResponse = await requestJson(baseUrl, '/api/inject', {
-    method: 'POST',
-    body: {
-      to: 'Assistant',
-      content: 'Assistant private opt-in validation',
-      assistant_private: true,
-    },
-  });
-  assert(privateResponse.status === 200, `POST /api/inject to Assistant with assistant_private=true should return 200, got ${privateResponse.status}.`, problems);
-  assert(privateResponse.body && privateResponse.body.success === true, 'POST /api/inject to Assistant with assistant_private=true should succeed.', problems);
-
-  const afterPrivateMessages = readJsonl(messagesFile);
-  const afterPrivateHistory = readJsonl(historyFile);
-  const afterPrivateAssistantMessages = readJsonl(assistantMessagesFile);
-  const afterPrivateMessageEvents = readMessageEvents(eventLog);
-  const privateMessageId = privateResponse.body && privateResponse.body.messageId;
-  const privateAssistantMessage = afterPrivateAssistantMessages.find((message) => message.id === privateMessageId);
-
-  assert(afterPrivateMessages.length === afterDefaultMessages.length, 'Assistant private opt-in inject must not append to canonical messages.jsonl.', problems);
-  assert(afterPrivateHistory.length === afterDefaultHistory.length, 'Assistant private opt-in inject must not append to canonical history.jsonl.', problems);
-  assert(afterPrivateAssistantMessages.length === afterDefaultAssistantMessages.length + 1, 'Assistant private opt-in inject should append exactly one private assistant message.', problems);
-  assert(privateAssistantMessage && privateAssistantMessage.to === 'Assistant', 'Assistant private opt-in inject should persist the Assistant-targeted private message.', problems);
-  assert(afterPrivateMessageEvents.length === afterDefaultMessageEvents.length, 'Assistant private opt-in inject must not append canonical message events.', problems);
-  assert(!afterPrivateMessageEvents.some((event) => event.payload && event.payload.message && event.payload.message.id === privateMessageId), 'Assistant private opt-in inject must stay out of the canonical branch event log.', problems);
-
   return {
-    mainMessageCount: afterPrivateMessages.length,
-    mainHistoryCount: afterPrivateHistory.length,
-    messageEventCount: afterPrivateMessageEvents.length,
+    mainMessageCount: readJsonl(messagesFile).length,
+    mainHistoryCount: readJsonl(historyFile).length,
+    messageEventCount: readMessageEvents(eventLog).length,
   };
 }
 
@@ -884,7 +828,7 @@ async function runHealthyScenario() {
       assertDashboardScopedMessageTaskUi(problems);
       await assertBranchScopedDashboardReads(baseUrl, branchFixture, problems);
       await assertBranchAwareRespawnPrompt(baseUrl, branchFixture, respawnFixture, problems);
-      const assistantBaseline = await assertAssistantInjectRouting(baseUrl, dataDir, eventLog, problems);
+      const messageBaseline = captureMessageBaseline(dataDir, eventLog);
       await assertDashboardRuleRoutes(baseUrl, canonicalState, eventLog, problems);
 
       const messagesFile = path.join(dataDir, 'messages.jsonl');
@@ -1041,8 +985,8 @@ async function runHealthyScenario() {
       const reassignMessages = finalHistory.filter((message) => typeof message.content === 'string' && message.content.startsWith('[REASSIGNED]'));
       const stopMessages = finalHistory.filter((message) => typeof message.content === 'string' && message.content.startsWith('[PLAN STOPPED]'));
 
-      assert(finalMessages.length === assistantBaseline.mainMessageCount + 7, `Plan control routes should leave ${assistantBaseline.mainMessageCount + 7} live main-branch messages, found ${finalMessages.length}.`, problems);
-      assert(finalHistory.length === assistantBaseline.mainHistoryCount + 7, `Plan control routes should leave ${assistantBaseline.mainHistoryCount + 7} canonical main-branch history rows after deleting the injected dashboard message, found ${finalHistory.length}.`, problems);
+      assert(finalMessages.length === messageBaseline.mainMessageCount + 7, `Plan control routes should leave ${messageBaseline.mainMessageCount + 7} live main-branch messages, found ${finalMessages.length}.`, problems);
+      assert(finalHistory.length === messageBaseline.mainHistoryCount + 7, `Plan control routes should leave ${messageBaseline.mainHistoryCount + 7} canonical main-branch history rows after deleting the injected dashboard message, found ${finalHistory.length}.`, problems);
       assert(pauseMessages.length === 2, 'Pause route should broadcast one message per registered agent.', problems);
       assert(resumeMessages.length === 2, 'Resume route should broadcast one message per registered agent.', problems);
       assert(reassignMessages.length === 1 && reassignMessages[0].to === 'beta', 'Reassign route should inject one direct message to the new assignee.', problems);

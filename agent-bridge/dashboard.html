@@ -4533,12 +4533,6 @@
           <button onclick="clearAttachment()" style="position:absolute;top:-6px;right:-6px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:18px;height:18px;cursor:pointer;font-size:11px;line-height:18px;padding:0;">X</button>
           <div id="inject-file-name" style="font-size:9px;color:var(--text-dim);margin-top:2px;"></div>
         </div>
-        <div id="assistant-private-row" style="display:none;align-items:center;gap:6px;margin-top:6px;font-size:10px;color:var(--text-muted);">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="checkbox" id="assistant-private-optin" style="accent-color:var(--accent)">
-            Send privately to Assistant only
-          </label>
-        </div>
       </div>
       <button class="send-btn" onclick="doInject()" id="inject-btn" disabled>Send</button>
     </div>
@@ -6149,7 +6143,6 @@ window.scopedApiUrl = scopedApiUrl;
 function updateSendBtn() {
   var target = document.getElementById('inject-target').value;
   var content = document.getElementById('inject-content').value.trim();
-  updateAssistantPrivateVisibility();
   document.getElementById('inject-btn').disabled = !target || (!content && !_attachedFile);
 }
 
@@ -6171,15 +6164,6 @@ function mainBranchOnlyViewHtml(surface) {
 function renderMainBranchOnlyView(elementId, surface) {
   var el = document.getElementById(elementId);
   if (el) el.innerHTML = mainBranchOnlyViewHtml(surface);
-}
-
-function updateAssistantPrivateVisibility() {
-  var row = document.getElementById('assistant-private-row');
-  var checkbox = document.getElementById('assistant-private-optin');
-  var isAssistantTarget = document.getElementById('inject-target').value === 'Assistant';
-  if (!row || !checkbox) return;
-  row.style.display = isAssistantTarget ? 'flex' : 'none';
-  if (!isAssistantTarget) checkbox.checked = false;
 }
 
 // ==================== FILE ATTACHMENT ====================
@@ -6218,9 +6202,6 @@ function doInject() {
   if (!content && _attachedFile) content = 'Analyze this image';
 
   var payload = { to: target, content: content };
-  if (target === 'Assistant') {
-    payload.assistant_private = !!document.getElementById('assistant-private-optin').checked;
-  }
 
   // Include attachment if present
   if (_attachedFile) {

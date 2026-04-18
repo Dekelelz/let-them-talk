@@ -884,13 +884,7 @@ function apiInjectMessage(body, query) {
   };
   if (body.attachments && body.attachments.length > 0) msg.attachments = body.attachments;
 
-  // Route to private assistant channel if targeting Assistant
-  if (body.to === 'Assistant' && body.assistant_private === true) {
-    const assistantMsgFile = path.join(dataDir, 'assistant-messages.jsonl');
-    fs.appendFileSync(assistantMsgFile, JSON.stringify(msg) + '\n');
-  } else {
-    canonicalState.appendMessage(msg, { branch });
-  }
+  canonicalState.appendMessage(msg, { branch });
 
   return { success: true, messageId: msg.id };
 }
@@ -1882,47 +1876,6 @@ const server = http.createServer(async (req, res) => {
         'Expires': '0'
       });
       res.end(html);
-    }
-    // --- Assistant private messages API ---
-    else if (url.pathname === '/api/assistant/messages' && req.method === 'GET') {
-      const projectPath = url.searchParams.get('project') || null;
-      const dataDir = resolveDataDir(projectPath);
-      const assistantMsgFile = path.join(dataDir, 'assistant-messages.jsonl');
-      const assistantRepliesFile = path.join(dataDir, 'assistant-replies.jsonl');
-      const limit = parseInt(url.searchParams.get('limit') || '100', 10);
-      let messages = [];
-      // Read Dashboard→Assistant messages
-      if (fs.existsSync(assistantMsgFile)) {
-        const lines = fs.readFileSync(assistantMsgFile, 'utf8').split('\n').filter(l => l.trim());
-        for (const line of lines) {
-          try { messages.push(JSON.parse(line)); } catch {}
-        }
-      }
-      // Read Assistant→Dashboard replies
-      if (fs.existsSync(assistantRepliesFile)) {
-        const lines = fs.readFileSync(assistantRepliesFile, 'utf8').split('\n').filter(l => l.trim());
-        for (const line of lines) {
-          try { messages.push(JSON.parse(line)); } catch {}
-        }
-      }
-      // Sort by timestamp and return last N
-      messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-      if (messages.length > limit) messages = messages.slice(-limit);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ messages, total: messages.length }));
-    }
-    // Clear assistant chat
-    else if (url.pathname === '/api/assistant/clear' && req.method === 'POST') {
-      const projectPath = url.searchParams.get('project') || null;
-      const dataDir = resolveDataDir(projectPath);
-      const assistantMsgFile = path.join(dataDir, 'assistant-messages.jsonl');
-      const assistantRepliesFile = path.join(dataDir, 'assistant-replies.jsonl');
-      const consumedFile = path.join(dataDir, 'consumed-assistant-private.json');
-      try { fs.writeFileSync(assistantMsgFile, ''); } catch {}
-      try { fs.writeFileSync(assistantRepliesFile, ''); } catch {}
-      try { fs.writeFileSync(consumedFile, '[]'); } catch {}
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
     }
     // Existing APIs (now with ?project= param support)
     else if (url.pathname === '/api/history' && req.method === 'GET') {
@@ -3462,7 +3415,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v5.4.2');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v5.4.3');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {

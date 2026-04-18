@@ -57,7 +57,6 @@ const REVIEWS_FILE = path.join(DATA_DIR, 'reviews.json');
 const DEPS_FILE = path.join(DATA_DIR, 'dependencies.json');
 const REPUTATION_FILE = path.join(DATA_DIR, 'reputation.json');
 const RULES_FILE = path.join(DATA_DIR, 'rules.json');
-const ASSISTANT_REPLIES_FILE = path.join(DATA_DIR, 'assistant-replies.jsonl');
 // Plugins removed in v3.4.3 — unnecessary attack surface, CLIs have their own extension systems
 
 // In-memory state for this process
@@ -1287,10 +1286,6 @@ function appendChannelConversationMessage(message, channel, branch = currentBran
   return appendConversationMessage(message, getChannelMessagesFile(channel, branch), getChannelHistoryFile(channel, branch));
 }
 
-function appendAssistantReplyMessage(message) {
-  return messagesState.appendAuxiliaryMessage(message, ASSISTANT_REPLIES_FILE);
-}
-
 function emptyCompressedState() {
   return { segments: [], last_compressed_at: null };
 }
@@ -2121,12 +2116,8 @@ function toolRegister(name, provider = null) {
     }
 
     // Prevent re-registration under a different name from the same process
-    // EXCEPTION: Allow transition to "Assistant" for setup/reset — force clear old registration
     if (registeredName && registeredName !== name) {
-      if (name === 'Assistant') {
-        registeredName = null; // Force clear for Assistant registration
-        registeredToken = null;
-      } else {
+      {
         unlockAgentsFile();
         return { error: `Already registered as "${registeredName}". Cannot change name mid-session.`, current_name: registeredName };
       }
@@ -2451,7 +2442,7 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
 
   // Send-after-listen enforcement: must call listen_group between sends in group mode
   // Autonomous mode: relaxed to 5 sends per listen cycle
-  // Assistant mode: skip enforcement when replying to Dashboard (owner)
+  // Skip send-after-listen enforcement when replying to Dashboard (owner)
   const effectiveSendLimit = isAutonomousMode() ? 5 : sendLimit;
   if (isGroupMode() && sendsSinceLastListen >= effectiveSendLimit && !isDashboardTarget) {
     return { error: `You must call listen_group() before sending again. You've sent ${sendsSinceLastListen} message(s) without listening (limit: ${effectiveSendLimit}). This prevents message storms.` };
@@ -2655,16 +2646,15 @@ async function toolSendMessage(content, to = null, reply_to = null, channel = nu
   }
 
   ensureDataDir();
-  // Messages involving Dashboard: route to private assistant-messages.jsonl
-  // Only Dashboard→Agent messages go to the assistant file (so assistant() can pick them up)
-  // Agent→Dashboard replies go to a separate file (so they don't trigger fs.watch loops)
+  // Dashboard-targeted messages go through the normal conversation log like
+  // any other DM so they appear in the Messages tab via /api/history. The
+  // listen_group DM filter (msg.to === agent) still keeps them private from
+  // other agents.
   if (isDashboardTarget) {
     msg.to = 'Dashboard';
     delete msg.addressed_to;
-    appendAssistantReplyMessage(msg);
-  } else {
-    appendChannelConversationMessage(msg, channel);
   }
+  appendChannelConversationMessage(msg, channel);
   touchActivity();
   lastSentAt = Date.now();
 
@@ -3188,226 +3178,6 @@ async function toolListenCodex(from = null) {
       done({ retry: true, message: 'No messages yet. Call listen_codex() again to keep waiting.' });
     }, 45000);
   });
-}
-
-// --- Assistant mode ---
-// Personal assistant listen loop — only receives Dashboard messages,
-// reads personality + safety files, returns safety-checked context with each message
-
-// Track how many messages processed — full context on first + every 15th message
-let assistantMsgCount = 0;
-const ASSISTANT_REFRESH_INTERVAL = 15;
-
-async function toolAssistant() {
-  if (!registeredName) {
-    return { error: 'You must call register() first' };
-  }
-
-  setListening(true);
-
-  // Private assistant message file — separate from main messages.jsonl
-  const assistantMsgFile = path.join(DATA_DIR, 'assistant-messages.jsonl');
-  ensureDataDir();
-
-  // Read assistant personality and safety files
-  const assistantDir = path.join(DATA_DIR, 'assistant');
-  const readFile = (name) => {
-    const p = path.join(assistantDir, name);
-    try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
-  };
-
-  const soul = readFile('Soul.md');
-  const identity = readFile('Identity.md');
-  const memory = readFile('Memory.md');
-  const skills = readFile('Skills.md');
-  const tools = readFile('Tools.md');
-  const safetyRules = readFile('SafetyRules.md');
-
-  if (!safetyRules) {
-    setListening(false);
-    return {
-      error: 'SafetyRules.md not found in .agent-bridge/assistant/. Run assistant init first.',
-    };
-  }
-
-  // Read unconsumed messages from private assistant file
-  const assistantConsumedFile = path.join(DATA_DIR, 'consumed-assistant-private.json');
-  let aConsumed = new Set();
-  try {
-    const raw = fs.readFileSync(assistantConsumedFile, 'utf8');
-    aConsumed = new Set(JSON.parse(raw));
-  } catch {}
-
-  const readAssistantMessages = (offset) => {
-    if (!fs.existsSync(assistantMsgFile)) return { messages: [], newOffset: 0 };
-    const stat = fs.statSync(assistantMsgFile);
-    if (stat.size <= offset) return { messages: [], newOffset: offset };
-    const fd = fs.openSync(assistantMsgFile, 'r');
-    const buf = Buffer.alloc(stat.size - offset);
-    fs.readSync(fd, buf, 0, buf.length, offset);
-    fs.closeSync(fd);
-    const lines = buf.toString('utf8').split('\n').filter(l => l.trim());
-    const messages = [];
-    for (const line of lines) {
-      try { messages.push(JSON.parse(line)); } catch {}
-    }
-    return { messages, newOffset: stat.size };
-  };
-
-  const saveAConsumed = () => {
-    fs.writeFileSync(assistantConsumedFile, JSON.stringify([...aConsumed]));
-  };
-
-  // Check for existing unconsumed messages
-  let aOffset = 0;
-  if (fs.existsSync(assistantMsgFile)) {
-    const { messages: allMsgs } = readAssistantMessages(0);
-    for (const msg of allMsgs) {
-      if (aConsumed.has(msg.id)) continue;
-      if (msg.from !== 'Dashboard') continue;
-      aConsumed.add(msg.id);
-      saveAConsumed();
-      aOffset = fs.statSync(assistantMsgFile).size;
-      touchActivity();
-      setListening(false);
-      const fullRefresh = assistantMsgCount === 0 || assistantMsgCount % ASSISTANT_REFRESH_INTERVAL === 0;
-      assistantMsgCount++;
-      return buildAssistantResponse(msg, { soul, identity, memory, skills, tools, safetyRules }, fullRefresh);
-    }
-    aOffset = fs.statSync(assistantMsgFile).size;
-  }
-
-  // Wait for new messages using fs.watch on assistant-messages.jsonl
-  return new Promise((resolve) => {
-    let resolved = false;
-    const done = (result) => {
-      if (resolved) return;
-      resolved = true;
-      try { if (watcher) watcher.close(); } catch {}
-      clearTimeout(timer);
-      clearInterval(heartbeatTimer);
-      if (fallbackInterval) clearInterval(fallbackInterval);
-      resolve(result);
-    };
-
-    let watcher;
-    let fallbackInterval;
-
-    const checkMessages = () => {
-      const { messages: newMsgs, newOffset } = readAssistantMessages(aOffset);
-      aOffset = newOffset;
-      for (const msg of newMsgs) {
-        if (aConsumed.has(msg.id)) continue;
-        if (msg.from !== 'Dashboard') continue;
-        aConsumed.add(msg.id);
-        saveAConsumed();
-        touchActivity();
-        setListening(false);
-        const fullRefresh = assistantMsgCount === 0 || assistantMsgCount % ASSISTANT_REFRESH_INTERVAL === 0;
-        assistantMsgCount++;
-        if (fullRefresh) {
-          // Re-read all files on refresh cycles (user may edit them)
-          const freshSoul = readFile('Soul.md');
-          const freshIdentity = readFile('Identity.md');
-          const freshMemory = readFile('Memory.md');
-          const freshSkills = readFile('Skills.md');
-          const freshTools = readFile('Tools.md');
-          const freshSafety = readFile('SafetyRules.md');
-          done(buildAssistantResponse(msg, {
-            soul: freshSoul, identity: freshIdentity, memory: freshMemory,
-            skills: freshSkills, tools: freshTools, safetyRules: freshSafety,
-          }, true));
-        } else {
-          // Lightweight — only re-read safety rules (always enforced)
-          const freshSafety = readFile('SafetyRules.md');
-          done(buildAssistantResponse(msg, { safetyRules: freshSafety }, false));
-        }
-        return true;
-      }
-      return false;
-    };
-
-    // Create file if it doesn't exist so fs.watch works
-    if (!fs.existsSync(assistantMsgFile)) {
-      fs.writeFileSync(assistantMsgFile, '');
-    }
-
-    try {
-      watcher = fs.watch(assistantMsgFile, () => { checkMessages(); });
-      watcher.on('error', () => {});
-    } catch {
-      let pollCount = 0;
-      fallbackInterval = setInterval(() => {
-        if (checkMessages()) { clearInterval(fallbackInterval); return; }
-        pollCount++;
-        if (pollCount === 10) {
-          clearInterval(fallbackInterval);
-          fallbackInterval = setInterval(() => {
-            if (checkMessages()) clearInterval(fallbackInterval);
-          }, 2000);
-        }
-      }, 500);
-    }
-
-    // Heartbeat every 15s
-    const heartbeatTimer = setInterval(() => { touchHeartbeat(registeredName); }, 15000);
-
-    // 5 min timeout
-    const timer = setTimeout(() => {
-      setListening(false);
-      touchActivity();
-      done({ retry: true, message: 'No messages from owner in 5 minutes. Call assistant() again to keep waiting.' });
-    }, 300000);
-  });
-}
-
-function buildAssistantResponse(msg, files, fullRefresh) {
-  const response = {
-    message: {
-      id: msg.id,
-      from: msg.from,
-      content: msg.content,
-      timestamp: msg.timestamp,
-    },
-    context_refreshed: fullRefresh,
-  };
-
-  if (fullRefresh) {
-    // Full context — first message + every 15th message
-    response.assistant_context = {
-      soul: files.soul,
-      identity: files.identity,
-      memory: files.memory,
-      skills: files.skills,
-      tools: files.tools,
-      safety_rules: files.safetyRules,
-    };
-    response.instructions = [
-      'You are in Assistant mode. Read your Soul.md and Identity.md to know your personality.',
-      'BEFORE executing ANY action, check the request against safety_rules. If it matches a CRITICAL rule, REFUSE. If it needs confirmation, ASK FIRST.',
-      'Check your Memory.md for context from previous conversations.',
-      'Check Skills.md and Tools.md to know what you are allowed to do.',
-      'Keep responses short (2-3 sentences) since the user is on their phone.',
-      'After responding, call assistant() again immediately to keep listening.',
-      'To reply, use send_message(to: "Dashboard", content: "your reply").',
-      'If the voice transcription looks garbled or unclear, ask the user to repeat.',
-    ];
-  } else {
-    // Lightweight — only safety rules (always needed) + reminder
-    response.assistant_context = {
-      safety_rules: files.safetyRules,
-    };
-    response.instructions = [
-      'Continue in Assistant mode — your personality files are already in context from earlier.',
-      'BEFORE executing ANY action, check the request against safety_rules. If it matches a CRITICAL rule, REFUSE. If it needs confirmation, ASK FIRST.',
-      'Keep responses short (2-3 sentences) since the user is on their phone.',
-      'After responding, call assistant() again immediately to keep listening.',
-      'To reply, use send_message(to: "Dashboard", content: "your reply").',
-    ];
-  }
-
-  response.next_action = 'Process this message following your personality and safety rules, then call assistant() again.';
-  return response;
 }
 
 // --- Group conversation tools ---
@@ -8425,7 +8195,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.4.2' },
+  { name: 'agent-bridge', version: '5.4.3' },
   { capabilities: { tools: {} } }
 );
 
@@ -8539,14 +8309,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Only listen for messages from this specific agent (optional)',
             },
           },
-        },
-      },
-      {
-        name: 'assistant',
-        description: 'Assistant mode — personal assistant listen loop. Only receives messages from Dashboard (the owner). Returns message with safety context. Full personality files (Soul, Identity, Memory, Skills, Tools, SafetyRules) included on first call and every 15th message (context_refreshed: true). In between, only SafetyRules are sent to save tokens — your earlier context still applies. Use this instead of listen() when registered as an Assistant agent.',
-        inputSchema: {
-          type: 'object',
-          properties: {},
         },
       },
       {
@@ -9185,9 +8947,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'listen_codex':
         result = await toolListenCodex(args?.from);
         break;
-      case 'assistant':
-        result = await toolAssistant();
-        break;
       case 'check_messages':
         result = toolCheckMessages(args?.from);
         break;
@@ -9565,7 +9324,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.4.2 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.4.3 running (65 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');

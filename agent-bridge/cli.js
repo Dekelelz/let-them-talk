@@ -9,7 +9,7 @@ const { createCanonicalState } = require('./state/canonical');
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v5.4.2
+  Let Them Talk — Agent Bridge v5.4.3
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
@@ -1111,92 +1111,12 @@ function uninstall() {
   console.log('');
 }
 
-// --- Assistant init ---
-function assistantInit() {
-  const cwd = process.cwd();
-  const dataDir = path.join(cwd, '.agent-bridge');
-  const assistantDir = path.join(dataDir, 'assistant');
-
-  console.log('');
-  console.log('  \x1b[1m\x1b[35mLet Them Talk — Assistant Setup\x1b[0m');
-  console.log('  ════════════════════════════════════');
-  console.log('');
-
-  // Check if Let Them Talk is already initialized
-  if (!fs.existsSync(dataDir)) {
-    console.log('  \x1b[31m✗ Let Them Talk not found.\x1b[0m');
-    console.log('  Run \x1b[36mnpx let-them-talk init\x1b[0m first.');
-    console.log('');
-    return;
-  }
-
-  // Create assistant directory with template files
-  if (!fs.existsSync(assistantDir)) {
-    fs.mkdirSync(assistantDir, { recursive: true });
-  }
-
-  const templateDir = path.join(__dirname, 'assistant');
-  const files = ['Soul.md', 'Identity.md', 'Memory.md', 'Skills.md', 'Tools.md', 'SafetyRules.md'];
-  let created = 0;
-  let skipped = 0;
-
-  for (const file of files) {
-    const dest = path.join(assistantDir, file);
-    if (fs.existsSync(dest)) {
-      console.log('  \x1b[33m⊘\x1b[0m ' + file + ' (already exists, skipped)');
-      skipped++;
-      continue;
-    }
-    const src = path.join(templateDir, file);
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, dest);
-    } else {
-      // Fallback: create minimal template
-      const content = `# ${file.replace('.md', '')}\n\nEdit this file to customize your assistant.\n`;
-      fs.writeFileSync(dest, content);
-    }
-    console.log('  \x1b[32m✓\x1b[0m ' + file);
-    created++;
-  }
-
-  console.log('');
-  if (created > 0) {
-    console.log(`  Created ${created} file${created > 1 ? 's' : ''} in .agent-bridge/assistant/`);
-  }
-  if (skipped > 0) {
-    console.log(`  Skipped ${skipped} existing file${skipped > 1 ? 's' : ''}`);
-  }
-
-  console.log('');
-  console.log('  \x1b[1mNext steps:\x1b[0m');
-  console.log('');
-  console.log('  1. Edit the personality files in \x1b[36m.agent-bridge/assistant/\x1b[0m');
-  console.log('     - Soul.md      → personality and tone');
-  console.log('     - Identity.md  → name and role');
-  console.log('     - Skills.md    → what it can do');
-  console.log('     - Tools.md     → allowed/blocked tools');
-  console.log('     - SafetyRules.md → safety guardrails');
-  console.log('');
-  console.log('  2. Start the dashboard:');
-  console.log('     \x1b[36mnode .agent-bridge/launch.js\x1b[0m');
-  console.log('');
-  console.log('  3. Open the Assistant tab in the dashboard:');
-  console.log('     \x1b[36mhttp://<your-ip>:3000\x1b[0m → click \x1b[35mAssistant\x1b[0m tab');
-  console.log('');
-  console.log('  4. Open a terminal with Let Them Talk and register as "Assistant"');
-  console.log('     The agent should use the \x1b[36massistant()\x1b[0m tool to listen.');
-  console.log('');
-}
-
 function runCli() {
   const command = process.argv[2];
 
   switch (command) {
     case 'init':
       init();
-      break;
-    case 'assistant':
-      assistantInit();
       break;
     case 'templates':
       listTemplates();
