@@ -309,6 +309,88 @@ process.on('SIGINT', function() { console.log('\\n[' + name + '] Shutting down.'
   log('    node .agent-bridge/ollama-agent.js Writer mistral');
 }
 
+// Merge-safe AGENTS.md / CLAUDE.md updater. Writes a marker block with the
+// background-worker rules so any agent cd'd into this folder gets them every
+// session. Re-running replaces only the marked block, leaving user content alone.
+function setupAgentsMarkdown(cwd, log = console.log) {
+  const BEGIN = '<!-- BEGIN let-them-talk (auto-managed — do not edit between markers) -->';
+  const END = '<!-- END let-them-talk -->';
+  const block = [
+    BEGIN,
+    '',
+    '## Let Them Talk — Background-Worker Mode',
+    '',
+    'This project uses the `agent-bridge` MCP server for multi-agent coordination.',
+    'When you run in this folder, you are a **background worker on a team**, not an',
+    'interactive chat assistant. Follow these rules strictly:',
+    '',
+    '1. **Your CLI terminal output is invisible** to the owner and to every other',
+    '   agent. If you want anyone to see something, it MUST go through',
+    '   `send_message(to="...", content="...")` or `broadcast(content="...")`.',
+    '',
+    '2. **No narration in terminal.** Do not "reply" to messages in your terminal',
+    '   window. Do not summarize your progress in terminal. Do not print status',
+    '   updates in terminal. Those are invisible. Talk like a human on a team chat',
+    '   — announce starts, finishes, blockers, and questions via `send_message`.',
+    '',
+    '3. **Stay in the listen loop.** After every action, call `listen_group()` (or',
+    '   `listen()` in direct mode). When it returns an empty batch, that is NORMAL',
+    '   — call it again immediately. If it returns a tool error like',
+    '   `"timed out awaiting tools/call"`, that is a Codex-level transport hiccup',
+    '   — immediately call it again. Never stop looping, never treat an empty',
+    '   return or tool error as "done".',
+    '',
+    '4. **Reply to Dashboard/Owner via `send_message(to="Dashboard")`.** The owner',
+    '   reads replies in the dashboard Messages tab, not your terminal.',
+    '',
+    '5. **Do not answer on another agent\'s behalf.** If a message targets a',
+    '   specific agent (`msg.to`), only that agent should reply.',
+    '',
+    '6. The loop only ends when the owner sends a message telling you to stop.',
+    '',
+    END,
+  ].join('\n');
+
+  const targets = [
+    { file: 'AGENTS.md', label: 'Codex / oh-my-codex' },
+    { file: 'CLAUDE.md', label: 'Claude Code' },
+  ];
+
+  for (const { file, label } of targets) {
+    const fp = path.join(cwd, file);
+    let existing = '';
+    let existed = false;
+    if (fs.existsSync(fp)) {
+      existing = fs.readFileSync(fp, 'utf8');
+      existed = true;
+    }
+
+    const markerRegex = new RegExp(
+      BEGIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+        '[\\s\\S]*?' +
+        END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      'g'
+    );
+
+    let next;
+    if (markerRegex.test(existing)) {
+      // Replace only the managed block
+      next = existing.replace(markerRegex, block);
+      log('  [ok] ' + file + ': refreshed Let Them Talk block (' + label + ')');
+    } else if (existed) {
+      // Append below user content
+      const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+      next = existing + separator + block + '\n';
+      log('  [ok] ' + file + ': appended Let Them Talk block (' + label + ')');
+    } else {
+      // New file — minimal content so only our block is present
+      next = '# ' + path.basename(cwd) + ' — Agent Instructions\n\n' + block + '\n';
+      log('  [ok] ' + file + ': created with Let Them Talk block (' + label + ')');
+    }
+    fs.writeFileSync(fp, next);
+  }
+}
+
 function init(options) {
   const opts = options || {};
   const cwd = opts.cwd || process.cwd();
@@ -366,6 +448,12 @@ function init(options) {
       case 'codex':  setupCodex(serverPath, cwd, log);  break;
     }
   }
+
+  // Persistent system-level directive for any agent that starts in this folder.
+  // Codex (via oh-my-codex's developer_instructions) and Claude Code both read
+  // AGENTS.md / CLAUDE.md automatically on startup. A marker block lets us merge
+  // in/out cleanly without clobbering whatever else the user has written.
+  setupAgentsMarkdown(cwd, log);
 
   // Add .agent-bridge/ and MCP config files to .gitignore
   const gitignoreEntries = ['.agent-bridge/', '.mcp.json', '.codex/', '.gemini/'];
