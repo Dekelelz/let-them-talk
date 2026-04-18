@@ -957,19 +957,20 @@ window.onPlayerSit = function(deskIdx) {
   var iframeWrap = document.createElement('div');
   iframeWrap.style.cssText = 'flex:1;position:relative;';
 
-  // Dashboard iframe
+  // Dashboard iframe. clipboard-write only — the iframe needs to copy agent
+  // prompts into the user's clipboard, it never needs to read from it.
   var dashIframe = document.createElement('iframe');
   dashIframe.id = 'mon-iframe-dashboard';
   dashIframe.src = window.location.origin || 'http://localhost:3000';
   dashIframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#0d1117;';
-  dashIframe.allow = 'clipboard-read; clipboard-write';
+  dashIframe.allow = 'clipboard-write';
   iframeWrap.appendChild(dashIframe);
 
-  // ComfyUI iframe (hidden initially)
+  // ComfyUI iframe (hidden initially). Same write-only clipboard scope.
   var comfyIframe = document.createElement('iframe');
   comfyIframe.id = 'mon-iframe-comfyui';
   comfyIframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#1a1a2e;display:none;';
-  comfyIframe.allow = 'clipboard-read; clipboard-write';
+  comfyIframe.allow = 'clipboard-write';
   // Don't load ComfyUI until tab is clicked (saves resources)
   iframeWrap.appendChild(comfyIframe);
 
@@ -995,9 +996,11 @@ window.onPlayerSit = function(deskIdx) {
       if (dIframe) dIframe.style.display = 'none';
       if (cIframe) {
         cIframe.style.display = 'block';
-        // Lazy-load ComfyUI on first switch
+        // Lazy-load ComfyUI on first switch. URL is configurable via
+        // window.COMFYUI_URL (set it from the dashboard or page) so users
+        // on non-default ports or remote ComfyUI hosts can override.
         if (!cIframe.src || cIframe.src === 'about:blank' || cIframe.src === '') {
-          cIframe.src = 'http://127.0.0.1:8188';
+          cIframe.src = (typeof window !== 'undefined' && window.COMFYUI_URL) || 'http://127.0.0.1:8188';
         }
       }
       if (dTab) { dTab.style.color = '#8892b0'; dTab.style.borderBottomColor = 'transparent'; }
