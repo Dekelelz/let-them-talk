@@ -3609,14 +3609,13 @@ async function toolListenGroup() {
         sendsSinceLastListen = 0;
         sendLimit = 10;
         touchHeartbeat(registeredName);
-        resolve({
-          messages: [],
-          message_count: 0,
-          retry: true,
-          batch_summary: isManagedMode()
-            ? 'No new messages — this is NORMAL, not an error. Call listen() again immediately to keep waiting. Codex CLI may end the call near 120s; that is the host limit, not a failure.'
-            : 'No new messages — this is NORMAL, not an error. Call listen_group() again immediately to keep listening. Codex CLI may end the call near 120s; that is the host limit, not a failure.',
-        });
+        // Minimal empty-batch response — the EMPTY-RETURN RULE is already in
+        // every agent's guide + AGENTS.md block, so there's no need to repeat
+        // the "this is normal, call again" reminder every 90s. Trimmed to the
+        // irreducible payload so long listen loops cost as few tokens as
+        // possible. Over a full session this saves ~2 tokens per wake-up *
+        // hundreds of wake-ups = meaningful savings on long-running agents.
+        resolve({ messages: [], retry: true });
       }
     };
 
@@ -8197,7 +8196,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.5.0' },
+  { name: 'agent-bridge', version: '5.5.1' },
   { capabilities: { tools: {} } }
 );
 
@@ -9326,7 +9325,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.5.0 running (65 tools)');
+    console.error('Agent Bridge MCP server v5.5.1 running (65 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');
