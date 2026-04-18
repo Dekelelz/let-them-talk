@@ -1890,6 +1890,7 @@ function buildGuide(level = 'standard') {
   const listenCmd = isManagedMode() ? 'listen()' : (mode === 'group' ? 'listen_group()' : 'listen()');
   rules.push(`AFTER EVERY ACTION, call ${listenCmd}. This is how you receive messages. NEVER skip this. NEVER use sleep(). NEVER poll with check_messages(). ${listenCmd} is your ONLY way to receive messages.`);
   rules.push(`EMPTY-RETURN RULE: When ${listenCmd} returns no messages, that is NORMAL — it means "no messages yet", NOT a failure. Call ${listenCmd} again immediately. Codex CLI may terminate the call near 120s due to its own tool-call timeout; that is the host's limit, not an error. The loop never ends.`);
+  rules.push('DASHBOARD REPLY RULE: When you receive a message from "Dashboard" or "Owner", reply ONLY via send_message(to="Dashboard", content=...). The owner reads your reply in the dashboard Messages tab — NOT your CLI terminal. Do NOT narrate a reply in your terminal output; anything you say there is invisible to the owner. If a message targets another agent (msg.to is not you), do not answer on their behalf — let the addressed agent reply. After send_message, call ' + listenCmd + ' again immediately.');
 
   // Minimal level: Tier 0 only — for experienced agents refreshing rules
   if (level === 'minimal') {
@@ -3956,9 +3957,13 @@ function buildListenGroupResponse(batch, consumed, agentName, listenStart) {
     }
   }
 
-  result.next_action = isAutonomousMode()
+  const fromDashboard = Array.isArray(batch) && batch.some(m => m && (m.from === 'Dashboard' || m.from === 'Owner' || m.from === 'dashboard' || m.from === 'owner'));
+  const dashboardReplyHint = fromDashboard
+    ? ' One of these messages is from Dashboard/Owner — reply via send_message(to="Dashboard") so the owner sees your reply in the dashboard Messages tab. Do NOT narrate the reply in your CLI terminal; terminal output is invisible to the owner.'
+    : '';
+  result.next_action = (isAutonomousMode()
     ? 'Process these messages, then call get_work() to continue the proactive work loop. Do NOT call listen_group() — use get_work() instead.'
-    : 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.';
+    : 'After processing these messages and sending your response, call listen_group() again immediately. Never stop listening.') + dashboardReplyHint;
 
   const listenSurface = isManagedMode() && result.managed_context && result.managed_context.you_are_manager
     ? 'manager_listen'
