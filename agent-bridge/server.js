@@ -1918,6 +1918,8 @@ function buildGuide(level = 'standard') {
   rules.push('SELF-RELIANCE RULE: When the Owner gives you a goal, treat it as a goal — NOT a checklist of approval gates. Break it down yourself, pick tasks via get_work(), and work until done. NEVER stop to ask "should I do X?" or "do you want me to Y?" for decisions you and the team can make. Your default answer to uncertainty is: decide, log_decision() to record the choice, continue. Asking the Owner for permission on small decisions is the failure mode — deciding and moving is the success mode.');
   rules.push('TEAM-FIRST ESCALATION RULE: Before DMing Dashboard/Owner with a question, try these in order: (1) kb_read() — did the team already decide this? (2) DM a teammate with the relevant skill (use list_agents() to find them). (3) call_vote() if the team genuinely disagrees. (4) log_decision() to lock in your choice and move forward. Only escalate to Owner when: (a) the overall goal is complete and the next strategic direction genuinely needs a human call, or (b) you hit a true blocker only the Owner can resolve (credentials, priorities, business rules, access). "I am not sure which design to pick" is NOT an Owner question — it is a team_decision() question.');
   rules.push('DONE-WHEN-DONE RULE: "Done" means the Owner\'s original GOAL is achieved, not "I finished my current step". After verify_and_advance(), immediately call get_work() again to find the next piece of the goal. The loop ends when the goal is complete and evidence is recorded — not when the current step ends. If get_work() returns nothing and the goal still is not done, synthesize: break the remaining work into new tasks with create_task() and keep going.');
+  rules.push('FORMATTING RULE (dashboard is rendered rich markdown): The Messages tab renders GFM markdown, GitHub-quality tables, fenced code with syntax highlighting, Obsidian-style callouts, Mermaid diagrams, KaTeX math, and clickable images. WRITE LIKE YOU ARE PUBLISHING. Use: (1) **tables** for structured data (status, file changes, comparisons) — NEVER use indented lists for tabular info; (2) fenced code blocks with language tag (```ts, ```bash, ```json); (3) callouts for status: > [!SUCCESS] when something shipped, > [!WARNING] for risks, > [!DANGER] for blockers, > [!NOTE] for context, > [!SUMMARY]- (collapsible) for long reports; (4) ```mermaid blocks for architecture/flow/sequence diagrams instead of ASCII art; (5) headings (##, ###) to structure long updates; (6) task lists (- [x] done / - [ ] todo) for action items. A terse structured report beats a wall of text.');
+  rules.push('STATUS-REPORT TEMPLATE: When reporting progress to the Owner or Quality Lead, follow this shape:\n\n> [!SUMMARY]- Headline (1 sentence)\n> \n> ## What shipped\n> | Area | Change | Evidence |\n> |---|---|---|\n> | ... | ... | files_changed + verification |\n> \n> ## Blockers\n> > [!WARNING] describe blocker + what unblocks it\n> \n> ## Next\n> - [ ] next step 1\n> - [ ] next step 2\n\nIf nothing is blocked, omit the Blockers section. If you are only reporting a small update, skip the collapsible summary and use a callout with the headline inline. Do not narrate in prose when a table would be clearer.');
 
   // Minimal level: Tier 0 only — for experienced agents refreshing rules
   if (level === 'minimal') {
@@ -8195,7 +8197,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.4.3' },
+  { name: 'agent-bridge', version: '5.5.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -9324,7 +9326,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.4.3 running (65 tools)');
+    console.error('Agent Bridge MCP server v5.5.0 running (65 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');

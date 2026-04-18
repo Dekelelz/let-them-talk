@@ -1,4 +1,4 @@
-# Let Them Talk Usage Guide v5.4.3
+# Let Them Talk Usage Guide v5.5.0
 
 This guide is the short operator view of the current runtime. For normative architecture details, use the docs under `docs/architecture/`.
 

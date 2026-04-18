@@ -4252,7 +4252,145 @@
   @media (max-width: 520px) {
     .char-designer { width: 100vw; }
   }
+
+  /* ==================== RICH MESSAGE RENDERING (v5.5) ==================== */
+  .msg-content, .ws-entry-content {
+    line-height: 1.55;
+    font-size: 14px;
+    word-wrap: break-word;
+  }
+  .msg-content p { margin: 0 0 8px; }
+  .msg-content p:last-child { margin-bottom: 0; }
+  .msg-content h1, .msg-content h2, .msg-content h3, .msg-content h4 {
+    margin: 14px 0 6px; font-weight: 600; line-height: 1.3;
+  }
+  .msg-content h1 { font-size: 19px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .msg-content h2 { font-size: 17px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+  .msg-content h3 { font-size: 15px; }
+  .msg-content h4 { font-size: 14px; color: var(--text-muted); }
+  .msg-content ul, .msg-content ol { margin: 6px 0 8px; padding-left: 22px; }
+  .msg-content li { margin: 2px 0; }
+  .msg-content li > input[type="checkbox"] {
+    margin-right: 6px; transform: translateY(1px); accent-color: var(--accent);
+  }
+  .msg-content hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+  .msg-content a { color: var(--accent); text-decoration: none; }
+  .msg-content a:hover { text-decoration: underline; }
+  .msg-content blockquote {
+    margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--border);
+    background: var(--surface-2); color: var(--text-muted);
+  }
+  .msg-content img { max-width: 100%; border-radius: 6px; cursor: zoom-in; margin: 4px 0; }
+
+  /* GitHub-quality tables */
+  .msg-content table {
+    width: 100%; border-collapse: collapse; margin: 10px 0;
+    font-size: 13px; overflow: auto; display: block;
+  }
+  .msg-content thead { background: var(--surface-2); position: sticky; top: 0; z-index: 1; }
+  .msg-content th, .msg-content td {
+    border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top;
+  }
+  .msg-content th { font-weight: 600; color: var(--text); white-space: nowrap; }
+  .msg-content tbody tr:nth-child(odd) { background: rgba(255,255,255,0.015); }
+  .msg-content tbody tr:hover { background: rgba(88, 166, 255, 0.08); }
+  .msg-content table code { font-size: 12px; }
+
+  /* Code blocks (with language pill + copy button) */
+  .msg-content .code-block {
+    position: relative; margin: 8px 0; border-radius: 6px;
+    background: #0d1117; border: 1px solid #30363d; overflow: hidden;
+  }
+  .msg-content .code-block pre {
+    margin: 0; padding: 12px 14px; overflow-x: auto;
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 12.5px; line-height: 1.5;
+  }
+  .msg-content .code-block code.hljs { background: transparent; padding: 0; font-size: inherit; }
+  .msg-content .code-lang-pill {
+    position: absolute; top: 6px; left: 10px; font-size: 10px; font-weight: 600;
+    color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px;
+    pointer-events: none; user-select: none;
+  }
+  .msg-content .code-copy-btn {
+    position: absolute; top: 4px; right: 6px; font-size: 10px;
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 4px; padding: 3px 8px; cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
+  }
+  .msg-content .code-block:hover .code-copy-btn { opacity: 1; }
+  .msg-content .code-copy-btn:hover { background: #30363d; }
+  .msg-content .code-copy-btn.copied { color: #3fb950; border-color: #3fb950; }
+  .msg-content :not(.code-block) > code {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 5px; font-size: 12px;
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+  }
+
+  /* Obsidian-style callouts */
+  .msg-content .callout {
+    display: block; margin: 10px 0; padding: 10px 14px;
+    border-radius: 6px; border-left: 4px solid;
+    background: rgba(255,255,255,0.02);
+  }
+  .msg-content .callout .callout-title {
+    display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px;
+  }
+  .msg-content .callout .callout-icon { font-size: 14px; }
+  .msg-content .callout .callout-body { margin-top: 6px; font-size: 13.5px; line-height: 1.55; }
+  .msg-content .callout .callout-body > :first-child { margin-top: 0; }
+  .msg-content .callout .callout-body > :last-child { margin-bottom: 0; }
+  .msg-content details.callout-collapsible > summary { cursor: pointer; user-select: none; list-style: none; }
+  .msg-content details.callout-collapsible > summary::-webkit-details-marker { display: none; }
+  .msg-content details.callout-collapsible > summary::before {
+    content: '▶'; display: inline-block; width: 14px; color: var(--text-muted); transition: transform 0.15s;
+  }
+  .msg-content details.callout-collapsible[open] > summary::before { transform: rotate(90deg); }
+
+  .msg-content .callout-note     { border-left-color: #58a6ff; }
+  .msg-content .callout-note     .callout-title { color: #58a6ff; }
+  .msg-content .callout-info     { border-left-color: #58a6ff; }
+  .msg-content .callout-info     .callout-title { color: #58a6ff; }
+  .msg-content .callout-tip      { border-left-color: #3fb950; }
+  .msg-content .callout-tip      .callout-title { color: #3fb950; }
+  .msg-content .callout-success  { border-left-color: #3fb950; }
+  .msg-content .callout-success  .callout-title { color: #3fb950; }
+  .msg-content .callout-warning  { border-left-color: #e3b341; }
+  .msg-content .callout-warning  .callout-title { color: #e3b341; }
+  .msg-content .callout-danger   { border-left-color: #f85149; }
+  .msg-content .callout-danger   .callout-title { color: #f85149; }
+  .msg-content .callout-question { border-left-color: #bc8cff; }
+  .msg-content .callout-question .callout-title { color: #bc8cff; }
+  .msg-content .callout-summary  { border-left-color: #79c0ff; }
+  .msg-content .callout-summary  .callout-title { color: #79c0ff; }
+  .msg-content .callout-example  { border-left-color: #d2a8ff; }
+  .msg-content .callout-example  .callout-title { color: #d2a8ff; }
+  .msg-content .callout-quote    { border-left-color: #8b949e; }
+  .msg-content .callout-quote    .callout-title { color: #c9d1d9; }
+
+  /* Mermaid container */
+  .msg-content .mermaid-block {
+    margin: 10px 0; padding: 12px; background: #0d1117;
+    border: 1px solid #30363d; border-radius: 6px; overflow-x: auto;
+    display: flex; justify-content: center;
+  }
+  .msg-content .mermaid-block .mermaid { max-width: 100%; }
+
+  /* KaTeX block spacing */
+  .msg-content .katex-display { margin: 10px 0; overflow-x: auto; overflow-y: hidden; }
+
+  /* Image lightbox (click an image in a message) */
+  .image-lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+    cursor: zoom-out; animation: lightbox-in 0.15s ease-out;
+  }
+  .image-lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,0.8); }
+  @keyframes lightbox-in { from { opacity: 0; } to { opacity: 1; } }
 </style>
+<!-- Bundled rendering libs (local, offline-safe) -->
+<link rel="stylesheet" href="/vendor/highlight-github-dark.min.css">
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/highlight.min.js"></script>
 </head>
 <body>
 
@@ -5449,181 +5587,214 @@ function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\\/g, '&#92;');
 }
 
-// ==================== MARKDOWN RENDERER ====================
+// ==================== MARKDOWN RENDERER (v5.5+) ====================
+// Uses marked (GFM) + highlight.js + Obsidian-style callout preprocessor.
+// Mermaid + KaTeX are lazy-loaded on demand from /vendor/.
+
+var _markedConfigured = false;
+var _mermaidLoaded = false;
+
+function configureMarked() {
+  if (_markedConfigured || typeof window.marked === 'undefined') return;
+  _markedConfigured = true;
+  var renderer = new window.marked.Renderer();
+  renderer.code = function(code, lang) {
+    var codeText = (code && typeof code === 'object' && 'text' in code) ? code.text : code;
+    var codeLang = (code && typeof code === 'object' && 'lang' in code) ? code.lang : lang;
+    if ((codeLang || '').toLowerCase() === 'mermaid') {
+      queueMermaidRender();
+      return '<div class="mermaid-block"><pre class="mermaid">' + escapeHtml(codeText) + '</pre></div>';
+    }
+    var effectiveLang = codeLang && typeof window.hljs !== 'undefined' && window.hljs.getLanguage(codeLang) ? codeLang : '';
+    var highlighted;
+    if (typeof window.hljs !== 'undefined') {
+      try {
+        highlighted = effectiveLang
+          ? window.hljs.highlight(codeText, { language: effectiveLang, ignoreIllegals: true }).value
+          : window.hljs.highlightAuto(codeText).value;
+      } catch (e) { highlighted = escapeHtml(codeText); }
+    } else {
+      highlighted = escapeHtml(codeText);
+    }
+    var langLabel = effectiveLang || (codeLang || '');
+    var pill = langLabel ? '<span class="code-lang-pill">' + escapeHtml(langLabel) + '</span>' : '';
+    var copyBtn = '<button class="code-copy-btn" onclick="copyCodeBlock(this)" title="Copy code">Copy</button>';
+    return '<div class="code-block">' + pill + copyBtn + '<pre><code class="hljs' + (effectiveLang ? ' language-' + effectiveLang : '') + '">' + highlighted + '</code></pre></div>';
+  };
+  window.marked.use({ gfm: true, breaks: true, pedantic: false, renderer: renderer });
+}
+
+var CALLOUT_MAP = {
+  note:     { icon: '\uD83D\uDCDD', cls: 'callout-note',     label: 'Note' },
+  info:     { icon: '\u2139\uFE0F',  cls: 'callout-info',     label: 'Info' },
+  tip:      { icon: '\uD83D\uDCA1', cls: 'callout-tip',      label: 'Tip' },
+  success:  { icon: '\u2705',       cls: 'callout-success',  label: 'Success' },
+  warning:  { icon: '\u26A0\uFE0F',  cls: 'callout-warning',  label: 'Warning' },
+  danger:   { icon: '\uD83D\uDEA8', cls: 'callout-danger',   label: 'Danger' },
+  question: { icon: '\u2753',       cls: 'callout-question', label: 'Question' },
+  summary:  { icon: '\uD83D\uDCCB', cls: 'callout-summary',  label: 'Summary' },
+  example:  { icon: '\uD83E\uDDEA', cls: 'callout-example',  label: 'Example' },
+  quote:    { icon: '\uD83D\uDCAC', cls: 'callout-quote',    label: 'Quote' },
+};
+var _calloutStore = {};
+
+function preprocessCallouts(text) {
+  var lines = text.split('\n');
+  var out = [];
+  var i = 0;
+  while (i < lines.length) {
+    var m = lines[i].match(/^\s*>\s*\[!([a-z]+)\](-?)\s*(.*)$/i);
+    if (m) {
+      var typeKey = m[1].toLowerCase();
+      var meta = CALLOUT_MAP[typeKey] || CALLOUT_MAP.note;
+      var collapsible = m[2] === '-';
+      var title = (m[3] || '').trim() || meta.label;
+      var body = [];
+      i++;
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        body.push(lines[i].replace(/^\s*>\s?/, ''));
+        i++;
+      }
+      var bodyRaw = body.join('\n');
+      var bodyHtml = bodyRaw ? window.marked.parse(bodyRaw) : '';
+      var id = '__CALLOUT_' + Math.random().toString(36).slice(2, 10) + '__';
+      var openTag = collapsible ? 'details' : 'div';
+      var titleTag = collapsible ? 'summary' : 'div';
+      var html = '<' + openTag + ' class="callout ' + meta.cls + (collapsible ? ' callout-collapsible' : '') + '"' + (collapsible ? ' open' : '') + '>' +
+        '<' + titleTag + ' class="callout-title"><span class="callout-icon">' + meta.icon + '</span>' + escapeHtml(title) + '</' + titleTag + '>' +
+        (bodyHtml ? '<div class="callout-body">' + bodyHtml + '</div>' : '') +
+        '</' + openTag + '>';
+      _calloutStore[id] = html;
+      out.push(id);
+      continue;
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out.join('\n');
+}
+function postprocessCallouts(html) {
+  return html
+    .replace(/<p>(__CALLOUT_[a-z0-9]+__)<\/p>/g, function(_, id) { return _calloutStore[id] || id; })
+    .replace(/__CALLOUT_[a-z0-9]+__/g, function(id) { return _calloutStore[id] || id; });
+}
+
+var _mathStore = {};
+function preprocessMath(text) {
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, function(_, expr) {
+    var id = '__MATHBLOCK_' + Math.random().toString(36).slice(2, 10) + '__';
+    _mathStore[id] = { mode: 'block', expr: expr };
+    queueKatexRender();
+    return id;
+  });
+  text = text.replace(/(^|[^a-zA-Z0-9_$])\$([^\$\n]+?)\$(?=[^a-zA-Z0-9_$]|$)/g, function(match, pre, expr) {
+    var id = '__MATHINLINE_' + Math.random().toString(36).slice(2, 10) + '__';
+    _mathStore[id] = { mode: 'inline', expr: expr };
+    queueKatexRender();
+    return pre + id;
+  });
+  return text;
+}
+function renderMathPlaceholders(container) {
+  if (typeof window.katex === 'undefined' || !container) return;
+  var html = container.innerHTML;
+  var next = html
+    .replace(/__MATHBLOCK_[a-z0-9]+__/g, function(id) {
+      var entry = _mathStore[id]; if (!entry) return id;
+      try { return window.katex.renderToString(entry.expr, { displayMode: true, throwOnError: false }); } catch (e) { return id; }
+    })
+    .replace(/__MATHINLINE_[a-z0-9]+__/g, function(id) {
+      var entry = _mathStore[id]; if (!entry) return id;
+      try { return window.katex.renderToString(entry.expr, { displayMode: false, throwOnError: false }); } catch (e) { return id; }
+    });
+  if (next !== html) container.innerHTML = next;
+}
+
+function loadScriptOnce(src) {
+  return new Promise(function(resolve, reject) {
+    var existing = document.querySelector('script[data-vsrc="' + src + '"]');
+    if (existing) { if (existing.dataset.loaded === '1') return resolve(); existing.addEventListener('load', function(){ resolve(); }); return; }
+    var s = document.createElement('script'); s.src = src; s.async = true; s.dataset.vsrc = src;
+    s.onload = function(){ s.dataset.loaded = '1'; resolve(); };
+    s.onerror = function(){ reject(new Error('failed to load ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+function loadStyleOnce(href) {
+  if (document.querySelector('link[data-vhref="' + href + '"]')) return;
+  var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.dataset.vhref = href;
+  document.head.appendChild(l);
+}
+var _mermaidRenderScheduled = false;
+function queueMermaidRender() {
+  if (_mermaidRenderScheduled) return;
+  _mermaidRenderScheduled = true;
+  setTimeout(function() {
+    _mermaidRenderScheduled = false;
+    loadScriptOnce('/vendor/mermaid.min.js').then(function() {
+      if (!_mermaidLoaded && typeof window.mermaid !== 'undefined') {
+        window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+        _mermaidLoaded = true;
+      }
+      if (typeof window.mermaid !== 'undefined') {
+        try { window.mermaid.run({ querySelector: '.mermaid:not([data-processed="true"])' }); } catch (e) {}
+      }
+    }).catch(function(){});
+  }, 50);
+}
+var _katexRenderScheduled = false;
+function queueKatexRender() {
+  if (_katexRenderScheduled) return;
+  _katexRenderScheduled = true;
+  setTimeout(function() {
+    _katexRenderScheduled = false;
+    loadStyleOnce('/vendor/katex.min.css');
+    loadScriptOnce('/vendor/katex.min.js').then(function() {
+      document.querySelectorAll('.msg-content, .ws-entry-content').forEach(function(el) { renderMathPlaceholders(el); });
+    }).catch(function(){});
+  }, 50);
+}
+
+function copyCodeBlock(btn) {
+  var codeEl = btn.parentElement.querySelector('pre code');
+  if (!codeEl) return;
+  var text = codeEl.innerText;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() {
+      var old = btn.textContent; btn.textContent = 'Copied!'; btn.classList.add('copied');
+      setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
+    });
+  }
+}
 
 function renderMarkdown(text) {
-  // Strip null bytes to prevent placeholder collision attacks
+  if (typeof text !== 'string' || !text) return '';
   text = text.replace(/\x00/g, '');
-  // Extract fenced code blocks first to protect them
-  var codeBlocks = [];
-  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
-    var idx = codeBlocks.length;
-    codeBlocks.push({ lang: lang, code: code.replace(/\n$/, '') });
-    return '\x00CODEBLOCK' + idx + '\x00';
-  });
-  // Also handle ``` without newline after lang
-  text = text.replace(/```(\w*)([\s\S]*?)```/g, function(match, lang, code) {
-    var idx = codeBlocks.length;
-    codeBlocks.push({ lang: lang, code: code.replace(/^\n/, '').replace(/\n$/, '') });
-    return '\x00CODEBLOCK' + idx + '\x00';
-  });
+  if (typeof window.marked === 'undefined') return escapeHtml(text).replace(/\n/g, '<br>');
+  configureMarked();
+  text = preprocessMath(text);
+  text = preprocessCallouts(text);
+  var html;
+  try { html = window.marked.parse(text); } catch (e) { html = escapeHtml(text).replace(/\n/g, '<br>'); }
+  html = postprocessCallouts(html);
+  if (html.indexOf('class="mermaid"') !== -1) queueMermaidRender();
+  return html;
+}
 
-  // Split into lines for block-level processing
-  var lines = text.split('\n');
-  var html = '';
-  var inList = false;
-  var listType = '';
-  var inTable = false;
-  var tableRows = [];
-  var inBlockquote = false;
-
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i];
-
-    // Code block placeholder
-    var cbMatch = line.match(/^\x00CODEBLOCK(\d+)\x00$/);
-    if (cbMatch) {
-      if (inList) { html += '</' + listType + '>'; inList = false; }
-      if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; }
-      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
-      var cb = codeBlocks[parseInt(cbMatch[1])];
-      if (!cb) { html += escapeHtml(line); continue; }
-      var langTag = cb.lang ? '<span class="lang-tag">' + escapeHtml(cb.lang) + '</span>' : '';
-      html += '<pre>' + langTag + '<code>' + escapeHtml(cb.code) + '</code></pre>';
-      continue;
-    }
-
-    // Horizontal rule
-    if (/^(---|\*\*\*|___)$/.test(line.trim())) {
-      if (inList) { html += '</' + listType + '>'; inList = false; }
-      if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; }
-      html += '<hr>';
-      continue;
-    }
-
-    // Table detection
-    if (line.indexOf('|') !== -1 && line.trim().charAt(0) === '|') {
-      if (inList) { html += '</' + listType + '>'; inList = false; }
-      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
-      // Check if this is a separator row
-      if (/^\|[\s\-:|]+\|$/.test(line.trim())) {
-        // separator, skip but mark table as started
-        if (!inTable) inTable = true;
-        continue;
-      }
-      inTable = true;
-      tableRows.push(line);
-      continue;
-    } else if (inTable) {
-      html += renderTable(tableRows);
-      inTable = false;
-      tableRows = [];
-    }
-
-    // Headers
-    var hMatch = line.match(/^(#{1,4})\s+(.+)/);
-    if (hMatch) {
-      if (inList) { html += '</' + listType + '>'; inList = false; }
-      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
-      var level = hMatch[1].length;
-      html += '<h' + level + '>' + inlineMarkdown(hMatch[2]) + '</h' + level + '>';
-      continue;
-    }
-
-    // Blockquote
-    if (line.match(/^>\s?(.*)$/)) {
-      if (inList) { html += '</' + listType + '>'; inList = false; }
-      var bqContent = line.replace(/^>\s?/, '');
-      if (!inBlockquote) { html += '<blockquote>'; inBlockquote = true; }
-      html += inlineMarkdown(bqContent) + '<br>';
-      continue;
-    } else if (inBlockquote) {
-      html += '</blockquote>';
-      inBlockquote = false;
-    }
-
-    // Unordered list
-    if (line.match(/^[\s]*[-*+]\s+(.+)/)) {
-      if (!inList || listType !== 'ul') {
-        if (inList) html += '</' + listType + '>';
-        html += '<ul>';
-        inList = true;
-        listType = 'ul';
-      }
-      html += '<li>' + inlineMarkdown(line.replace(/^[\s]*[-*+]\s+/, '')) + '</li>';
-      continue;
-    }
-
-    // Ordered list
-    if (line.match(/^[\s]*\d+\.\s+(.+)/)) {
-      if (!inList || listType !== 'ol') {
-        if (inList) html += '</' + listType + '>';
-        html += '<ol>';
-        inList = true;
-        listType = 'ol';
-      }
-      html += '<li>' + inlineMarkdown(line.replace(/^[\s]*\d+\.\s+/, '')) + '</li>';
-      continue;
-    }
-
-    // Close list if line doesn't match
-    if (inList && line.trim() === '') {
-      html += '</' + listType + '>';
-      inList = false;
-    }
-
-    // Empty line
-    if (line.trim() === '') {
-      continue;
-    }
-
-    // Regular paragraph
-    if (inList) { html += '</' + listType + '>'; inList = false; }
-    html += '<p>' + inlineMarkdown(line) + '</p>';
+// Click-to-expand image lightbox (delegated on document)
+document.addEventListener('click', function(e) {
+  var t = e.target;
+  if (t && t.tagName === 'IMG' && t.closest && t.closest('.msg-content')) {
+    var overlay = document.createElement('div');
+    overlay.className = 'image-lightbox';
+    overlay.addEventListener('click', function(){ overlay.remove(); });
+    var img = document.createElement('img'); img.src = t.src; overlay.appendChild(img);
+    document.body.appendChild(overlay);
   }
-
-  // Close any open elements
-  if (inList) html += '</' + listType + '>';
-  if (inTable) html += renderTable(tableRows);
-  if (inBlockquote) html += '</blockquote>';
-
-  return html;
-}
-
-function inlineMarkdown(text) {
-  var html = escapeHtml(text);
-  // Inline code (must be before bold/italic to avoid conflicts)
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold + italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  // Bold
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Italic
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  // Strikethrough
-  html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  return html;
-}
-
-function renderTable(rows) {
-  if (rows.length === 0) return '';
-  var html = '<table>';
-  for (var i = 0; i < rows.length; i++) {
-    var cells = rows[i].split('|').filter(function(c, idx, arr) {
-      return idx > 0 && idx < arr.length - 1;
-    });
-    var tag = (i === 0) ? 'th' : 'td';
-    html += '<tr>';
-    for (var j = 0; j < cells.length; j++) {
-      html += '<' + tag + '>' + inlineMarkdown(cells[j].trim()) + '</' + tag + '>';
-    }
-    html += '</tr>';
-  }
-  html += '</table>';
-  return html;
-}
+}, true);
 
 // ==================== AGENT MONITORING ====================
+
 
 var PROVIDER_COLORS = { claude: '#d97706', anthropic: '#d97706', openai: '#10b981', gemini: '#3b82f6', google: '#3b82f6' };
 

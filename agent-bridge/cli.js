@@ -9,7 +9,7 @@ const { createCanonicalState } = require('./state/canonical');
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v5.4.3
+  Let Them Talk — Agent Bridge v5.5.0
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
@@ -364,8 +364,17 @@ function setupAgentsMarkdown(cwd, log = console.log) {
     '   `get_work()` again. If nothing is queued and the goal is not yet',
     '   done, synthesize new tasks with `create_task()` and keep going.',
     '',
-    '9. The loop only ends when the goal is achieved with evidence OR the',
-    '   Owner sends a message telling you to stop.',
+    '9. **Write like you are publishing.** The Messages tab renders',
+    '   GFM markdown with tables, fenced code + syntax highlighting,',
+    '   Obsidian-style callouts, Mermaid diagrams, KaTeX math, and',
+    '   clickable images. Use tables for structured data, callouts for',
+    '   status (`> [!SUCCESS]`, `> [!WARNING]`, `> [!DANGER]`,',
+    '   `> [!SUMMARY]-` for collapsible long reports), ```mermaid for',
+    '   architecture/flow diagrams, and fenced code with language tags.',
+    '   A terse structured report beats a wall of text.',
+    '',
+    '10. The loop only ends when the goal is achieved with evidence OR the',
+    '    Owner sends a message telling you to stop.',
     '',
     END,
   ].join('\n');

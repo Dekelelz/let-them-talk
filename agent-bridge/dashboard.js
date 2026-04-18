@@ -1811,6 +1811,36 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Serve bundled 3rd-party rendering libs from agent-bridge/vendor/
+    // (marked, highlight.js, mermaid, katex — all local so the dashboard works offline)
+    if (url.pathname.startsWith('/vendor/')) {
+      const vendorPath = url.pathname.replace('/vendor/', '');
+      if (vendorPath.includes('..') || vendorPath.includes('\\')) {
+        res.writeHead(400); res.end('Bad path'); return;
+      }
+      const filePath = path.join(__dirname, 'vendor', vendorPath);
+      const resolvedVendor = path.resolve(filePath);
+      const allowedVendorDir = path.resolve(path.join(__dirname, 'vendor'));
+      if (!resolvedVendor.startsWith(allowedVendorDir + path.sep) && resolvedVendor !== allowedVendorDir) {
+        res.writeHead(403); res.end('Forbidden'); return;
+      }
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const mimeTypes = {
+          '.js': 'application/javascript', '.mjs': 'application/javascript',
+          '.css': 'text/css', '.json': 'application/json',
+          '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+          '.svg': 'image/svg+xml',
+        };
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=604800' });
+        res.end(fs.readFileSync(filePath));
+      } else {
+        res.writeHead(404); res.end('Not found: ' + vendorPath);
+      }
+      return;
+    }
+
     // Serve 3D office modules from agent-bridge/office/
     if (url.pathname.startsWith('/office/')) {
       const officePath = url.pathname.replace('/office/', '');
@@ -3415,7 +3445,7 @@ server.listen(PORT, LAN_MODE ? '0.0.0.0' : '127.0.0.1', () => {
   const dataDir = resolveDataDir();
   const lanIP = getLanIP();
   console.log('');
-  console.log('  Let Them Talk - Agent Bridge Dashboard v5.4.3');
+  console.log('  Let Them Talk - Agent Bridge Dashboard v5.5.0');
   console.log('  ============================================');
   console.log('  Dashboard:  http://localhost:' + PORT);
   if (LAN_MODE && lanIP) {
