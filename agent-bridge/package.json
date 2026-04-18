@@ -1,6 +1,6 @@
 {
   "name": "let-them-talk",
-  "version": "5.3.0",
+  "version": "5.4.0",
   "description": "MCP message broker + web dashboard for inter-agent communication. Let AI CLI agents talk to each other.",
   "main": "server.js",
   "bin": {
@@ -102,7 +102,12 @@
   "author": "Dekelelz <contact@talk.unrealai.studio>",
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "three": "0.175.0"
+  },
+  "overrides": {
+    "hono": "^4.12.14",
+    "path-to-regexp": "^8.4.2",
+    "@hono/node-server": "^1.19.14"
   }
 }

@@ -1186,7 +1186,21 @@ function apiUpdateTask(body, query) {
   const validStatuses = ['pending', 'in_progress', 'in_review', 'done', 'blocked'];
   if (!validStatuses.includes(body.status)) return { error: 'Invalid status. Must be: ' + validStatuses.join(', ') };
 
-  const params = {
+  let evidence = null;
+  if (body.status === 'done') {
+    const provided = body.evidence && typeof body.evidence === 'object' ? body.evidence : {};
+    evidence = {
+      summary: (typeof provided.summary === 'string' && provided.summary.trim())
+        || (typeof body.notes === 'string' && body.notes.trim())
+        || 'Marked complete by operator from dashboard.',
+      verification: (typeof provided.verification === 'string' && provided.verification.trim())
+        || 'operator_marked',
+      files_changed: Array.isArray(provided.files_changed) ? provided.files_changed : [],
+      confidence: Number.isFinite(provided.confidence) ? provided.confidence : 100,
+    };
+  }
+
+  return getCanonicalState(projectPath).updateTaskStatus({
     taskId: body.task_id,
     status: body.status,
     notes: body.notes,
@@ -1194,26 +1208,8 @@ function apiUpdateTask(body, query) {
     branch: branchResult.branch,
     sourceTool: 'dashboard_update_task',
     correlationId: body.task_id,
-  };
-
-  if (body.status === 'done') {
-    const provided = body.evidence && typeof body.evidence === 'object' ? body.evidence : {};
-    const summary = (typeof provided.summary === 'string' && provided.summary.trim())
-      || (typeof body.notes === 'string' && body.notes.trim())
-      || 'Marked complete by operator from dashboard.';
-    const verification = (typeof provided.verification === 'string' && provided.verification.trim())
-      || 'operator_marked';
-    const filesChanged = Array.isArray(provided.files_changed) ? provided.files_changed : [];
-    const confidence = Number.isFinite(provided.confidence) ? provided.confidence : 100;
-    params.evidence = {
-      summary,
-      verification,
-      files_changed: filesChanged,
-      confidence,
-    };
-  }
-
-  return getCanonicalState(projectPath).updateTaskStatus(params);
+    ...(evidence && { evidence }),
+  });
 }
 
 // Rules API
