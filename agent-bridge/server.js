@@ -8391,7 +8391,7 @@ function toolToggleRule(ruleId) {
 // --- MCP Server setup ---
 
 const server = new Server(
-  { name: 'agent-bridge', version: '5.3.0' },
+  { name: 'agent-bridge', version: '5.4.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -9531,7 +9531,7 @@ async function main() {
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Agent Bridge MCP server v5.3.0 running (66 tools)');
+    console.error('Agent Bridge MCP server v5.4.0 running (66 tools)');
   } catch (e) {
     console.error('ERROR: MCP server failed to start: ' + e.message);
     console.error('Fix: Run "npx let-them-talk doctor" to check your setup.');

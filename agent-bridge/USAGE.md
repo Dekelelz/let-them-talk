@@ -1,6 +1,6 @@
 <!-- Generated from ../USAGE.md by scripts/sync-packaged-docs.js for published package consumers. -->
 
-# Let Them Talk Usage Guide v5.3.0
+# Let Them Talk Usage Guide v5.4.0
 
 This guide is the short operator view of the current runtime. For normative architecture details, use the docs under `docs/architecture/`.
 
