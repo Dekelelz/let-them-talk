@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const { ApiAgentEngine } = require('./api-agents');
+const { init: initProject } = require('./cli');
 const {
   DEFAULT_DATA_DIR_NAME,
   DEFAULT_MARKDOWN_WORKSPACE_DIR_NAME,
@@ -74,6 +75,7 @@ let LAN_MODE = process.env.AGENT_BRIDGE_LAN === 'true' || (fs.existsSync(LAN_STA
 const LAN_TOKEN_FILE = path.join(DEFAULT_DATA_DIR, '.lan-token');
 let LAN_TOKEN = null;
 loadLanToken();
+const DASHBOARD_INIT_FLAG = '--all';
 
 // --- Multi-project support ---
 
@@ -721,6 +723,13 @@ function apiClearMessages(query) {
   return getCanonicalState(projectPath).clearMessages({ branch: branchResult.branch, actor: 'Dashboard' });
 }
 
+function apiClearTasks(query) {
+  const projectPath = query.get('project') || null;
+  const branchResult = getValidatedBranch(query);
+  if (branchResult.error) return branchResult;
+  return getCanonicalState(projectPath).clearTasks({ branch: branchResult.branch, actor: 'Dashboard' });
+}
+
 function apiNewConversation(query) {
   const projectPath = query.get('project') || null;
   return getCanonicalState(projectPath).archiveCurrentConversation();
@@ -851,17 +860,111 @@ function apiAddProject(body) {
   const name = body.name || path.basename(absPath);
   if (projects.find(p => p.path === absPath)) return { error: 'Project already added' };
 
-  // Create .agent-bridge directory if it doesn't exist
-  const abDir = path.join(absPath, '.agent-bridge');
-  if (!fs.existsSync(abDir)) fs.mkdirSync(abDir, { recursive: true });
+  const initLogs = [];
+  let initResult;
+  try {
+    initResult = initProject({
+      cwd: absPath,
+      flag: DASHBOARD_INIT_FLAG,
+      argv: [process.execPath, path.join(__dirname, 'cli.js'), 'init', DASHBOARD_INIT_FLAG],
+      log: (line) => initLogs.push(typeof line === 'string' ? line : String(line || '')),
+    });
+  } catch (error) {
+    return {
+      error: 'Project initialization failed: ' + error.message,
+      init_failed: true,
+      project: { name, path: absPath },
+      initialization: {
+        mode: DASHBOARD_INIT_FLAG,
+        logs: initLogs,
+      },
+    };
+  }
 
-  // Set up MCP config so agents can use it
-  const serverPath = path.join(__dirname, 'server.js').replace(/\\/g, '/');
-  ensureMCPConfig('claude', serverPath, absPath);
+  const launcherPath = initResult && initResult.launcherPath
+    ? initResult.launcherPath
+    : path.join(absPath, DEFAULT_DATA_DIR_NAME, 'launch.js');
+  if (!fs.existsSync(launcherPath)) {
+    return {
+      error: 'Project initialization failed: expected launcher missing at ' + launcherPath,
+      init_failed: true,
+      project: { name, path: absPath },
+      initialization: {
+        mode: DASHBOARD_INIT_FLAG,
+        targets: initResult && Array.isArray(initResult.targets) ? initResult.targets : [],
+        launcher_path: launcherPath,
+        logs: initLogs,
+      },
+    };
+  }
 
-  projects.push({ name, path: absPath, added_at: new Date().toISOString() });
-  saveProjects(projects);
-  return { success: true, project: { name, path: absPath } };
+  try {
+    projects.push({ name, path: absPath, added_at: new Date().toISOString() });
+    saveProjects(projects);
+  } catch (error) {
+    return {
+      error: 'Project registration failed after initialization: ' + error.message + '. The folder was initialized but not added to projects.json.',
+      project: { name, path: absPath },
+      initialization: {
+        mode: DASHBOARD_INIT_FLAG,
+        targets: initResult && Array.isArray(initResult.targets) ? initResult.targets : [],
+        launcher_path: launcherPath,
+        logs: initLogs,
+      },
+    };
+  }
+
+  return {
+    success: true,
+    project: { name, path: absPath },
+    initialization: {
+      mode: DASHBOARD_INIT_FLAG,
+      targets: initResult && Array.isArray(initResult.targets) ? initResult.targets : [],
+      launcher_path: launcherPath,
+      logs: initLogs,
+    },
+  };
+}
+
+function apiReinitProject(body) {
+  const targetPath = body && body.path ? body.path : null;
+  if (!targetPath) return { error: 'Missing "path" field' };
+  const absPath = path.resolve(targetPath);
+  if (!fs.existsSync(absPath)) return { error: `Path does not exist: ${absPath}` };
+
+  const projects = getProjects();
+  const known = projects.find((p) => p.path === absPath);
+  if (!known) {
+    return { error: 'Project is not registered. Use Add Project first.' };
+  }
+
+  const initLogs = [];
+  let initResult;
+  try {
+    initResult = initProject({
+      cwd: absPath,
+      flag: DASHBOARD_INIT_FLAG,
+      argv: [process.execPath, path.join(__dirname, 'cli.js'), 'init', DASHBOARD_INIT_FLAG],
+      log: (line) => initLogs.push(typeof line === 'string' ? line : String(line || '')),
+    });
+  } catch (error) {
+    return {
+      error: 'Reinstall failed: ' + error.message,
+      project: { name: known.name, path: absPath },
+      initialization: { mode: DASHBOARD_INIT_FLAG, logs: initLogs },
+    };
+  }
+
+  return {
+    success: true,
+    project: { name: known.name, path: absPath },
+    initialization: {
+      mode: DASHBOARD_INIT_FLAG,
+      targets: initResult && Array.isArray(initResult.targets) ? initResult.targets : [],
+      launcher_path: initResult && initResult.launcherPath ? initResult.launcherPath : null,
+      logs: initLogs,
+    },
+  };
 }
 
 function apiRemoveProject(body) {
@@ -1069,13 +1172,35 @@ function apiUpdateTask(body, query) {
 
   const validStatuses = ['pending', 'in_progress', 'in_review', 'done', 'blocked'];
   if (!validStatuses.includes(body.status)) return { error: 'Invalid status. Must be: ' + validStatuses.join(', ') };
-  return getCanonicalState(projectPath).updateTaskStatus({
+
+  const params = {
     taskId: body.task_id,
     status: body.status,
     notes: body.notes,
     actor: 'Dashboard',
     branch: branchResult.branch,
-  });
+    sourceTool: 'dashboard_update_task',
+    correlationId: body.task_id,
+  };
+
+  if (body.status === 'done') {
+    const provided = body.evidence && typeof body.evidence === 'object' ? body.evidence : {};
+    const summary = (typeof provided.summary === 'string' && provided.summary.trim())
+      || (typeof body.notes === 'string' && body.notes.trim())
+      || 'Marked complete by operator from dashboard.';
+    const verification = (typeof provided.verification === 'string' && provided.verification.trim())
+      || 'operator_marked';
+    const filesChanged = Array.isArray(provided.files_changed) ? provided.files_changed : [];
+    const confidence = Number.isFinite(provided.confidence) ? provided.confidence : 100;
+    params.evidence = {
+      summary,
+      verification,
+      files_changed: filesChanged,
+      confidence,
+    };
+  }
+
+  return getCanonicalState(projectPath).updateTaskStatus(params);
 }
 
 // Rules API
@@ -1983,6 +2108,17 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }
+    else if (url.pathname === '/api/clear-tasks' && req.method === 'POST') {
+      const body = await parseBody(req).catch(() => ({}));
+      if (!body.confirm) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Destructive action requires { "confirm": true } in request body' }));
+        return;
+      }
+      const result = apiClearTasks(url.searchParams);
+      res.writeHead(result && result.error ? getRouteErrorStatus(result) : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
     else if (url.pathname === '/api/new-conversation' && req.method === 'POST') {
       const body = await parseBody(req).catch(() => ({}));
       if (!body.confirm) {
@@ -2017,6 +2153,12 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname === '/api/projects' && req.method === 'POST') {
       const body = await parseBody(req);
       const result = apiAddProject(body);
+      res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+    else if (url.pathname === '/api/projects/reinit' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const result = apiReinitProject(body);
       res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     }

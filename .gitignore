@@ -30,3 +30,19 @@ agent-bridge/.lan-token
 agent-bridge/assistant/
 agent-bridge/assistant.html
 agent-bridge/assistant-*.js
+
+# Third-party plugin state (not owned by Let Them Talk)
+/.omc/
+/.sisyphus/
+/.omx/
+/.playwright-mcp/
+
+# Generated markdown workspace export (non-authoritative, regenerated on demand)
+/.agent-bridge-markdown/
+
+# Dev debris
+/generated-images/
+/stderr-*.txt
+/stdout-*.txt
+*.mbtree
+ffmpeg*pass*.log

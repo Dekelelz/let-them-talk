@@ -4346,11 +4346,15 @@
       <select class="project-select" id="project-select" onchange="switchProject()">
         <option value="">Default (local)</option>
       </select>
-      <input class="project-input" id="project-path-input" placeholder="Enter project folder path..."
-        onkeydown="if(event.key==='Enter'){addProject();}">
+      <div class="project-input-row" id="project-input-row" style="display:none;gap:6px;align-items:center;margin-top:4px">
+        <input class="project-input" id="project-path-input" placeholder="Enter project folder path..." style="flex:1;display:block"
+          onkeydown="if(event.key==='Enter'){addProject();}">
+        <button class="btn btn-primary" id="project-submit-btn" onclick="addProject()" title="Add the pasted path as a project">Submit</button>
+      </div>
       <div class="project-actions">
         <button class="btn btn-primary" onclick="showAddProject()">+ Add</button>
         <button class="btn" onclick="discoverProjects()">Discover</button>
+        <button class="btn" onclick="reinstallProviders()" id="reinstall-providers-btn" style="display:none" title="Re-run init for Claude/Gemini/Codex configs in this project (merge-safe — preserves your other MCP servers)">Reinstall Providers</button>
         <button class="btn btn-danger" onclick="removeProject()" id="remove-project-btn" style="display:none">Remove</button>
       </div>
       <div id="discover-results" style="display:none"></div>
@@ -5236,6 +5240,8 @@ function syncProjectSelectionUI() {
 
   if (mobileSel) mobileSel.value = activeProject || '';
   if (removeBtn) removeBtn.style.display = activeProject ? '' : 'none';
+  var reinstallBtn = document.getElementById('reinstall-providers-btn');
+  if (reinstallBtn) reinstallBtn.style.display = activeProject ? '' : 'none';
 
   if (indicator) {
     indicator.textContent = activeProject ? activeLabel : '';
@@ -7829,8 +7835,15 @@ function fetchTasks() {
 
 function renderTasks() {
   var el = document.getElementById('tasks-area');
+  var toolbar = '<div class="tasks-toolbar" style="display:flex;justify-content:flex-end;gap:8px;padding:8px 4px;align-items:center">' +
+    '<span style="font-size:11px;color:var(--text-muted);margin-right:auto">' + cachedTasks.length + ' task' + (cachedTasks.length === 1 ? '' : 's') + '</span>' +
+    '<button onclick="clearTasks()" title="Clear all tasks for this branch" ' +
+      'style="background:#4a2020;border:1px solid #6a3030;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;color:#ff6b6b;white-space:nowrap;transition:all 0.2s"' +
+      (cachedTasks.length ? '' : ' disabled') + '>Clear All Tasks</button>' +
+  '</div>';
+
   if (!cachedTasks.length) {
-    el.innerHTML = '<div class="kanban">' +
+    el.innerHTML = toolbar + '<div class="kanban">' +
       '<div class="kanban-col">' +
         '<div class="kanban-title pending">Pending<span class="kanban-count">0</span></div>' +
         '<div class="task-card" style="opacity:0.3;border-style:dashed">' +
@@ -7868,7 +7881,7 @@ function renderTasks() {
     { key: 'blocked', label: 'Blocked' }
   ];
 
-  var html = '<div class="kanban">';
+  var html = toolbar + '<div class="kanban">';
   for (var c = 0; c < cols.length; c++) {
     var col = cols[c];
     var tasks = groups[col.key] || [];
@@ -7881,6 +7894,22 @@ function renderTasks() {
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+function clearTasks() {
+  if (!cachedTasks.length) return;
+  if (!confirm('Clear all ' + cachedTasks.length + ' task' + (cachedTasks.length === 1 ? '' : 's') + ' on this branch? This cannot be undone.')) return;
+  lttFetch(scopedApiUrl('/api/clear-tasks'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data && data.error) {
+        showToast('Clear tasks failed: ' + data.error);
+        return;
+      }
+      showToast('Cleared ' + (data.cleared_tasks || 0) + ' task' + ((data.cleared_tasks || 0) === 1 ? '' : 's'));
+      fetchTasks();
+    })
+    .catch(function(e) { showToast('Clear tasks failed: ' + (e && e.message ? e.message : e)); });
 }
 
 function buildTaskCard(t) {
@@ -10438,13 +10467,27 @@ function syncMobileProjectSelect() {
 }
 
 function showAddProject() {
+  var row = document.getElementById('project-input-row');
   var input = document.getElementById('project-path-input');
-  if (input.classList.contains('visible')) {
-    input.classList.remove('visible');
+  if (row.style.display === 'flex') {
+    row.style.display = 'none';
   } else {
-    input.classList.add('visible');
+    row.style.display = 'flex';
     input.focus();
   }
+}
+
+function projectInitSuccessMessage(res) {
+  if (!res || !res.initialization) return 'Project added.';
+  if (res.initialization.mode === '--all') {
+    return 'Project added and initialized for Claude, Gemini, and Codex.';
+  }
+  return 'Project added and initialized.';
+}
+
+function reportProjectAddFailure(res, fallbackMessage) {
+  var message = (res && res.error) ? res.error : fallbackMessage;
+  alert(message);
 }
 
 function addProject() {
@@ -10459,18 +10502,21 @@ function addProject() {
   }).then(function(r) { return r.json(); }).then(function(res) {
     if (res.success) {
       input.value = '';
-      input.classList.remove('visible');
+      var row = document.getElementById('project-input-row');
+      if (row) row.style.display = 'none';
       // Auto-switch to the newly added project
       activeProject = res.project.path;
-      loadProjects();
-      setTimeout(function() {
+      return loadProjects().then(function() {
         document.getElementById('project-select').value = activeProject;
         switchProject();
-      }, 200);
-    } else {
-      alert(res.error || 'Failed to add project');
+        showToast(projectInitSuccessMessage(res));
+      });
     }
-  }).catch(function(e) { console.error('Add project failed:', e); });
+    reportProjectAddFailure(res, 'Failed to add project');
+  }).catch(function(e) {
+    console.error('Add project failed:', e);
+    reportProjectAddFailure(null, 'Add project failed: ' + e.message);
+  });
 }
 
 function discoverProjects() {
@@ -10511,9 +10557,38 @@ function addDiscovered(projectPath, name) {
   }).then(function(r) { return r.json(); }).then(function(res) {
     if (res.success) {
       document.getElementById('discover-results').style.display = 'none';
-      loadProjects();
+      return loadProjects().then(function() {
+        showToast(projectInitSuccessMessage(res));
+      });
     }
-  }).catch(function() {});
+    reportProjectAddFailure(res, 'Failed to add discovered project');
+  }).catch(function(e) {
+    console.error('Add discovered project failed:', e);
+    reportProjectAddFailure(null, 'Add discovered project failed: ' + e.message);
+  });
+}
+
+function reinstallProviders() {
+  if (!activeProject) return;
+  if (!confirm('Re-run init for Claude, Gemini, and Codex configs in this project?\n\nMerge-safe — preserves your other MCP servers and creates .backup files.')) return;
+  var btn = document.getElementById('reinstall-providers-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Reinstalling...'; }
+  lttFetch('/api/projects/reinit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: activeProject })
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res && res.success) {
+      var targets = (res.initialization && res.initialization.targets) ? res.initialization.targets.join(', ') : 'all providers';
+      showToast('Reinstalled providers: ' + targets + '. Restart your CLI terminals to pick it up.');
+    } else {
+      showToast('Reinstall failed: ' + ((res && res.error) || 'unknown error'));
+    }
+  }).catch(function(e) {
+    showToast('Reinstall failed: ' + (e && e.message ? e.message : e));
+  }).finally(function() {
+    if (btn) { btn.disabled = false; btn.textContent = 'Reinstall Providers'; }
+  });
 }
 
 function removeProject() {

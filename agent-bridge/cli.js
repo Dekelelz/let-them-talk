@@ -7,8 +7,6 @@ const { execSync } = require('child_process');
 const { resolveDataDir: resolveSharedDataDir } = require('./data-dir');
 const { createCanonicalState } = require('./state/canonical');
 
-const command = process.argv[2];
-
 function printUsage() {
   console.log(`
   Let Them Talk — Agent Bridge v5.3.0
@@ -30,6 +28,8 @@ function printUsage() {
     node .agent-bridge/launch.js status       Show active agents and message count
     node .agent-bridge/launch.js msg <agent> <text>  Send a message to an agent
     node .agent-bridge/launch.js reset        Clear all conversation data
+    node .agent-bridge/launch.js migrate      Backfill canonical event stream from legacy projections
+    node .agent-bridge/launch.js migrate --dry-run    Preview what migrate would do
 
   Or via npx (re-downloads each time):
     npx let-them-talk dashboard
@@ -88,7 +88,7 @@ function dataDir(cwd) {
 }
 
 // Configure for Claude Code (.mcp.json in project root)
-function setupClaude(serverPath, cwd) {
+function setupClaude(serverPath, cwd, log = console.log) {
   const mcpConfigPath = path.join(cwd, '.mcp.json');
   let mcpConfig = { mcpServers: {} };
   if (fs.existsSync(mcpConfigPath)) {
@@ -99,7 +99,7 @@ function setupClaude(serverPath, cwd) {
       // Backup corrupted file before overwriting
       const backup = mcpConfigPath + '.backup';
       fs.copyFileSync(mcpConfigPath, backup);
-      console.log('  [warn] Existing .mcp.json was invalid — backed up to .mcp.json.backup');
+      log('  [warn] Existing .mcp.json was invalid — backed up to .mcp.json.backup');
     }
   }
 
@@ -110,11 +110,11 @@ function setupClaude(serverPath, cwd) {
   };
 
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + '\n');
-  console.log('  [ok] Claude Code: .mcp.json updated');
+  log('  [ok] Claude Code: .mcp.json updated');
 }
 
 // Configure for Gemini CLI (.gemini/settings.json or GEMINI.md with MCP config)
-function setupGemini(serverPath, cwd) {
+function setupGemini(serverPath, cwd, log = console.log) {
   // Gemini CLI uses .gemini/settings.json for MCP configuration
   const geminiDir = path.join(cwd, '.gemini');
   const settingsPath = path.join(geminiDir, 'settings.json');
@@ -131,7 +131,7 @@ function setupGemini(serverPath, cwd) {
     } catch {
       const backup = settingsPath + '.backup';
       fs.copyFileSync(settingsPath, backup);
-      console.log('  [warn] Existing settings.json was invalid — backed up to settings.json.backup');
+      log('  [warn] Existing settings.json was invalid — backed up to settings.json.backup');
     }
   }
 
@@ -143,11 +143,11 @@ function setupGemini(serverPath, cwd) {
   };
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-  console.log('  [ok] Gemini CLI: .gemini/settings.json updated');
+  log('  [ok] Gemini CLI: .gemini/settings.json updated');
 }
 
 // Configure for Codex CLI (uses .codex/config.toml)
-function setupCodex(serverPath, cwd) {
+function setupCodex(serverPath, cwd, log = console.log) {
   const codexDir = path.join(cwd, '.codex');
   const configPath = path.join(codexDir, 'config.toml');
 
@@ -178,11 +178,11 @@ timeout = 300
     fs.writeFileSync(configPath, config);
   }
 
-  console.log('  [ok] Codex CLI: .codex/config.toml updated');
+  log('  [ok] Codex CLI: .codex/config.toml updated');
 }
 
 // Setup Ollama agent bridge script
-function setupOllama(serverPath, cwd) {
+function setupOllama(serverPath, cwd, log = console.log) {
   const dir = dataDir(cwd);
   const scriptPath = path.join(dir, 'ollama-agent.js');
 
@@ -298,27 +298,30 @@ process.on('SIGINT', function() { console.log('\\n[' + name + '] Shutting down.'
   const tmpPath = scriptPath + '.tmp.' + process.pid;
   fs.writeFileSync(tmpPath, script);
   fs.renameSync(tmpPath, scriptPath);
-  console.log('  [ok] Ollama agent script created: .agent-bridge/ollama-agent.js');
-  console.log('');
-  console.log('  Launch an Ollama agent with:');
-  console.log('    node .agent-bridge/ollama-agent.js <name> <model>');
-  console.log('');
-  console.log('  Examples:');
-  console.log('    node .agent-bridge/ollama-agent.js Ollama llama3');
-  console.log('    node .agent-bridge/ollama-agent.js Coder codellama');
-  console.log('    node .agent-bridge/ollama-agent.js Writer mistral');
+  log('  [ok] Ollama agent script created: .agent-bridge/ollama-agent.js');
+  log('');
+  log('  Launch an Ollama agent with:');
+  log('    node .agent-bridge/ollama-agent.js <name> <model>');
+  log('');
+  log('  Examples:');
+  log('    node .agent-bridge/ollama-agent.js Ollama llama3');
+  log('    node .agent-bridge/ollama-agent.js Coder codellama');
+  log('    node .agent-bridge/ollama-agent.js Writer mistral');
 }
 
-function init() {
-  const cwd = process.cwd();
+function init(options) {
+  const opts = options || {};
+  const cwd = opts.cwd || process.cwd();
   const serverPath = path.join(__dirname, 'server.js').replace(/\\/g, '/');
   const gitignorePath = path.join(cwd, '.gitignore');
-  const flag = process.argv[3];
+  const argv = Array.isArray(opts.argv) ? opts.argv : process.argv;
+  const flag = opts.flag !== undefined ? opts.flag : argv[3];
+  const log = typeof opts.log === 'function' ? opts.log : console.log;
 
-  console.log('');
-  console.log('  Let Them Talk — Initializing Agent Bridge');
-  console.log('  ==========================================');
-  console.log('');
+  log('');
+  log('  Let Them Talk — Initializing Agent Bridge');
+  log('  ==========================================');
+  log('');
 
   let targets = [];
 
@@ -333,12 +336,12 @@ function init() {
   } else if (flag === '--ollama') {
     const ollama = detectOllama();
     if (!ollama.installed) {
-      console.log('  Ollama not found. Install it from: https://ollama.com/download');
-      console.log('  After installing, run: ollama pull llama3');
-      console.log('');
+      log('  Ollama not found. Install it from: https://ollama.com/download');
+      log('  After installing, run: ollama pull llama3');
+      log('');
     } else {
-      console.log('  Ollama detected: ' + ollama.version);
-      setupOllama(serverPath, cwd);
+      log('  Ollama detected: ' + ollama.version);
+      setupOllama(serverPath, cwd, log);
     }
     targets = detectCLIs();
     if (targets.length === 0) targets = ['claude'];
@@ -348,19 +351,19 @@ function init() {
     if (targets.length === 0) {
       // Default to claude if nothing detected
       targets = ['claude'];
-      console.log('  No CLI detected, defaulting to Claude Code config.');
+      log('  No CLI detected, defaulting to Claude Code config.');
     } else {
-      console.log(`  Detected CLI(s): ${targets.join(', ')}`);
+      log(`  Detected CLI(s): ${targets.join(', ')}`);
     }
   }
 
-  console.log('');
+  log('');
 
   for (const target of targets) {
     switch (target) {
-      case 'claude': setupClaude(serverPath, cwd); break;
-      case 'gemini': setupGemini(serverPath, cwd); break;
-      case 'codex':  setupCodex(serverPath, cwd);  break;
+      case 'claude': setupClaude(serverPath, cwd, log); break;
+      case 'gemini': setupGemini(serverPath, cwd, log); break;
+      case 'codex':  setupCodex(serverPath, cwd, log);  break;
     }
   }
 
@@ -372,13 +375,13 @@ function init() {
     if (missing.length) {
       content += '\n# Agent Bridge (auto-added by let-them-talk init)\n' + missing.join('\n') + '\n';
       fs.writeFileSync(gitignorePath, content);
-      console.log('  [ok] Added to .gitignore: ' + missing.join(', '));
+      log('  [ok] Added to .gitignore: ' + missing.join(', '));
     } else {
-      console.log('  [ok] .gitignore already configured');
+      log('  [ok] .gitignore already configured');
     }
   } else {
     fs.writeFileSync(gitignorePath, '# Agent Bridge (auto-added by let-them-talk init)\n' + gitignoreEntries.join('\n') + '\n');
-    console.log('  [ok] .gitignore created');
+    log('  [ok] .gitignore created');
   }
 
   // Save local launcher scripts so users never need to re-download
@@ -416,17 +419,18 @@ require(cliPath);
 `;
 
   fs.writeFileSync(path.join(bridgeDir, 'launch.js'), launcherScript);
-  console.log('  [ok] Local launcher saved to .agent-bridge/launch.js');
+  const launcherPath = path.join(bridgeDir, 'launch.js');
+  log('  [ok] Local launcher saved to .agent-bridge/launch.js');
 
-  console.log('');
-  console.log('  Agent Bridge is ready! Restart your CLI to pick up the MCP tools.');
-  console.log('');
+  log('');
+  log('  Agent Bridge is ready! Restart your CLI to pick up the MCP tools.');
+  log('');
 
   // Show template if --template was provided
   var templateFlag = null;
-  for (var i = 3; i < process.argv.length; i++) {
-    if (process.argv[i] === '--template' && process.argv[i + 1]) {
-      templateFlag = process.argv[i + 1];
+  for (var i = 3; i < argv.length; i++) {
+    if (argv[i] === '--template' && argv[i + 1]) {
+      templateFlag = argv[i + 1];
       break;
     }
   }
@@ -434,18 +438,26 @@ require(cliPath);
   if (templateFlag) {
     showTemplate(templateFlag);
   } else {
-    console.log('  Open two terminals and start a conversation between agents.');
-    console.log('  Tip: Use "npx let-them-talk init --template pair" for ready-made prompts.');
-    console.log('');
-    console.log('  \x1b[1m  Monitor:\x1b[0m');
-    console.log('    node .agent-bridge/launch.js              (dashboard)');
-    console.log('    node .agent-bridge/launch.js status       (agent status)');
-    console.log('    node .agent-bridge/launch.js reset        (clear data)');
-    console.log('');
-    console.log('  Or use npx (re-downloads each time):');
-    console.log('    npx let-them-talk dashboard');
-    console.log('');
+    log('  Open two terminals and start a conversation between agents.');
+    log('  Tip: Use "npx let-them-talk init --template pair" for ready-made prompts.');
+    log('');
+    log('  \x1b[1m  Monitor:\x1b[0m');
+    log('    node .agent-bridge/launch.js              (dashboard)');
+    log('    node .agent-bridge/launch.js status       (agent status)');
+    log('    node .agent-bridge/launch.js reset        (clear data)');
+    log('');
+    log('  Or use npx (re-downloads each time):');
+    log('    npx let-them-talk dashboard');
+    log('');
   }
+
+  return {
+    cwd,
+    flag: flag || null,
+    targets,
+    bridgeDir,
+    launcherPath,
+  };
 }
 
 function reset() {
@@ -749,6 +761,15 @@ function cliStatus() {
   }
 
   console.log('');
+}
+
+function cliMigrate() {
+  const args = process.argv.slice(3);
+  const dryRun = args.includes('--dry-run') || args.includes('-n');
+  const positional = args.filter((a) => !a.startsWith('-'));
+  const projectArg = positional[0] || process.cwd();
+  const { migrate } = require('./scripts/migrate-legacy-to-canonical');
+  migrate(projectArg, { dryRun });
 }
 
 // v5.0: Diagnostic health check
@@ -1060,49 +1081,77 @@ function assistantInit() {
   console.log('');
 }
 
-switch (command) {
-  case 'init':
-    init();
-    break;
-  case 'assistant':
-    assistantInit();
-    break;
-  case 'templates':
-    listTemplates();
-    break;
-  case 'dashboard':
-    dashboard();
-    break;
-  case 'reset':
-    reset();
-    break;
-  case 'doctor':
-    cliDoctor();
-    break;
-  case 'msg':
-  case 'message':
-  case 'send':
-    cliMsg();
-    break;
-  case 'status':
-    cliStatus();
-    break;
-  case 'uninstall':
-  case 'remove':
-    uninstall();
-    break;
-  case 'plugin':
-  case 'plugins':
-    console.log('  Plugins have been removed in v3.4.3. CLI terminals have their own extension systems.');
-    break;
-  case 'help':
-  case '--help':
-  case '-h':
-  case undefined:
-    printUsage();
-    break;
-  default:
-    console.error(`  Unknown command: ${command}`);
-    printUsage();
-    process.exit(1);
+function runCli() {
+  const command = process.argv[2];
+
+  switch (command) {
+    case 'init':
+      init();
+      break;
+    case 'assistant':
+      assistantInit();
+      break;
+    case 'templates':
+      listTemplates();
+      break;
+    case 'dashboard':
+      dashboard();
+      break;
+    case 'reset':
+      reset();
+      break;
+    case 'doctor':
+      cliDoctor();
+      break;
+    case 'migrate':
+    case 'migrate-legacy':
+      cliMigrate();
+      break;
+    case 'msg':
+    case 'message':
+    case 'send':
+      cliMsg();
+      break;
+    case 'status':
+      cliStatus();
+      break;
+    case 'uninstall':
+    case 'remove':
+      uninstall();
+      break;
+    case 'plugin':
+    case 'plugins':
+      console.log('  Plugins have been removed in v3.4.3. CLI terminals have their own extension systems.');
+      break;
+    case 'help':
+    case '--help':
+    case '-h':
+    case undefined:
+      printUsage();
+      break;
+    default:
+      console.error(`  Unknown command: ${command}`);
+      printUsage();
+      process.exit(1);
+  }
+}
+
+function shouldAutoRunCli() {
+  if (require.main === module) return true;
+  const argvPath = process.argv[1];
+  if (!argvPath) return false;
+  const normalizedArgvPath = path.resolve(argvPath).replace(/\\/g, '/');
+  const normalizedFilePath = path.resolve(__filename).replace(/\\/g, '/');
+  return process.platform === 'win32'
+    ? normalizedArgvPath.toLowerCase() === normalizedFilePath.toLowerCase()
+    : normalizedArgvPath === normalizedFilePath;
+}
+
+module.exports = {
+  init,
+  runCli,
+};
+
+if (shouldAutoRunCli()) {
+  runCli();
 }

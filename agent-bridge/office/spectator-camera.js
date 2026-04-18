@@ -165,14 +165,16 @@ export function SpectatorCamera(camera, domElement) {
 
     if (moveDir.lengthSq() > 0) {
       moveDir.normalize();
-      // Transform to world space using camera orientation
+      // Transform to world space using camera yaw for horizontal movement
       var forward = new THREE.Vector3();
       var right = new THREE.Vector3();
       camera.getWorldDirection(forward);
+      forward.y = 0;
+      if (forward.lengthSq() > 0) forward.normalize();
       right.crossVectors(forward, camera.up).normalize();
       var worldUp = new THREE.Vector3(0, 1, 0);
 
-      // Forward/back along camera look direction (projected on XZ for ground feel, or full 3D)
+      // Forward/back stays horizontal; vertical travel uses dedicated up/down controls
       velocity.addScaledVector(forward, -moveDir.z * speed * dt);
       velocity.addScaledVector(right, moveDir.x * speed * dt);
       velocity.addScaledVector(worldUp, moveDir.y * speed * dt);

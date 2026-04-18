@@ -2804,6 +2804,53 @@ function createCanonicalState(options = {}) {
     }
   }
 
+  function clearTasks(params = {}) {
+    const branch = sanitizeBranchName(params.branch || 'main');
+    const actorAgent = params.actorAgent || params.actor || 'system';
+    const clearedAt = params.clearedAt || new Date().toISOString();
+    const clearedTaskIds = [];
+
+    try {
+      tasksWorkflowsState.mutateTasks((tasks) => {
+        for (const task of tasks) {
+          if (task && typeof task.id === 'string' && task.id) {
+            clearedTaskIds.push(task.id);
+          }
+        }
+        if (clearedTaskIds.length === 0) return;
+
+        appendCanonicalEvent({
+          type: 'tasks.cleared',
+          branchId: branch,
+          actorAgent,
+          sessionId: params.sessionId || null,
+          commandId: params.commandId || null,
+          causationId: params.causationId || null,
+          correlationId: params.correlationId || null,
+          payload: {
+            cleared_task_ids: [...clearedTaskIds],
+            cleared_count: clearedTaskIds.length,
+            cleared_at: clearedAt,
+          },
+        });
+
+        tasks.length = 0;
+      }, { branch, space: 2 });
+
+      return {
+        success: true,
+        branch,
+        cleared_tasks: clearedTaskIds.length,
+        cleared_at: clearedAt,
+      };
+    } catch (error) {
+      return {
+        error: error && error.message ? error.message : String(error),
+        code: error && error.code ? error.code : null,
+      };
+    }
+  }
+
   function archiveCurrentConversation() {
     return failClosedConversationMutation(
       'archiveCurrentConversation',
@@ -3005,6 +3052,7 @@ function createCanonicalState(options = {}) {
     stopPlan,
     archiveFiles,
     clearMessages,
+    clearTasks,
     archiveCurrentConversation,
     loadConversation,
     resetRuntime,
