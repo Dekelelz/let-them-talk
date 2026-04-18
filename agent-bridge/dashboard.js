@@ -190,6 +190,18 @@ function appendEconomyEntry(projectPath, entry) {
   fs.appendFileSync(ledgerFile, line);
 }
 
+// Listening gets a 30s recency grace window so the UI doesn't flicker every
+// time an agent briefly returns from listen_group() to process a batch.
+const LISTEN_RECENCY_GRACE_MS = 30000;
+function isRecentlyListening(info) {
+  if (!info) return false;
+  if (info.listening_since) return true;
+  if (!info.last_listened_at) return false;
+  const last = Date.parse(info.last_listened_at);
+  if (!Number.isFinite(last)) return false;
+  return Date.now() - last < LISTEN_RECENCY_GRACE_MS;
+}
+
 function isPidAlive(pid, lastActivity) {
   const STALE_THRESHOLD = 60000; // 60s — if heartbeat updated within this, agent is alive
 
@@ -315,7 +327,8 @@ function apiAgents(query) {
       idle_seconds: alive ? idleSeconds : null,
       status: info.is_api_agent ? (info.status || 'sleeping') : (!alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active'),
       listening_since: info.listening_since || null,
-      is_listening: !!(info.listening_since && alive),
+      last_listened_at: info.last_listened_at || null,
+      is_listening: alive && isRecentlyListening(info),
       runtime_type: runtimeMetadata.runtime_type,
       provider_id: runtimeMetadata.provider_id,
       model_id: runtimeMetadata.model_id,
@@ -3115,7 +3128,7 @@ const server = http.createServer(async (req, res) => {
         const alive = isPidAlive(info.pid, info.last_activity);
         const lastActivity = info.last_activity || info.timestamp;
         const idleSeconds = Math.floor((Date.now() - new Date(lastActivity).getTime()) / 1000);
-        const isListening = !!(info.listening_since && alive);
+        const isListening = alive && isRecentlyListening(info);
         const activeTasks = tasks.filter(t => t.assignee === name && t.status !== 'done');
         let behavior = 'dead';
         let location = null;

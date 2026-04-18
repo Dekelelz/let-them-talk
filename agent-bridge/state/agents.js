@@ -126,9 +126,11 @@ function createAgentsState(options = {}) {
   function setListeningState(name, isListening, at = new Date().toISOString()) {
     return updateAgent(name, (agent) => {
       agent.listening_since = isListening ? at : null;
-      if (isListening) {
-        agent.last_listened_at = at;
-      }
+      // Stamp last_listened_at on BOTH start and stop. On start this records
+      // "we're listening right now"; on stop it records "we were listening
+      // up to this moment" so callers can apply a recency grace window
+      // rather than treating every brief listen-return as "working".
+      agent.last_listened_at = at;
     });
   }
 

@@ -2341,6 +2341,21 @@ function touchActivity() {
   touchCurrentSession();
 }
 
+// "Listening" for dashboard purposes includes a recency grace window: once an
+// agent's listen call returns, they flip to "working" briefly while processing
+// messages or sending replies, then call listen again. Treating that sub-second
+// gap as "not listening" makes the dashboard flicker. A 30-second grace matches
+// what operators expect to see on a healthy team.
+const LISTEN_RECENCY_GRACE_MS = 30000;
+function isRecentlyListening(info) {
+  if (!info) return false;
+  if (info.listening_since) return true;
+  if (!info.last_listened_at) return false;
+  const last = Date.parse(info.last_listened_at);
+  if (!Number.isFinite(last)) return false;
+  return Date.now() - last < LISTEN_RECENCY_GRACE_MS;
+}
+
 // Set or clear the listening_since flag
 function setListening(isListening) {
   if (!registeredName) return;
@@ -2370,7 +2385,7 @@ function toolListAgents() {
       idle_seconds: alive ? idleSeconds : null,
       status: !alive ? 'dead' : idleSeconds > 60 ? 'sleeping' : 'active',
       listening_since: info.listening_since || null,
-      is_listening: !!(info.listening_since && alive),
+      is_listening: alive && isRecentlyListening(info),
       last_listened_at: info.last_listened_at || null,
       provider: info.provider || 'unknown',
       branch: info.branch || 'main',
@@ -3702,12 +3717,15 @@ async function toolListenGroup() {
 
   // Autonomous mode: cap listen at 30s — agents should use get_work() instead
   const autonomousTimeout = isAutonomousMode() ? 30000 : null;
-  const MAX_LISTEN_MS = 300000; // 5 minutes — MCP has no tool timeout, heartbeat keeps agent alive
-  // Codex CLI kills tool calls at ~120s — land inside that window so Codex agents see
-  // a clean empty batch return instead of a "timed out awaiting tools/call" error.
-  const providerRaw = (getRegisteredProvider() || '').toLowerCase();
-  const isCodexProvider = providerRaw.includes('codex');
-  const codexSafeTimeout = isCodexProvider ? 90000 : null;
+  // Default safe cap: 90s. Codex CLI kills tool calls at ~120s; other MCP
+  // clients may have similar limits. Landing at 90s universally guarantees a
+  // clean empty-batch return for every client. The cost is one extra tool
+  // call per 90s of idle — trivial with fs.watch (zero CPU while waiting).
+  // Users who know their client can block longer can override via env.
+  const envOverride = parseInt(process.env.AGENT_BRIDGE_LISTEN_TIMEOUT_MS || '', 10);
+  const DEFAULT_LISTEN_MS = Number.isFinite(envOverride) && envOverride > 0 ? envOverride : 90000;
+  const MAX_LISTEN_MS = 300000; // hard ceiling (5 min) — env override is clamped below this
+  const clientSafeTimeout = Math.min(DEFAULT_LISTEN_MS, MAX_LISTEN_MS);
   const listenStart = Date.now();
 
   // Helper: collect unconsumed messages from all sources (general + channels)
@@ -3851,10 +3869,10 @@ async function toolListenGroup() {
       touchHeartbeat(registeredName);
     }, 15000);
 
-    // Pick the tightest applicable cap: autonomous (30s) > codex-safe (90s) > default (5min).
-    const candidateTimeouts = [MAX_LISTEN_MS];
+    // Pick the tightest applicable cap: autonomous (30s) > client-safe default
+    // (90s, configurable via AGENT_BRIDGE_LISTEN_TIMEOUT_MS) > hard ceiling (5min).
+    const candidateTimeouts = [MAX_LISTEN_MS, clientSafeTimeout];
     if (autonomousTimeout) candidateTimeouts.push(autonomousTimeout);
-    if (codexSafeTimeout) candidateTimeouts.push(codexSafeTimeout);
     const effectiveTimeout = Math.min(...candidateTimeouts);
 
     // Timeout: don't block forever
