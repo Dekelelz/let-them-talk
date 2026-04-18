@@ -9,7 +9,7 @@ const { createCanonicalState } = require('./state/canonical');
 
 function printUsage() {
   console.log(`
-  Let Them Talk — Agent Bridge v5.5.2
+  Let Them Talk — Agent Bridge v5.5.3
   MCP message broker for inter-agent communication
   Supports: Claude Code, Gemini CLI, Codex CLI, Ollama
 
@@ -30,6 +30,8 @@ function printUsage() {
     node .agent-bridge/launch.js reset        Clear all conversation data
     node .agent-bridge/launch.js migrate      Backfill canonical event stream from legacy projections
     node .agent-bridge/launch.js migrate --dry-run    Preview what migrate would do
+    node .agent-bridge/launch.js repair       Repair corrupted canonical event log (drops orphan redactions)
+    node .agent-bridge/launch.js repair --dry-run     Preview what repair would do
 
   Or via npx (re-downloads each time):
     npx let-them-talk dashboard
@@ -879,6 +881,15 @@ function cliStatus() {
   console.log('');
 }
 
+function cliRepairEvents() {
+  const { repairBranch: _ } = require('./scripts/repair-canonical-events');
+  // Delegate to the script's main — it reads process.argv and handles --dry-run
+  const scriptPath = path.join(__dirname, 'scripts', 'repair-canonical-events.js');
+  const args = process.argv.slice(3);
+  const child = require('child_process').spawnSync(process.execPath, [scriptPath, ...args], { stdio: 'inherit' });
+  if (child.status !== 0) process.exit(child.status || 1);
+}
+
 function cliMigrate() {
   const args = process.argv.slice(3);
   const dryRun = args.includes('--dry-run') || args.includes('-n');
@@ -1142,6 +1153,10 @@ function runCli() {
     case 'migrate':
     case 'migrate-legacy':
       cliMigrate();
+      break;
+    case 'repair':
+    case 'repair-events':
+      cliRepairEvents();
       break;
     case 'msg':
     case 'message':

@@ -2770,8 +2770,22 @@ function createCanonicalState(options = {}) {
       const redactedAt = params.redactedAt || new Date().toISOString();
       const clearedMessageIds = [];
 
+      // Only redact messages that actually have a canonical message.sent event
+      // in this branch's log. Redacting a message that was never "sent" in
+      // canonical terms (e.g. a legacy projection-only message left over from
+      // pre-canonical clear cycles) would create an orphan redaction that
+      // breaks future replay — the rebuild fails with "cannot apply
+      // message.redacted because message X does not exist".
+      const canonicalSentIds = new Set();
+      for (const event of readCanonicalMessageEvents(branch)) {
+        if (event && event.type === 'message.sent' && event.payload && event.payload.message && typeof event.payload.message.id === 'string') {
+          canonicalSentIds.add(event.payload.message.id);
+        }
+      }
+
       for (const message of Array.isArray(currentMessages) ? currentMessages : []) {
         if (!message || typeof message.id !== 'string' || !message.id) continue;
+        if (!canonicalSentIds.has(message.id)) continue; // skip projection-only / orphan
         appendCanonicalMessageRedactedEvent({
           branch,
           actorAgent,
